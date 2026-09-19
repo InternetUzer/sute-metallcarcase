@@ -61,7 +61,8 @@ def test_staging_and_private_noindex(app,client):
     assert 'noindex' in client.get('/login').headers['X-Robots-Tag']
     assert '/cabinet' not in client.get('/sitemap.xml').text
     app.config['SITE_INDEXABLE']=False
-    assert 'Disallow: /\n' in client.get('/robots.txt').text
+    assert 'Allow: /\n' in client.get('/robots.txt').text
+    assert 'Sitemap:' not in client.get('/robots.txt').text
     assert 'noindex' in client.get('/').headers['X-Robots-Tag']
 
 

@@ -1,23 +1,10 @@
-{% extends 'base.html' %}
-{% block content %}
-<section class="container section">
-  <a class="text-link" href="/admin#publications">← К публикациям</a>
-  <h1>Фотографии</h1>
-  <p class="lead">Загрузите фотографии, затем выберите нужную при создании публикации в галерее.</p>
-  <p>До публикации новые фотографии видны только администратору.</p>
-  {% if error %}<p class="form-errors" role="alert">{{ error }}</p>{% endif %}
-  <form method="post" enctype="multipart/form-data" class="info-box">
-    {{ hidden_csrf() }}
-    <label>Название фотографии<input name="title" maxlength="160" required value="{{ request.form.get('title', '') }}"></label>
-    <label>Фотография<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required></label>
-    <p class="field-note">JPG, PNG или WebP, до 10 МБ и 24 мегапикселей. Фотография будет уменьшена до 2400 пикселей по длинной стороне.</p>
-    <button class="button button-orange">Загрузить фотографию</button>
-  </form>
-  <div class="gallery-grid section-small">
-    {% for photo in photos %}<article class="gallery-card">
-      <img class="photo-preview" src="{{ url_for('photo_preview', photo_id=photo.id) }}" alt="{{ photo.title }}" width="{{ photo.width }}" height="{{ photo.height }}" loading="lazy">
-      <h2>{{ photo.title }}</h2><p>{{ photo.width }} × {{ photo.height }} · {{ photo.created_at[:10] }}</p>
-    </article>{% else %}<p>Загруженных фотографий пока нет.</p>{% endfor %}
-  </div>
-</section>
-{% endblock %}
+{% extends 'base.html' %}{% block content %}
+<section class="container section admin-page"><a class="text-link" href="/admin">← Панель управления</a>
+<div class="section-heading"><div><span class="eyebrow">Контент сайта</span><h1>Фотографии и их расположение</h1></div><a class="button button-outline" href="#upload">Загрузить фотографию</a></div>
+<p class="lead">Откройте ветку дерева: здесь видны фотографии, подписи и страницы, на которых они используются.</p><p>Изменение общей фотографии обновляет все указанные места. Для отдельной карточки галереи используйте её собственную кнопку «Изменить».</p>
+{% for name,items in tree %}<details class="media-branch" open><summary>{{ name }} <span class="muted">{{ items|length }}</span></summary><div class="media-tree-items">
+{% for item in items %}<article class="media-node"><img src="{{ item.preview_src }}" alt="{{ item.alt or item.title }}" loading="lazy" class="media-thumb"><div><h2>{{ item.title }}</h2><p class="field-note"><strong>ALT:</strong> {{ item.alt or 'По подписи в блоке страницы' }}</p><p>{{ item.description or 'Отдельное описание не задано.' }}</p><details><summary>Где используется · {{ item.usage|length }}</summary><ul>{% for path,label in item.usage %}<li><a href="{{ path }}" target="_blank" rel="noopener">{{ label }}</a><small> {{ path }}</small></li>{% else %}<li>Сейчас не размещено на публичных страницах.</li>{% endfor %}</ul><p class="media-path">Файл: {{ item.src }}</p></details>{% if item.modified %}<span class="status">Изменено владельцем</span>{% endif %}</div><a class="button button-outline" href="{{ url_for('photo_edit',kind=item.slot.split(':')[0],key=item.slot.split(':')[1]) }}">Изменить</a></article>{% endfor %}
+</div></details>{% endfor %}
+<details class="media-branch" open><summary>Загруженная библиотека <span class="muted">{{ photos|length }}</span></summary><div class="media-tree-items">{% for photo in photos %}<article class="media-node"><img class="media-thumb" src="{{ url_for('photo_preview',photo_id=photo.id) }}" alt="{{ photo.alt or photo.title }}" loading="lazy"><div><h2>{{ photo.title }}</h2><p>{{ photo.description or 'Описание не задано.' }}</p><p class="field-note">ALT: {{ photo.alt or photo.title }} · {{ photo.width }} × {{ photo.height }}</p><ul>{% for slot,title,uses in photo_usage(photo) %}<li>{{ title }}{% if not uses %} · не опубликовано{% endif %}</li>{% else %}<li>Ещё не используется. Выберите фото при редактировании блока выше.</li>{% endfor %}</ul></div><a class="button button-outline" href="{{ url_for('photo_edit',kind='photo',key=photo.id) }}">Изменить</a></article>{% else %}<p class="empty-note">Новых фотографий пока нет.</p>{% endfor %}</div></details>
+<section id="upload" class="section-small"><h2>Загрузить новую фотографию</h2>{% if error %}<p class="form-errors" role="alert">{{ error }}</p>{% endif %}<form method="post" enctype="multipart/form-data" class="info-box">{{ hidden_csrf() }}<label>Название<input name="title" maxlength="160" required value="{{ request.form.get('title','') }}"></label><label>Фотография<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required></label><p class="field-note">До 10 МБ и 24 мегапикселей. Фото будет уменьшено до 2400 пикселей. После загрузки оно появится в библиотеке; размещение на страницах выбирается отдельно.</p><button class="button button-orange">Загрузить</button></form></section>
+</section>{% endblock %}

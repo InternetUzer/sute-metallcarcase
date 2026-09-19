@@ -21,6 +21,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from content import COMPANY, SERVICES, BUILDINGS, MODELS, FAQ, EXTRA
 from project_sheets import HEADERS, register_sheets
 from photo_library import register_photos
+from seo_panel import SEOPanel
 
 ROOT = Path(__file__).resolve().parent
 
@@ -83,8 +84,7 @@ def create_app(test_config=None):
         db().commit()
 
     def assets():
-        path = ROOT / 'content' / 'assets.json'
-        return json.loads(path.read_text()) if path.exists() else {}
+        return media.assets()
 
     def csrf_token():
         if 'csrf' not in session:
@@ -128,7 +128,8 @@ def create_app(test_config=None):
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot'))
-        if private or not app.config['SITE_INDEXABLE']:
+        page_seo = seo.get(request.path)
+        if private or not seo.enabled() or (page_seo and page_seo['noindex']) or response.status_code >= 400:
             response.headers['X-Robots-Tag'] = 'noindex, nofollow'
         if private or response.mimetype == 'text/html':
             response.headers['Cache-Control'] = 'no-store'
@@ -158,13 +159,10 @@ def create_app(test_config=None):
         return decorator
 
     def render(name, title, description='', **kwargs):
-        return render_template(name, title=title, description=description, **kwargs)
+        return render_template(name, **seo.metadata(request.path, title, description), **kwargs)
 
     def public_gallery():
-        curated = [dict(r) for r in db().execute('SELECT * FROM showcases WHERE published=1 ORDER BY id DESC')]
-        path = ROOT / 'content' / 'gallery.json'
-        archived = json.loads(path.read_text()) if path.exists() else []
-        return curated + archived
+        return media.gallery()
 
     @app.get('/')
     def home():
@@ -527,16 +525,11 @@ def create_app(test_config=None):
 
     @app.get('/robots.txt')
     def robots():
-        if not app.config['SITE_INDEXABLE']:
-            return 'User-agent: *\nDisallow: /\n',200,{'Content-Type':'text/plain; charset=utf-8'}
-        return 'User-agent: *\nDisallow: /admin\nDisallow: /cabinet\nDisallow: /files\nDisallow: /reset\nDisallow: /request\nSitemap: '+app.config['SITE_URL']+'/sitemap.xml\n',200,{'Content-Type':'text/plain; charset=utf-8'}
+        return seo.robots(),200,{'Content-Type':'text/plain; charset=utf-8'}
 
     @app.get('/sitemap.xml')
     def sitemap():
-        from xml.sax.saxutils import escape
-        paths=['/','/uslugi','/angary-i-sklady','/produkciya','/prays-list','/about','/o-kompanii','/kontakty','/sotrydnichestvo']
-        paths+=['/'+s['slug'] for s in SERVICES+BUILDINGS]+['/'+s for s in EXTRA]
-        return '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>'+escape(app.config['SITE_URL']+p)+'</loc></url>' for p in paths)+'</urlset>',200,{'Content-Type':'application/xml'}
+        return seo.sitemap(),200,{'Content-Type':'application/xml'}
 
     redirects={'/on-layn-zayavka':'/sotrydnichestvo','/napishite-nam':'/request','/zakazat':'/request','/ustanovka-konstruktsii':'/montaj-konstruktsii','/regist':'/login','/regist/agreement':'/privacy','/user/agreement':'/privacy','/search':'/uslugi'}
     for i,(old,new) in enumerate(redirects.items()):
@@ -586,7 +579,9 @@ def create_app(test_config=None):
         click.echo('Резервная копия создана. Храните её вне публичного сайта и репозитория.')
 
     register_sheets(app, db, protected, get_project, render)
-    register_photos(app, db, protected, render, data)
+    media = register_photos(app, db, protected, render, data, ROOT)
+    seo = SEOPanel(app, db, ROOT)
+    seo.register(app, protected, render)
 
     return app
 

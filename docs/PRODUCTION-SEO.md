@@ -1,0 +1,9 @@
+# SEO and service scope — 2026-09-19
+
+Owner clarified scope beyond hangars and warehouses: concrete and cast-in-place reinforced concrete; fabrication and erection of steelwork; sandwich panels; built-up and membrane industrial roofing. Primary SEO is service-led, with agreed geography retained in contacts. Existing URLs retained; /krovelnye-raboty added as a distinct service linked from home/catalog/request and sitemap. Five service families, 28 sitemap URLs.
+
+Wordstat evidence: docs/wordstat-2026-09-19.json; source https://wordstat.yandex.ru/. Period 19.08–17.09.2026, all regions/devices, broad matching. Frequencies overlap and include informational and supplier/job-seeker intent; do not sum or present as unique customers. Manufacture/production and installation/erection are related vocabulary; concrete/monolithic/RC overlap but are not universally interchangeable. Membrane, built-up and sandwich-panel roofs are different systems, not synonyms. No unverified price, factory capacity, certificate, repair-service or branch-office claims.
+
+content/production-seo-settings.json is an owner-approved deployment snapshot for 16 core pages. Existing EXTRA pages retain distinct defaults. On deployment back up SQLite and affected files, update only corresponding seo_pages records and preserve seo_settings including verification and noindex staging lock. Do not overwrite later owner edits by blind re-import.
+
+Google and Yandex ownership verified via production SEO settings. Google previously processed sitemap (27 URLs) and accepted homepage reindex request; Yandex sitemap and 15 previous pages queued. After this content release notify engines of the changed/new pages. Validation: 34 tests passed, including roofing discovery, sitemap inclusion and submission with concrete service in an isolated test database; existing privacy/media/SEO checks passed.

@@ -73,3 +73,12 @@
     if (event.persisted) document.querySelectorAll('button[disabled]').forEach(b => { b.disabled = false; b.textContent = 'Отправить'; });
   });
 })();
+
+// Approximate snippet preview; plain text only, never HTML from form values.
+for (const [inputKey, previewKey] of [['title','title'], ['description','description']]) {
+  const input = document.querySelector(`[data-seo-${inputKey}]`);
+  const preview = document.querySelector(`[data-seo-preview-${previewKey}]`);
+  if (input && preview) input.addEventListener('input', () => {
+    preview.textContent = input.value.trim() || preview.dataset.default;
+  });
+}
