@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="container section">
+  <a class="text-link" href="/admin#publications">← К публикациям</a>
+  <h1>Фотографии</h1>
+  <p class="lead">Загрузите фотографии, затем выберите нужную при создании публикации в галерее.</p>
+  <p>До публикации новые фотографии видны только администратору.</p>
+  {% if error %}<p class="form-errors" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" enctype="multipart/form-data" class="info-box">
+    {{ hidden_csrf() }}
+    <label>Название фотографии<input name="title" maxlength="160" required value="{{ request.form.get('title', '') }}"></label>
+    <label>Фотография<input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required></label>
+    <p class="field-note">JPG, PNG или WebP, до 10 МБ и 24 мегапикселей. Фотография будет уменьшена до 2400 пикселей по длинной стороне.</p>
+    <button class="button button-orange">Загрузить фотографию</button>
+  </form>
+  <div class="gallery-grid section-small">
+    {% for photo in photos %}<article class="gallery-card">
+      <img class="photo-preview" src="{{ url_for('photo_preview', photo_id=photo.id) }}" alt="{{ photo.title }}" width="{{ photo.width }}" height="{{ photo.height }}" loading="lazy">
+      <h2>{{ photo.title }}</h2><p>{{ photo.width }} × {{ photo.height }} · {{ photo.created_at[:10] }}</p>
+    </article>{% else %}<p>Загруженных фотографий пока нет.</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

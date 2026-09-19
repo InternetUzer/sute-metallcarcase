@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="container section">
+  <h1>Проверьте таблицу</h1><p class="lead">{{ project.title }} · {{ sheet_rows|length }} строк</p>
+  <p>После подтверждения эта таблица полностью заменит прежнюю таблицу работ объекта. Документы и обновления сохранятся. Предпросмотр действует 30 минут.</p>
+  {% include 'work_table.html' %}
+  <form method="post" class="inline-form">
+    {{ hidden_csrf() }}
+    <button class="button button-orange" name="action" value="confirm">Подтвердить и обновить таблицу клиента</button>
+    <button class="button button-outline" name="action" value="cancel">Отменить импорт</button>
+  </form>
+</section>
+{% endblock %}
