@@ -1,0 +1,7 @@
+<div class="work-table-scroll" role="region" aria-label="Объёмы и сроки работ" tabindex="0">
+  <table class="work-table">
+    <caption>Объёмы, цены и сроки по объекту</caption>
+    <thead><tr>{% for header in sheet_headers %}<th scope="col">{{ header }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for row in sheet_rows %}<tr>{% for value in row %}<td>{{ value or '—' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+</div>

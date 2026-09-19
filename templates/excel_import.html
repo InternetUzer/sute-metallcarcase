@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="container section">
+  <a class="text-link" href="{{ url_for('project', project_id=project.id) }}">← К объекту</a>
+  <h1>Импорт Excel</h1><p class="lead">{{ project.title }}</p>
+  <p>Загрузите заполненный шаблон. Сначала появится предпросмотр; данные клиента изменятся только после подтверждения.</p>
+  <p><a class="button button-outline" href="{{ url_for('excel_template') }}">Скачать шаблон XLSX</a></p>
+  {% if error %}<p class="form-errors" role="alert">{{ error }} Данные клиента не изменены.</p>{% endif %}
+  <form method="post" enctype="multipart/form-data" class="info-box">
+    {{ hidden_csrf() }}
+    <label>Таблица работ<input type="file" name="workbook" accept=".xlsx" required></label>
+    <p class="field-note">До 5 МБ и 500 строк. Заголовки должны совпадать с шаблоном. Вместо формул вставляйте значения. Даты: ДД.ММ.ГГГГ или даты Excel. Валюта — рубли.</p>
+    <button class="button button-orange">Посмотреть перед обновлением</button>
+  </form>
+</section>
+{% endblock %}

@@ -19,6 +19,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.middleware.proxy_fix import ProxyFix
 from content import COMPANY, SERVICES, BUILDINGS, MODELS, FAQ, EXTRA
+from project_sheets import HEADERS, register_sheets
+from photo_library import register_photos
 
 ROOT = Path(__file__).resolve().parent
 
@@ -409,7 +411,10 @@ def create_app(test_config=None):
     @protected()
     def project(project_id):
         item=get_project(project_id)
-        return render('project.html',item['title']+' — Металл-Каркас',project=item,
+        sheet=db().execute('SELECT * FROM project_sheets WHERE project_id=?', (project_id,)).fetchone()
+        return render('project.html',item['title']+' — Металл-Каркас',project=item, sheet_headers=HEADERS,
+                      sheet_rows=json.loads(sheet['payload']) if sheet else [],
+                      sheet_updated=sheet['updated_at'] if sheet else None,
                       documents=db().execute('SELECT * FROM files WHERE project_id=? ORDER BY id DESC',(project_id,)).fetchall(),
                       updates=db().execute('SELECT * FROM updates WHERE project_id=? ORDER BY id DESC',(project_id,)).fetchall())
 
@@ -468,7 +473,9 @@ def create_app(test_config=None):
                     flash('Контакты обновлены.')
                 elif action=='showcase':
                     image=request.form.get('image','')
-                    if image not in [a['src'] for a in assets().values()]: raise ValueError('Выберите изображение из библиотеки сайта.')
+                    if image not in [a['src'] for a in assets().values()] and not db().execute(
+                        "SELECT 1 FROM photos WHERE '/media/' || storage_name=?", (image,)).fetchone():
+                        raise ValueError('Выберите изображение из библиотеки сайта.')
                     title=request.form.get('title','').strip()[:160]
                     description=request.form.get('description','').strip()[:3000]
                     if not title or not description: raise ValueError('Укажите название и состав выполненных работ.')
@@ -487,6 +494,7 @@ def create_app(test_config=None):
             if not invitation:
                 return redirect('/admin')
         return render('admin.html','Панель управления — Металл-Каркас',invitation=invitation,
+                      photos=db().execute('SELECT * FROM photos ORDER BY id DESC').fetchall(),
                       leads=db().execute('SELECT * FROM leads ORDER BY id DESC LIMIT 200').fetchall(),
                       clients=db().execute("SELECT id,name,email FROM users WHERE role='client' ORDER BY name").fetchall(),
                       projects=db().execute('SELECT p.*,u.name AS client_name FROM projects p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC').fetchall(),
@@ -572,9 +580,13 @@ def create_app(test_config=None):
             with tarfile.open(target,'w:gz') as archive:
                 archive.add(snapshot,arcname='site.sqlite3')
                 archive.add(data/'files',arcname='files')
+                archive.add(data/'media',arcname='media')
         finally:
             snapshot.unlink(missing_ok=True)
         click.echo('Резервная копия создана. Храните её вне публичного сайта и репозитория.')
+
+    register_sheets(app, db, protected, get_project, render)
+    register_photos(app, db, protected, render, data)
 
     return app
 
