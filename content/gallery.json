@@ -1,0 +1,50 @@
+[
+  {
+    "id": "source-0",
+    "title": "Ангар из металлоконструкций",
+    "description": "Фотография из галереи Металл-Каркас. Обсудите подходящее решение для вашего объекта.",
+    "image": "/static/images/web/hero.webp",
+    "category": "buildings",
+    "location": ""
+  },
+  {
+    "id": "source-1",
+    "title": "Монтаж металлического каркаса",
+    "description": "Фотография из галереи Металл-Каркас. Обсудите подходящее решение для вашего объекта.",
+    "image": "/static/images/web/fabrication.webp",
+    "category": "construction",
+    "location": ""
+  },
+  {
+    "id": "source-2",
+    "title": "Арочное здание",
+    "description": "Фотография из галереи Металл-Каркас. Обсудите подходящее решение для вашего объекта.",
+    "image": "/static/images/web/hangar.webp",
+    "category": "buildings",
+    "location": ""
+  },
+  {
+    "id": "source-3",
+    "title": "Складское здание",
+    "description": "Фотография из галереи Металл-Каркас. Обсудите подходящее решение для вашего объекта.",
+    "image": "/static/images/web/warehouse.webp",
+    "category": "buildings",
+    "location": ""
+  },
+  {
+    "id": "source-4",
+    "title": "Ограждающие конструкции ангара",
+    "description": "Фотография из галереи Металл-Каркас. Обсудите подходящее решение для вашего объекта.",
+    "image": "/static/images/web/panels.webp",
+    "category": "construction",
+    "location": ""
+  },
+  {
+    "id": "source-5",
+    "title": "Строительная площадка",
+    "description": "Фотография из галереи Металл-Каркас. Обсудите подходящее решение для вашего объекта.",
+    "image": "/static/images/web/concrete.webp",
+    "category": "construction",
+    "location": ""
+  }
+]

@@ -1,0 +1,114 @@
+{
+  "hero": {
+    "src": "/static/images/web/hero.webp",
+    "width": 1200,
+    "height": 900,
+    "source": "https://metalcarcase.ru/thumb/2/OSEasMfOJfIsuPrlB396pQ/1200r/d/pc142545.jpg",
+    "small": "/static/images/web/hero-small.webp"
+  },
+  "hangar": {
+    "src": "/static/images/web/hangar.webp",
+    "width": 1200,
+    "height": 900,
+    "source": "https://metalcarcase.ru/thumb/2/YHD4PB2vpEy333Z2rLC6bQ/1200r/d/pc142549.jpg",
+    "small": "/static/images/web/hangar-small.webp"
+  },
+  "warehouse": {
+    "src": "/static/images/web/warehouse.webp",
+    "width": 1200,
+    "height": 900,
+    "source": "https://metalcarcase.ru/thumb/2/jLV4UCuc9YfXFXI4PO1ZlA/1200r/d/pc142547.jpg",
+    "small": "/static/images/web/warehouse-small.webp"
+  },
+  "fabrication": {
+    "src": "/static/images/web/fabrication.webp",
+    "width": 1600,
+    "height": 1200,
+    "source": "https://metalcarcase.ru/d/p2012573.jpg",
+    "small": "/static/images/web/fabrication-small.webp"
+  },
+  "assembly": {
+    "src": "/static/images/web/assembly.webp",
+    "width": 900,
+    "height": 630,
+    "source": "https://metalcarcase.ru/thumb/2/zOT_HgvU8UKZpelRithDcQ/r/d/montazh.jpg",
+    "small": "/static/images/web/assembly-small.webp"
+  },
+  "concrete": {
+    "src": "/static/images/web/concrete.webp",
+    "width": 1600,
+    "height": 1200,
+    "source": "https://metalcarcase.ru/thumb/2/5B4gRCtphTpccNiAGbWJ-g/3020r/d/snapedit_1704356920025.jpg",
+    "small": "/static/images/web/concrete-small.webp"
+  },
+  "panels": {
+    "src": "/static/images/web/panels.webp",
+    "width": 1600,
+    "height": 1200,
+    "source": "https://metalcarcase.ru/thumb/2/9TwhWO_rGzhzK2-3tc5auA/r/d/pc142551.jpg",
+    "small": "/static/images/web/panels-small.webp"
+  },
+  "frame": {
+    "src": "/static/images/web/frame.webp",
+    "width": 800,
+    "height": 600,
+    "source": "https://metalcarcase.ru/thumb/2/bzSWFs9aFdBosXDi-1en6A/1200r/d/tpl25_25003186_3.jpg",
+    "small": "/static/images/web/frame-small.webp"
+  },
+  "model-office": {
+    "src": "/static/images/web/model-office.webp",
+    "width": 720,
+    "height": 405,
+    "source": "https://sketchfab.com/3d-models/863caae7c9874404baee0aee6eae2bd5",
+    "small": "/static/images/web/model-office-small.webp"
+  },
+  "model-arch": {
+    "src": "/static/images/web/model-arch.webp",
+    "width": 720,
+    "height": 405,
+    "source": "https://sketchfab.com/3d-models/5f078a2a8d0540239b35f6b1c7f5db44",
+    "small": "/static/images/web/model-arch-small.webp"
+  },
+  "model-unit": {
+    "src": "/static/images/web/model-unit.webp",
+    "width": 720,
+    "height": 405,
+    "source": "https://sketchfab.com/3d-models/df887fde7e40436e933680efc1f6559e",
+    "small": "/static/images/web/model-unit-small.webp"
+  },
+  "model-wash": {
+    "src": "/static/images/web/model-wash.webp",
+    "width": 720,
+    "height": 405,
+    "source": "https://sketchfab.com/3d-models/64b89828c5f844fb945b99d05779e580",
+    "small": "/static/images/web/model-wash-small.webp"
+  },
+  "drawing": {
+    "src": "/static/images/web/drawing.webp",
+    "width": 800,
+    "height": 566,
+    "source": "https://metalcarcase.ru/thumb/2/YRAn2dK61qZITflIgdzBiQ/r/d/eskiz.jpg",
+    "small": "/static/images/web/drawing-small.webp"
+  },
+  "storage": {
+    "src": "/static/images/web/storage.webp",
+    "width": 709,
+    "height": 556,
+    "source": "https://metalcarcase.ru/thumb/2/xTWKrHQFVUv48JVkD-67Hw/1200r/d/sklad2.jpg",
+    "small": "/static/images/web/storage-small.webp"
+  },
+  "agriculture": {
+    "src": "/static/images/web/agriculture.webp",
+    "width": 1200,
+    "height": 800,
+    "source": "https://metalcarcase.ru/thumb/2/70ItyGhVnkt3rbDYRlO1eQ/1200r/d/zhivotnovod.jpg",
+    "small": "/static/images/web/agriculture-small.webp"
+  },
+  "modular": {
+    "src": "/static/images/web/modular.webp",
+    "width": 512,
+    "height": 300,
+    "source": "https://metalcarcase.ru/thumb/2/1-obvXj1xg_wOq2C_FNczQ/r/d/moduli333-transformed.jpg",
+    "small": "/static/images/web/modular-small.webp"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "source": "https://metalcarcase.ru/",
+  "pages": 27,
+  "images": 239,
+  "failures": [
+    {
+      "url": "https://metalcarcase.ru/widgets/Form adaptive/service/default.gif",
+      "error": "404 Client Error: Not Found for url: https://metalcarcase.ru/widgets/Form%20adaptive/service/default.gif"
+    }
+  ]
+}
