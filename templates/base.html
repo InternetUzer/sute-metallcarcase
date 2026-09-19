@@ -1,5 +1,5 @@
 {% macro arrow() %}<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h15M13 5l7 7-7 7" stroke="currentColor" stroke-width="1.6"/></svg>{% endmacro %}
-{% macro picture(key, alt, eager=false, cls='') %}{% set a=assets.get(key) %}{% if a %}<img class="{{ cls }}" src="{{ a.src }}" srcset="{{ a.small }} 640w, {{ a.src }} {{ a.width }}w" sizes="(max-width: 700px) 100vw, 50vw" width="{{ a.width }}" height="{{ a.height }}" alt="{{ alt }}" {% if eager %}fetchpriority="high"{% else %}loading="lazy"{% endif %} decoding="async">{% endif %}{% endmacro %}
+{% macro picture(key, alt, eager=false, cls='') %}{% set a=assets.get(key) %}{% if a %}<img class="{{ cls }}" src="{{ a.src }}" {% if a.small %}srcset="{{ a.small }} 640w, {{ a.src }} {{ a.width }}w"{% endif %} sizes="(max-width: 700px) 100vw, 50vw" width="{{ a.width }}" height="{{ a.height }}" alt="{{ a.alt or alt }}"{% if a.description %} title="{{ a.description }}"{% endif %} {% if eager %}fetchpriority="high"{% else %}loading="lazy"{% endif %} decoding="async">{% endif %}{% endmacro %}
 {% macro cta(label='Обсудить ваш проект', text='Расскажите, что нужно построить или выполнить. Чертежи и точные размеры можно уточнить вместе.') %}<section class="cta-band"><div class="container cta-inner"><div><span class="eyebrow">Следующий шаг</span><h2>{{ label }}</h2><p>{{ text }}</p></div><a class="button button-white" href="/request">Запросить расчёт {{ arrow() }}</a></div></section>{% endmacro %}
 {% macro faq_list(items) %}<div class="faq-list">{% for question,answer in items %}<details><summary>{{ question }}<span aria-hidden="true">+</span></summary><p>{{ answer }}</p></details>{% endfor %}</div>{% endmacro %}
 {% macro hidden_csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
@@ -8,6 +8,9 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title><meta name="description" content="{{ description }}">
+  {% if seo_noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+  {% if seo_verification.google %}<meta name="google-site-verification" content="{{ seo_verification.google }}">{% endif %}
+  {% if seo_verification.yandex %}<meta name="yandex-verification" content="{{ seo_verification.yandex }}">{% endif %}
   <link rel="canonical" href="{{ canonical }}"><meta name="theme-color" content="#182021">
   <meta property="og:type" content="website"><meta property="og:locale" content="ru_RU"><meta property="og:site_name" content="Металл-Каркас"><meta property="og:title" content="{{ title }}"><meta property="og:description" content="{{ description }}"><meta property="og:url" content="{{ canonical }}">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/site.css">

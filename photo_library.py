@@ -5,6 +5,7 @@ import warnings
 
 from flask import abort, flash, redirect, request, send_file, url_for
 from PIL import Image, ImageOps, UnidentifiedImageError
+from media_catalog import MediaCatalog
 
 
 def convert_photo(payload):
@@ -32,7 +33,7 @@ def convert_photo(payload):
         raise ValueError('Фотография повреждена или слишком большая. Выберите другой файл.') from None
 
 
-def register_photos(app, db, protected, render, data):
+def register_photos(app, db, protected, render, data, root):
     folder = data / 'media'
     folder.mkdir(exist_ok=True)
     with app.app_context():
@@ -41,6 +42,9 @@ def register_photos(app, db, protected, render, data):
             title TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
         db().commit()
+
+    library = MediaCatalog(app, db, root)
+    library.register(app, protected, render, data, convert_photo)
 
     @app.route('/admin/photos', methods=['GET', 'POST'])
     @protected(admin=True)
@@ -75,7 +79,7 @@ def register_photos(app, db, protected, render, data):
                     target.unlink(missing_ok=True)
                 raise
         return render('photos.html', 'Фотографии — Металл-Каркас',
-                      photos=db().execute('SELECT * FROM photos ORDER BY id DESC').fetchall(), error=error), 422 if error else 200
+                      photos=library.photos(), tree=library.tree(), photo_usage=library.photo_usage, error=error), 422 if error else 200
 
     @app.get('/admin/photos/<int:photo_id>/image')
     @protected(admin=True)
@@ -87,11 +91,11 @@ def register_photos(app, db, protected, render, data):
 
     @app.get('/media/<storage>')
     def public_photo(storage):
-        photo = db().execute('''SELECT p.storage_name FROM photos p WHERE p.storage_name=?
-            AND EXISTS(SELECT 1 FROM showcases s WHERE s.image=? AND s.published=1)''',
-            (storage, '/media/' + storage)).fetchone()
-        if not photo:
+        photo = db().execute('SELECT * FROM photos WHERE storage_name=?', (storage,)).fetchone()
+        if not photo or not library.is_public(storage):
             abort(404)
         response = send_file(folder / photo['storage_name'], mimetype='image/webp')
         response.headers['Cache-Control'] = 'no-store'
         return response
+
+    return library
