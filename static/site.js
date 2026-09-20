@@ -23,7 +23,13 @@
         if (!card.hidden) visible++;
       });
       const empty = document.querySelector('.filter-empty');
-      if (empty) empty.hidden = visible !== 0;
+      if (empty) {
+        empty.hidden = visible !== 0;
+        const link = empty.querySelector('a');
+        if (link) link.href = button.dataset.requestUrl || '/request';
+        const heading = empty.querySelector('h2');
+        if (heading) heading.textContent = button.dataset.filter === 'all' ? 'Фотографии работ' : button.textContent;
+      }
     });
   });
   const dialog = document.querySelector('.lightbox');
@@ -63,6 +69,11 @@
     });
   });
   document.querySelector('.form-errors[tabindex]')?.focus();
+  const openFileSection = () => {
+    if (window.location.hash === '#files') document.querySelector('details#files')?.setAttribute('open', '');
+  };
+  openFileSection();
+  window.addEventListener('hashchange', openFileSection);
   const serviceInputs = Array.from(document.querySelectorAll('.enquiry-form input[name="services"]'));
   const parameterGroups = Array.from(document.querySelectorAll('[data-param-services]'));
   const updateParameters = () => {

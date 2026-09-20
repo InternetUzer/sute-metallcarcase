@@ -1,0 +1,7 @@
+<div class="owner-card-grid">{% for card in cards %}<article class="owner-card" id="content-card-{{ card.id }}">
+{% if card.image %}<img src="{{ card.image }}" alt="{{ card.alt or card.name }}" width="{{ card.width }}" height="{{ card.height }}" loading="lazy">{% endif %}
+<div class="owner-card-copy"><h3>{{ card.name or 'Название не заполнено' }}</h3>
+{% if card.role %}<p class="eyebrow">{{ card.role }}</p>{% endif %}{% if card.location %}<p>{{ card.location }}</p>{% endif %}
+{% if card.kind=='estimate' %}<dl class="content-facts">{% for key,label in [('scope','Объект и комплектация'),('amount','Стоимость'),('date','Дата примера'),('duration','Срок выполнения'),('includes','Включено'),('excludes','Не включено'),('delivery','Доставка и площадка'),('conditions','Условия расчёта')] %}{% if card.get(key) %}<dt>{{ label }}</dt><dd class="preserve-lines">{{ card.get(key) }}</dd>{% endif %}{% endfor %}</dl><p class="field-note">Пример для указанной комплектации и даты. Стоимость и сроки вашего объекта уточняются по исходным данным.</p>
+{% else %}<p class="preserve-lines">{{ card.body }}</p>{% endif %}
+{% if card.kind=='review' %}<p class="field-note">Источник: {% if card.source_url %}<a href="{{ card.source_url }}" target="_blank" rel="noopener noreferrer">{{ card.source_name }} ↗</a>{% else %}{{ card.source_name }}{% endif %}{% if card.date %} · {{ card.date }}{% endif %}</p>{% endif %}</div></article>{% endfor %}</div>

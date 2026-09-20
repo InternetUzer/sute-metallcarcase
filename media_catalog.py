@@ -135,11 +135,11 @@ class MediaCatalog:
 
     def photo_usage(self, photo):
         src = '/media/' + photo['storage_name']
-        return [(s['slot'], s['title'], self.usage(s['slot'])) for s in self.slots() if s['src'] == src] + self.services.photo_usage(photo)
+        return [(s['slot'], s['title'], self.usage(s['slot'])) for s in self.slots() if s['src'] == src] + self.services.photo_usage(photo) + self.owner_content.photo_usage(photo)
 
     def is_public(self, storage):
         src = '/media/' + storage
-        return self.services.is_public(storage) or any(a['src'] == src and self.asset_usage(key) for key, a in self.assets().items()) or any(g['image'] == src for g in self.gallery())
+        return self.services.is_public(storage) or self.owner_content.is_public(storage) or any(a['src'] == src and self.asset_usage(key) for key, a in self.assets().items()) or any(g['image'] == src for g in self.gallery())
 
     def tree(self):
         assets = self.assets()
