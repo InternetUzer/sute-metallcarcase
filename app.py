@@ -22,6 +22,9 @@ from content import COMPANY, SERVICES, BUILDINGS, MODELS, FAQ, EXTRA
 from project_sheets import HEADERS, register_sheets
 from photo_library import register_photos
 from seo_panel import SEOPanel
+from lead_analytics import LeadAnalytics, PUBLIC_ENDPOINTS
+from case_studies import CaseStudies
+from enquiry_fields import GROUPS, LABELS, parse_parameters
 
 ROOT = Path(__file__).resolve().parent
 
@@ -35,7 +38,7 @@ def create_app(test_config=None):
         SITE_INDEXABLE=os.environ.get('SITE_INDEXABLE') == '1',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
         SESSION_COOKIE_SECURE=production, PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
-        MAX_CONTENT_LENGTH=25*1024*1024, MAX_FORM_PARTS=40, MAX_FORM_MEMORY_SIZE=100_000,
+        MAX_CONTENT_LENGTH=25*1024*1024, MAX_FORM_PARTS=80, MAX_FORM_MEMORY_SIZE=100_000,
     )
     if test_config:
         app.config.update(test_config)
@@ -123,8 +126,14 @@ def create_app(test_config=None):
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
         response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
-        # Only the intentionally activated Sketchfab viewer may load third-party content.
         response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; frame-src https://sketchfab.com; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+        settings = analytics.settings()
+        if analytics.allowed() and request.endpoint in PUBLIC_ENDPOINTS and settings.get('enabled') == '1' and settings.get('counter_id'):
+            policy = response.headers['Content-Security-Policy']
+            policy = policy.replace("script-src 'self'", "script-src 'self' https://mc.yandex.ru")
+            policy = policy.replace("connect-src 'self'", "connect-src 'self' https://mc.yandex.ru https://mc.yandex.com")
+            policy = policy.replace("img-src 'self' data:", "img-src 'self' data: https://mc.yandex.ru https://mc.yandex.com")
+            response.headers['Content-Security-Policy'] = policy
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot'))
@@ -144,7 +153,14 @@ def create_app(test_config=None):
                     assets=assets(), csrf_token=csrf_token, year=datetime.now().year,
                     canonical=app.config['SITE_URL'] + request.path,
                     site_url=app.config['SITE_URL'], indexable=app.config['SITE_INDEXABLE'],
-                    contact_email=company['email'])
+                    contact_email=company['email'], parameter_groups=GROUPS)
+
+    @app.template_filter('lead_parameters')
+    def lead_parameters(value):
+        try:
+            return [(LABELS.get(key, key), val) for key, val in json.loads(value).items() if val and val != 'Пока не знаю']
+        except (ValueError, AttributeError):
+            return []
 
     def protected(admin=False):
         def decorator(f):
@@ -162,7 +178,7 @@ def create_app(test_config=None):
         return render_template(name, **seo.metadata(request.path, title, description), **kwargs)
 
     def public_gallery():
-        return media.gallery()
+        return cases.gallery() + media.gallery()
 
     @app.get('/')
     def home():
@@ -294,15 +310,8 @@ def create_app(test_config=None):
                 files=uploaded_files()
             except ValueError as error:
                 errors.append(str(error))
-            parameters={k:values.get(k,'').strip()[:80] for k in ('width','length','height','insulation','purpose')}
-            for key in ('width','length','height'):
-                if parameters[key]:
-                    try:
-                        value=float(parameters[key].replace(',','.'))
-                        if not 0<value<=1000: raise ValueError()
-                    except ValueError:
-                        errors.append('Размеры указываются числом от 0 до 1000 метров или оставляются пустыми.')
-                        break
+            parameters, parameter_errors = parse_parameters(values, selected_services)
+            errors.extend(parameter_errors)
             if not errors:
                 number='МК-'+datetime.now().strftime('%y%m%d')+'-'+secrets.token_hex(3).upper()
                 model_id=values.get('model_id','')
@@ -311,6 +320,7 @@ def create_app(test_config=None):
                                     (number,contact,body,city,json.dumps(selected_services),model_id,json.dumps(parameters,ensure_ascii=False)))
                 try:
                     store_files(files,lead_id=cursor.lastrowid)
+                    analytics.save_lead(cursor.lastrowid)
                     db().commit()
                 except Exception:
                     db().rollback()
@@ -318,6 +328,7 @@ def create_app(test_config=None):
                     raise
                 notify('Новая заявка '+number, 'Новая заявка сохранена. Откройте панель управления: '+app.config['SITE_URL']+'/admin')
                 session['last_request']=number
+                session['lead_goal'] = True
                 return redirect(url_for('request_success'))
         return render('request.html','Запросить расчёт строительства или монтажа — Металл-Каркас',
                       'Опишите объект, выберите работы и приложите чертежи. Сохраним заявку и свяжемся для уточнения расчёта.',
@@ -326,7 +337,7 @@ def create_app(test_config=None):
     @app.get('/request/success')
     def request_success():
         if not session.get('last_request'): return redirect('/request')
-        return render('success.html','Заявка принята — Металл-Каркас',number=session['last_request'])
+        return render('success.html','Заявка принята — Металл-Каркас',number=session['last_request'], lead_goal=session.pop('lead_goal', False))
 
     @app.route('/login',methods=['GET','POST'])
     def login():
@@ -493,7 +504,7 @@ def create_app(test_config=None):
                 return redirect('/admin')
         return render('admin.html','Панель управления — Металл-Каркас',invitation=invitation,
                       photos=db().execute('SELECT * FROM photos ORDER BY id DESC').fetchall(),
-                      leads=db().execute('SELECT * FROM leads ORDER BY id DESC LIMIT 200').fetchall(),
+                      leads=db().execute('SELECT l.*,a.source,a.medium,a.campaign,a.landing FROM leads l LEFT JOIN lead_attribution a ON a.lead_id=l.id ORDER BY l.id DESC LIMIT 200').fetchall(),
                       clients=db().execute("SELECT id,name,email FROM users WHERE role='client' ORDER BY name").fetchall(),
                       projects=db().execute('SELECT p.*,u.name AS client_name FROM projects p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC').fetchall(),
                       attachments=db().execute('SELECT * FROM files WHERE lead_id IS NOT NULL').fetchall(),
@@ -574,12 +585,15 @@ def create_app(test_config=None):
                 archive.add(snapshot,arcname='site.sqlite3')
                 archive.add(data/'files',arcname='files')
                 archive.add(data/'media',arcname='media')
+                archive.add(data/'case-files',arcname='case-files')
         finally:
             snapshot.unlink(missing_ok=True)
         click.echo('Резервная копия создана. Храните её вне публичного сайта и репозитория.')
 
     register_sheets(app, db, protected, get_project, render)
     media = register_photos(app, db, protected, render, data, ROOT)
+    cases = CaseStudies(app, db, protected, render, data)
+    analytics = LeadAnalytics(app, db, protected, render, limited)
     seo = SEOPanel(app, db, ROOT)
     seo.register(app, protected, render)
 

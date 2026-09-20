@@ -35,6 +35,7 @@ class MediaCatalog:
                 'curated': [dict(r) for r in self.db().execute('SELECT * FROM showcases ORDER BY id DESC')],
                 'photos': [dict(r) for r in self.db().execute('SELECT p.*,t.alt,t.description FROM photos p LEFT JOIN photo_text t ON t.photo_id=p.id ORDER BY p.id DESC')],
                 'edits': {r['slot']: dict(r) for r in self.db().execute('SELECT * FROM media_edits')},
+                'case_count': self.db().execute('SELECT count(*) FROM case_studies WHERE published=1').fetchone()[0],
             }
         return g.media_snapshot
 
@@ -112,7 +113,7 @@ class MediaCatalog:
             if item['source_image'] == original and not (override and override['photo_id']):
                 if item['published']:
                     usage.append(('/produkciya#' + str(item['id']), 'Галерея · ' + item['title']))
-                    if item in self.gallery()[:3]: usage.append(('/', 'Главная · ' + item['title']))
+                    if item in self.home_gallery(): usage.append(('/', 'Главная · ' + item['title']))
         return list(dict.fromkeys(usage))
 
     def usage(self, slot):
@@ -121,8 +122,11 @@ class MediaCatalog:
         item = next((r for r in self.gallery(True) if r['slot'] == slot), None)
         if not item or not item['published']: return []
         links = [('/produkciya#' + str(item['id']), 'Галерея · ' + item['title'])]
-        if any(r['slot'] == slot for r in self.gallery()[:3]): links.append(('/', 'Главная · последние объекты'))
+        if any(r['slot'] == slot for r in self.home_gallery()): links.append(('/', 'Главная · последние объекты'))
         return links
+
+    def home_gallery(self):
+        return self.gallery()[:max(0, 3 - self.snapshot()['case_count'])]
 
     def slots(self):
         return list(self.assets().values()) + self.gallery(True)
