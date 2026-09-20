@@ -1,11 +1,12 @@
-/* Light surfaces and strong text contrast, including on phones in daylight. */
+/* Warm grey from the approved concept, gently lightened for daylight. */
 :root {
   color-scheme: light;
   --ink: #172331;
   --muted: #425365;
-  --paper: #ffffff;
-  --wash: #f3f6fa;
-  --line: #ccd6e2;
+  --paper: #eeede7;
+  --wash: #e6e6df;
+  --panel: #f5f4ef;
+  --line: #c8cdc6;
   --accent: #254889;
   --accent-hover: #193669;
   /* Existing templates use the original accent token and button class. */
@@ -13,6 +14,7 @@
 }
 
 body { background: var(--paper); color: var(--ink); }
+.site-header, .main-nav, .admin-nav, .mobile-contact { background: var(--paper); }
 ::selection { background: #d7e5fa; color: var(--ink); }
 :focus-visible { outline-color: var(--accent); }
 .button-orange, .cta-band .button-white { background: var(--accent); color: #fff; }
@@ -26,8 +28,8 @@ body { background: var(--paper); color: var(--ink); }
   border-radius: 0;
 }
 
-.hero { background: #f7f9fc; }
-.hero-copy { background: #f7f9fc; color: var(--ink); }
+.hero { background: var(--paper); }
+.hero-copy { background: var(--paper); color: var(--ink); }
 .hero-copy-inner { padding-top: 56px; padding-bottom: 28px; }
 .hero h1 {
   font-size: clamp(2rem, 3.65vw, 3.4rem);
@@ -49,37 +51,37 @@ body { background: var(--paper); color: var(--ink); }
 .hero .text-link:hover { color: var(--accent); }
 .hero-copy .hero-help { font-size: .875rem; line-height: 1.6; margin: 0 0 30px; }
 .hero-bottom { color: var(--muted); border-color: var(--line); font-size: .75rem; flex-wrap: wrap; }
-.image-note { background: #fff; color: var(--ink); font-size: .9375rem; }
+.image-note { background: var(--panel); color: var(--ink); font-size: .9375rem; }
 .image-note a { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
 .task p { font-size: .9375rem; line-height: 1.55; }
 .task-no { font-size: .875rem; }
 .service-name h3, .service-name h2 { line-height: 1.35; }
 
 /* Place captions on a solid surface, independent of the photograph. */
-.building-card { background: #fff; color: var(--ink); border: 1px solid var(--line); min-height: 0; }
+.building-card { background: var(--panel); color: var(--ink); border: 1px solid var(--line); min-height: 0; }
 .building-card > img { opacity: 1; height: 330px; }
-.building-card > div { position: relative; inset: auto; padding: 25px 82px 28px 28px; background: #fff; }
+.building-card > div { position: relative; inset: auto; padding: 25px 82px 28px 28px; background: var(--panel); }
 .building-card .eyebrow { color: var(--muted); font-size: .75rem; }
 .building-card h3, .building-card h2 { color: var(--ink); font-size: 2rem; }
 .building-card .circle-arrow { border-color: #78889a; color: var(--accent); bottom: 26px; right: 24px; }
 .building-card:hover h3, .building-card:hover h2 { color: var(--accent); }
 
-.model-feature { background: #edf3fa; color: var(--ink); }
+.model-feature { background: var(--wash); color: var(--ink); }
 .model-feature-copy p, .model-footnote { color: var(--muted); }
 .model-feature .eyebrow { color: var(--accent); }
 .model-footnote { font-size: .875rem; line-height: 1.6; }
 .model-feature-image img { opacity: 1; }
 .model-poster > img { filter: none; }
-.model-start { background: #fff; color: var(--ink); padding: 20px; border: 1px solid var(--line); }
+.model-start { background: var(--panel); color: var(--ink); padding: 20px; border: 1px solid var(--line); }
 .model-start .eyebrow { color: var(--muted); }
 .model-start small { background: transparent; color: var(--muted); padding: 0; font-size: .875rem; }
-.lightbox { background: #fff; color: var(--ink); }
+.lightbox { background: var(--panel); color: var(--ink); }
 .dialog-close { color: var(--ink); }
 
-.cta-band { background: #eaf1fa; color: var(--ink); border-block: 1px solid var(--line); }
+.cta-band { background: var(--wash); color: var(--ink); border-block: 1px solid var(--line); }
 .cta-inner .eyebrow { color: var(--accent); }
 .cta-inner p { color: var(--muted); font-size: 1rem; }
-.footer { background: #f7f9fc; color: var(--muted); }
+.footer { background: var(--paper); color: var(--muted); }
 .footer-brand, .footer-label, .footer-phone { color: var(--ink); }
 .footer-brand .footer-wordmark { color: var(--ink); }
 .footer-brand .footer-wordmark > span { color: #243b82; }

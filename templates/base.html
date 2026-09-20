@@ -11,12 +11,12 @@
   {% if seo_noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
   {% if seo_verification.google %}<meta name="google-site-verification" content="{{ seo_verification.google }}">{% endif %}
   {% if seo_verification.yandex %}<meta name="yandex-verification" content="{{ seo_verification.yandex }}">{% endif %}
-  <link rel="canonical" href="{{ canonical }}"><meta name="theme-color" content="#ffffff"><meta name="color-scheme" content="light">
+  <link rel="canonical" href="{{ canonical }}"><meta name="theme-color" content="#eeede7"><meta name="color-scheme" content="light">
   <meta property="og:type" content="website"><meta property="og:locale" content="ru_RU"><meta property="og:site_name" content="Металл-Каркас"><meta property="og:title" content="{{ title }}"><meta property="og:description" content="{{ description }}"><meta property="og:url" content="{{ canonical }}">
   <link rel="icon" href="/static/brand/logo-stamp-v2.png" type="image/png">
   <link rel="apple-touch-icon" href="/static/brand/logo-stamp-v2.png">
   <link rel="stylesheet" href="/static/site.css?v=brand-logo-1">
-  <link rel="stylesheet" href="/static/daylight.css?v=1">
+  <link rel="stylesheet" href="/static/daylight.css?v=2">
   <script src="/static/site.js" defer></script>
   {% if analytics_public %}<meta name="analytics-csrf" content="{{ csrf_token() }}"><script src="/static/analytics.js" data-counter="{{ metrica_id }}" defer></script>{% endif %}
 </head>
