@@ -14,10 +14,12 @@ NAMES = {'/': 'Главная', '/uslugi': 'Услуги', '/angary-i-sklady': '
 
 
 class SEOPanel:
-    def __init__(self, app, db, root):
-        self.app, self.db = app, db
+    def __init__(self, app, db, root, services):
+        self.app, self.db, self.services = app, db, services
         self.base_defaults = json.loads((root / 'content/seo-defaults.json').read_text())
-        for item in SERVICES + BUILDINGS:
+        for item in SERVICES:
+            self.base_defaults.pop('/' + item['slug'], None)
+        for item in BUILDINGS:
             self.base_defaults['/' + item['slug']] = {'title': item['title'], 'description': item['description'], 'name': item['name']}
         for slug, (name, body) in EXTRA.items():
             self.base_defaults['/' + slug] = {'title': name + ' — Металл-Каркас', 'description': body, 'name': name}
@@ -38,7 +40,10 @@ class SEOPanel:
         cases = {'/obekty/' + row['slug']: {'title': row['title'] + ' — Металл-Каркас',
                  'description': row['summary'], 'name': row['title']}
                  for row in self.db().execute('SELECT slug,title,summary FROM case_studies WHERE published=1')}
-        g.seo_page_defaults = {**self.base_defaults, **cases}
+        services = {'/' + item['slug']: {'title': item.get('title') or item['name'] + ' — Металл-Каркас',
+                    'description': item.get('description') or item.get('intro', ''), 'name': item['name']}
+                    for item in self.services.all(published=True)}
+        g.seo_page_defaults = {**self.base_defaults, **cases, **services}
         return g.seo_page_defaults
 
     def settings(self):
@@ -116,6 +121,9 @@ class SEOPanel:
         @protected(admin=True)
         def seo_page():
             path = request.args.get('path', '')
+            service = self.services.by_slug(path.removeprefix('/'))
+            if service and path == '/' + service['slug']:
+                return redirect(url_for('service_editor', service_id=service['id'], _anchor='seo'), code=303)
             page = self.get(path)
             if not page: abort(404)
             error = None

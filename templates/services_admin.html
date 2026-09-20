@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<section class="container section admin-page case-editor">
+  <a class="text-link" href="/admin">← Панель управления</a>
+  <div class="section-heading"><div><span class="eyebrow">Услуги сайта</span><h1>Виды работ</h1></div><a class="button button-orange" href="#create">Добавить вид работ {{ arrow() }}</a></div>
+  <p class="lead">Создайте новую услугу или скопируйте существующую. Черновик виден только администратору. Опубликованная услуга появляется на главной, в каталоге и в форме заявки.</p>
+  {% if error %}<p class="form-errors" role="alert" tabindex="-1">{{ error }}</p>{% endif %}
+  {% for item in catalog %}
+  <article class="service-admin-row">
+    <div class="service-admin-cover">{{ picture(item.image,item.name) }}</div>
+    <div><span class="status">{{ 'Опубликован' if item.published else 'Снят с публикации' if item.published_at else 'Черновик' }}</span><h2>{{ item.name }}</h2><p class="media-path">/{{ item.slug }} · Порядок: {{ item.position }}</p><p>{{ item.intro|truncate(180) }}</p></div>
+    <div class="service-admin-actions"><a class="button button-outline" href="/admin/services/{{ item.id }}">Редактировать</a><form method="post">{{ hidden_csrf() }}<input type="hidden" name="source_id" value="{{ item.id }}"><button class="text-link" type="submit">Создать копию {{ arrow() }}</button></form>{% if item.published %}<a class="text-link" href="/{{ item.slug }}" target="_blank" rel="noopener">Открыть на сайте ↗</a>{% endif %}</div>
+  </article>
+  {% endfor %}
+  <section class="section-small" id="create"><h2>Добавить вид работ</h2><form method="post" class="info-box">{{ hidden_csrf() }}<label>Название<input name="name" maxlength="180" required placeholder="Например, фасадные работы" value="{{ request.form.get('name','') }}"></label><label>Взять за основу<select name="source_id"><option value="">Создать с нуля</option>{% for item in catalog %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label><p class="field-note">Копируются тексты, фотографии и параметры заявки. Новая страница получает свой адрес и остаётся черновиком до публикации.</p><button type="submit" class="button button-orange">Создать черновик {{ arrow() }}</button></form></section>
+</section>{% endblock %}

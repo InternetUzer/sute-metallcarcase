@@ -24,6 +24,7 @@ from photo_library import register_photos
 from seo_panel import SEOPanel
 from lead_analytics import LeadAnalytics, PUBLIC_ENDPOINTS
 from case_studies import CaseStudies
+from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
 
 ROOT = Path(__file__).resolve().parent
@@ -38,7 +39,7 @@ def create_app(test_config=None):
         SITE_INDEXABLE=os.environ.get('SITE_INDEXABLE') == '1',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
         SESSION_COOKIE_SECURE=production, PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
-        MAX_CONTENT_LENGTH=25*1024*1024, MAX_FORM_PARTS=80, MAX_FORM_MEMORY_SIZE=100_000,
+        MAX_CONTENT_LENGTH=25*1024*1024, MAX_FORM_PARTS=1000, MAX_FORM_MEMORY_SIZE=100_000,
     )
     if test_config:
         app.config.update(test_config)
@@ -87,7 +88,8 @@ def create_app(test_config=None):
         db().commit()
 
     def assets():
-        return media.assets()
+        base = media.assets()
+        return {**base, **catalog.assets(base, preview=request.endpoint in ('service_preview', 'service_editor', 'services_admin'))}
 
     def csrf_token():
         if 'csrf' not in session:
@@ -149,17 +151,27 @@ def create_app(test_config=None):
         settings = {r['key']:r['value'] for r in db().execute('SELECT * FROM settings')}
         company = {**COMPANY, **settings}
         company['phone_link'] = '+' + re.sub(r'\D','',company['phone'])
-        return dict(company=company, services=SERVICES, buildings=BUILDINGS, models=MODELS,
+        return dict(company=company, services=catalog.all(published=True), all_services=catalog.all(), buildings=BUILDINGS, models=MODELS,
                     assets=assets(), csrf_token=csrf_token, year=datetime.now().year,
                     canonical=app.config['SITE_URL'] + request.path,
                     site_url=app.config['SITE_URL'], indexable=app.config['SITE_INDEXABLE'],
-                    contact_email=company['email'], parameter_groups=GROUPS)
+                    contact_email=company['email'], parameter_groups=catalog.parameter_groups())
 
     @app.template_filter('lead_parameters')
     def lead_parameters(value):
         try:
-            return [(LABELS.get(key, key), val) for key, val in json.loads(value).items() if val and val != 'Пока не знаю']
+            labels = {**LABELS, **catalog.field_labels()}
+            return [(labels.get(key, key), val) for key, val in json.loads(value).items() if val and val != 'Пока не знаю']
         except (ValueError, AttributeError):
+            return []
+
+    @app.template_filter('lead_service_names')
+    def lead_service_names(value):
+        names = {item['slug']: item['name'] for item in catalog.all()}
+        names['building'] = 'Здание под ключ'
+        try:
+            return [names.get(slug, slug) for slug in json.loads(value)]
+        except (ValueError, TypeError):
             return []
 
     def protected(admin=False):
@@ -197,9 +209,10 @@ def create_app(test_config=None):
 
     @app.get('/<slug>')
     def detail(slug):
-        for item in SERVICES + BUILDINGS:
+        for item in catalog.all(published=True) + BUILDINGS:
             if slug == item['slug']:
-                return render('detail.html', item['title'], item['description'], item=item, faqs=item.get('faq', FAQ[:3]))
+                return render('detail.html', item['title'], item['description'], item=item, faqs=item.get('faq', FAQ[:3]),
+                              service_pictures=catalog.pictures(item['id']) if 'id' in item else [])
         if slug in EXTRA:
             name, body = EXTRA[slug]
             return render('info.html', name + ' — Металл-Каркас', body, heading=name, body=body)
@@ -305,12 +318,12 @@ def create_app(test_config=None):
             if not body and not selected_services: errors.append('Выберите работы или кратко опишите задачу.')
             if values.get('consent')!='yes': errors.append('Подтвердите согласие на обработку данных заявки.')
             if values.get('website'): errors.append('Не удалось отправить заявку.')
-            if any(s not in [x['slug'] for x in SERVICES]+['building'] for s in selected_services): errors.append('Проверьте выбранные услуги.')
+            if any(s not in [x['slug'] for x in catalog.all(published=True)]+['building'] for s in selected_services): errors.append('Проверьте выбранные услуги. Возможно, страница обновилась — выберите доступные работы или опишите задачу.')
             try:
                 files=uploaded_files()
             except ValueError as error:
                 errors.append(str(error))
-            parameters, parameter_errors = parse_parameters(values, selected_services)
+            parameters, parameter_errors = parse_parameters(values, selected_services, catalog.parameter_groups())
             errors.extend(parameter_errors)
             if not errors:
                 number='МК-'+datetime.now().strftime('%y%m%d')+'-'+secrets.token_hex(3).upper()
@@ -592,10 +605,13 @@ def create_app(test_config=None):
 
     register_sheets(app, db, protected, get_project, render)
     media = register_photos(app, db, protected, render, data, ROOT)
+    catalog = ServiceCatalog(app, db, media, data)
+    media.services = catalog
     cases = CaseStudies(app, db, protected, render, data)
     analytics = LeadAnalytics(app, db, protected, render, limited)
-    seo = SEOPanel(app, db, ROOT)
+    seo = SEOPanel(app, db, ROOT, catalog)
     seo.register(app, protected, render)
+    catalog.register(protected, render)
 
     return app
 
