@@ -1,0 +1,15 @@
+{
+  "base_commit": "483e5e5f63e3125436c620cb41234a3f58dff544",
+  "files": [
+    {
+      "path": "templates/base.html",
+      "sha256": "1c97e5d155307d2c6db203a4fc5e02e81db24d0372f3cfa745cdd74912068282",
+      "base_sha256": "0e6fb7cfd5cf34f7e391f6e189107c917e950fb3361a869b3662abaa8b526396"
+    },
+    {
+      "path": "static/graphite.css",
+      "sha256": "25cc6dd7deee5c3ad15e5d026a9467dcd84158715321f98f0e23467951590f96",
+      "base_sha256": "f41ffe44a9db0d1f9980ab87841fe05c15f4135c01052f1775ba314b017dc8c6"
+    }
+  ]
+}
