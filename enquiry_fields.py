@@ -39,9 +39,9 @@ GROUPS = [
 ]
 
 
-def parse_parameters(values, selected):
+def parse_parameters(values, selected, groups=None):
     result, errors = {}, []
-    for group in GROUPS:
+    for group in GROUPS if groups is None else groups:
         if not set(group['services']).intersection(selected):
             continue
         for field in group['fields']:

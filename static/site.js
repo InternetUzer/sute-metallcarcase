@@ -82,9 +82,9 @@
     updateParameters();
   }
   document.querySelectorAll('form').forEach(form => {
-    form.addEventListener('submit', () => {
-      const button = form.querySelector('button[type="submit"]');
-      if (button && form.checkValidity()) { button.disabled = true; button.textContent = 'Отправляем…'; }
+    form.addEventListener('submit', event => {
+      const button = event.submitter;
+      if (button && !button.name && !event.defaultPrevented && form.checkValidity()) { button.disabled = true; button.textContent = 'Отправляем…'; }
     });
   });
   window.addEventListener('pageshow', event => {
@@ -98,5 +98,52 @@ for (const [inputKey, previewKey] of [['title','title'], ['description','descrip
   const preview = document.querySelector(`[data-seo-preview-${previewKey}]`);
   if (input && preview) input.addEventListener('input', () => {
     preview.textContent = input.value.trim() || preview.dataset.default;
+  });
+}
+
+// Service text blocks remain ordinary form fields; no HTML from user input is inserted.
+document.querySelectorAll('[data-add-block]').forEach(button => {
+  button.addEventListener('click', () => {
+    const key = button.dataset.addBlock;
+    const list = document.querySelector(`[data-block-list="${key}"]`);
+    const template = document.getElementById(`service-block-${key}`);
+    if (!list || !template) return;
+    if (list.children.length >= Number(list.dataset.maxBlocks)) {
+      button.textContent = `Добавлено максимум блоков: ${list.dataset.maxBlocks}`;
+      return;
+    }
+    list.append(template.content.cloneNode(true));
+    list.lastElementChild.querySelector('input')?.focus();
+  });
+});
+document.querySelectorAll('[data-block-list]').forEach(list => {
+  list.addEventListener('click', event => {
+    if (event.target.closest('[data-remove-block]')) {
+      event.target.closest('.service-text-pair')?.remove();
+      document.querySelector('[data-service-main]')?.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+  });
+});
+
+const serviceMainForm = document.querySelector('[data-service-main]');
+if (serviceMainForm) {
+  let unsavedService = false;
+  serviceMainForm.addEventListener('input', () => { unsavedService = true; });
+  serviceMainForm.addEventListener('change', () => { unsavedService = true; });
+  document.addEventListener('submit', event => {
+    if (event.target === serviceMainForm) {
+      unsavedService = false;
+    } else if (unsavedService) {
+      event.preventDefault();
+      const note = document.getElementById('service-save-note');
+      note.hidden = false;
+      serviceMainForm.querySelector('button[value="save"]').focus();
+    }
+  }, true);
+  window.addEventListener('beforeunload', event => {
+    if (unsavedService) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
   });
 }

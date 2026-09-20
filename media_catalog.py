@@ -94,9 +94,8 @@ class MediaCatalog:
     def asset_usage(self, key):
         usage = []
         if key == 'hero': usage.append(('/', 'Главная · первый экран'))
-        for item in SERVICES:
-            if item['image'] == key:
-                usage += [('/', 'Главная · услуги'), ('/uslugi', 'Список услуг'), ('/' + item['slug'], item['name'])]
+        for item in self.services.asset_services(key):
+            usage += [('/', 'Главная · услуги'), ('/uslugi', 'Список услуг'), ('/' + item['slug'], item['name'])]
         for item in BUILDINGS:
             if item['image'] == key:
                 usage += [('/', 'Главная · здания'), ('/angary-i-sklady', 'Ангары и склады'), ('/' + item['slug'], item['name'])]
@@ -136,11 +135,11 @@ class MediaCatalog:
 
     def photo_usage(self, photo):
         src = '/media/' + photo['storage_name']
-        return [(s['slot'], s['title'], self.usage(s['slot'])) for s in self.slots() if s['src'] == src]
+        return [(s['slot'], s['title'], self.usage(s['slot'])) for s in self.slots() if s['src'] == src] + self.services.photo_usage(photo)
 
     def is_public(self, storage):
         src = '/media/' + storage
-        return any(a['src'] == src and self.asset_usage(key) for key, a in self.assets().items()) or any(g['image'] == src for g in self.gallery())
+        return self.services.is_public(storage) or any(a['src'] == src and self.asset_usage(key) for key, a in self.assets().items()) or any(g['image'] == src for g in self.gallery())
 
     def tree(self):
         assets = self.assets()
