@@ -1,0 +1,25 @@
+{
+  "base_commit": "82777d5d9aa02d3014c5096742b6a748f3caf535",
+  "files": [
+    {
+      "path": "templates/base.html",
+      "sha256": "bac423b2f2c3fec7e3b66c94a2d405699f059572f7b2b55d8e0914e22b5ced49",
+      "base_sha256": "e0f8eb66785efa7b27f51dfec86afaf91796bc91033e34db8b512965580ddb7e"
+    },
+    {
+      "path": "templates/home.html",
+      "sha256": "a9ce5eb126860677fc675f2a8de05223cb06ccc65954bde426c54c4ebc60d795",
+      "base_sha256": "18d056b83fc1a7f71fd8ddaf95f33d9e51d4c4ddb8bfee08673104a3ad9ab824"
+    },
+    {
+      "path": "static/daylight.css",
+      "sha256": "dfea3985f8137544bb6dfa5ff7c83ea303ba5a07459deaa070c16c15ca97eaa0",
+      "base_sha256": null
+    },
+    {
+      "path": "static/brand/logo-stamp-v2.png",
+      "sha256": "b9bb760044685b1f8879aff33c16747611769505be25ae7ce465e17cbe260a3e",
+      "base_sha256": null
+    }
+  ]
+}
