@@ -18,6 +18,9 @@ h1, h2, h3 { font-weight: 500; }
 .brand-accent, .footer-brand .footer-wordmark > span { color: var(--accent); }
 .brand, .footer-brand .footer-wordmark { color: var(--ink); }
 .brand small { color: var(--muted); }
+/* Use the existing PNG alpha as a light blue mark; no background or asset edits. */
+.brand-filter-defs { position: absolute; pointer-events: none; }
+.brand-mark, .footer-mark { filter: url(#brand-on-graphite); }
 .button-orange, .cta-band .button-white, .success-mark {
   background: var(--accent);
   color: var(--on-accent);
