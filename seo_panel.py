@@ -5,7 +5,7 @@ import re
 from urllib.parse import urlparse
 from xml.sax.saxutils import escape
 
-from flask import abort, flash, redirect, request, url_for
+from flask import abort, flash, g, redirect, request, url_for
 from content import SERVICES, BUILDINGS, EXTRA
 
 NAMES = {'/': 'Главная', '/uslugi': 'Услуги', '/angary-i-sklady': 'Ангары и склады',
@@ -16,11 +16,11 @@ NAMES = {'/': 'Главная', '/uslugi': 'Услуги', '/angary-i-sklady': '
 class SEOPanel:
     def __init__(self, app, db, root):
         self.app, self.db = app, db
-        self.defaults = json.loads((root / 'content/seo-defaults.json').read_text())
+        self.base_defaults = json.loads((root / 'content/seo-defaults.json').read_text())
         for item in SERVICES + BUILDINGS:
-            self.defaults['/' + item['slug']] = {'title': item['title'], 'description': item['description'], 'name': item['name']}
+            self.base_defaults['/' + item['slug']] = {'title': item['title'], 'description': item['description'], 'name': item['name']}
         for slug, (name, body) in EXTRA.items():
-            self.defaults['/' + slug] = {'title': name + ' — Металл-Каркас', 'description': body, 'name': name}
+            self.base_defaults['/' + slug] = {'title': name + ' — Металл-Каркас', 'description': body, 'name': name}
         with app.app_context():
             db().executescript('''
                 CREATE TABLE IF NOT EXISTS seo_pages(
@@ -30,6 +30,16 @@ class SEOPanel:
                 CREATE TABLE IF NOT EXISTS seo_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             ''')
             db().commit()
+
+    @property
+    def defaults(self):
+        if hasattr(g, 'seo_page_defaults'):
+            return g.seo_page_defaults
+        cases = {'/obekty/' + row['slug']: {'title': row['title'] + ' — Металл-Каркас',
+                 'description': row['summary'], 'name': row['title']}
+                 for row in self.db().execute('SELECT slug,title,summary FROM case_studies WHERE published=1')}
+        g.seo_page_defaults = {**self.base_defaults, **cases}
+        return g.seo_page_defaults
 
     def settings(self):
         return {r['key']: r['value'] for r in self.db().execute('SELECT * FROM seo_settings')}

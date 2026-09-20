@@ -63,6 +63,24 @@
     });
   });
   document.querySelector('.form-errors[tabindex]')?.focus();
+  const serviceInputs = Array.from(document.querySelectorAll('.enquiry-form input[name="services"]'));
+  const parameterGroups = Array.from(document.querySelectorAll('[data-param-services]'));
+  const updateParameters = () => {
+    const selected = serviceInputs.filter(input => input.checked).map(input => input.value);
+    let visible = 0;
+    parameterGroups.forEach(group => {
+      const show = group.dataset.paramServices.split(' ').some(service => selected.includes(service));
+      group.hidden = !show;
+      group.disabled = !show;
+      if (show) visible++;
+    });
+    const hint = document.querySelector('[data-parameters-empty]');
+    if (hint) hint.hidden = visible > 0;
+  };
+  if (parameterGroups.length) {
+    serviceInputs.forEach(input => input.addEventListener('change', updateParameters));
+    updateParameters();
+  }
   document.querySelectorAll('form').forEach(form => {
     form.addEventListener('submit', () => {
       const button = form.querySelector('button[type="submit"]');
