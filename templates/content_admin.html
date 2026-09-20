@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<section class="container section admin-page"><a class="text-link" href="/admin">← Панель управления</a>
+<h1>Содержание сайта</h1><p class="lead">Заполняйте сведения, сохраняйте черновик и открывайте предпросмотр. На сайте появится только опубликованная версия.</p>
+<div class="content-admin-grid">{% for key,spec in sections.items() %}<a class="info-box" href="/admin/content/sections/{{ key }}"><h2>{{ spec.title }}</h2><p>Открыть редактор →</p></a>{% endfor %}</div>
+{% for kind,spec in kinds.items() %}<section class="section-small" id="{{ kind }}"><div class="section-heading"><h2>{{ spec.title }}</h2><form method="post" action="/admin/content/cards/new/{{ kind }}">{{ hidden_csrf() }}<button class="button button-orange">Добавить карточку</button></form></div>
+{% for row in content_rows if row.kind==kind %}<article class="client-row"><div><h3>{{ row.value.name or 'Новая карточка' }}</h3><p>{{ 'Есть опубликованная версия' if row.published else 'Черновик / не опубликовано' }} · Порядок: {{ row.value.position or 0 }}</p></div><a class="button button-outline" href="/admin/content/cards/{{ row.id }}">Редактировать</a></article>{% else %}<p>Карточек пока нет. Пустой блок на публичной странице не показывается.</p>{% endfor %}</section>{% endfor %}
+<section class="section-small"><h2>Где добавить остальные сведения</h2><div class="table-scroll"><table><thead><tr><th>Что добавить</th><th>Где это сделать</th></tr></thead><tbody>
+<tr><td>Объект: назначение, город, год, размеры, задача, работы, сроки, результат</td><td><a href="/admin/cases">Карточки объектов</a></td></tr>
+<tr><td>Фотографии этапов и результата, документы по объекту</td><td><a href="/admin/cases">Карточка объекта → этапы и материалы</a>. Документы публикуются отдельно.</td></tr>
+<tr><td>Главное фото, фото компании, подписи, ALT и расположение</td><td><a href="/admin/photos">Фотографии и их расположение</a></td></tr>
+<tr><td>Новый вид работ, описание, фото, вопросы и параметры заявки</td><td><a href="/admin/services">Виды работ</a></td></tr>
+<tr><td>Телефон, email и базовый регион</td><td><a href="/admin#settings">Контактные данные сайта</a></td></tr>
+<tr><td>Заголовки для поиска, описания страниц и индексация</td><td><a href="/admin/seo">SEO</a></td></tr>
+</tbody></table></div><p>Все категории галереи остаются видимыми. При добавлении объекта выбирайте его категорию. Факты, фотографии, отзывы, цены и обещания заполняйте по реальным данным.</p></section>
+</section>{% endblock %}

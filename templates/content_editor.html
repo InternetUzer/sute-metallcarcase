@@ -1,0 +1,19 @@
+{% extends 'base.html' %}{% block content %}
+<section class="container section admin-page"><a class="text-link" href="/admin/content">← Содержание сайта</a><h1>{{ spec.title }}</h1>
+<p>Сначала сохраните черновик, затем откройте предпросмотр. «Опубликовать» сохраняет поля и обновляет сайт. Пустые дополнительные сведения посетителям не показываются.</p>
+{% if request.path.endswith('/home') %}<p><a href="/admin/photos/edit/asset/hero">Заменить главное фото и его ALT →</a> Подпись, которую видит посетитель, задаётся ниже.</p>{% endif %}
+{% if request.path.endswith('/company') %}<p><a href="/admin/content#team">Команда, производство и отзывы →</a> · <a href="/admin/photos/edit/asset/fabrication">Главное фото компании →</a></p>{% endif %}
+{% if request.path.endswith('/contacts') %}<p><a href="/admin#settings">Изменить телефон и email →</a></p>{% endif %}
+{% if error %}<div class="form-errors" role="alert" tabindex="-1">{{ error }} Публичные данные сохранены. <a href="{{ request.path }}">Загрузить сохранённую версию</a>. Если выбирали новый файл, выберите его повторно.</div>{% endif %}
+<form method="post" enctype="multipart/form-data" class="info-box owner-editor">{{ hidden_csrf() }}<input type="hidden" name="revision" value="{{ request.form.get('revision',revision) }}">
+{% for f in spec.fields %}<label>{{ f.label }}
+{% if f.kind=='textarea' %}<textarea name="{{ f.key }}" rows="4" maxlength="{{ f.limit }}">{{ values.get(f.key,'') }}</textarea>
+{% elif f.kind in ['page','target'] %}<select name="{{ f.key }}">{% if f.kind=='target' %}<option value="">Выберите страницу</option>{% endif %}{% for path,label in (targets if f.kind=='target' else pages).items() %}<option value="{{ path }}"{% if values.get(f.key,'')==path %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+{% else %}<input name="{{ f.key }}" type="{{ f.kind }}" maxlength="{{ f.limit }}" value="{{ values.get(f.key,'') }}">{% endif %}</label>{% endfor %}
+{% if is_card %}<fieldset><legend>Фотография <span class="optional">необязательно</span></legend>
+{% if values.get('photo_id') %}<img class="content-editor-photo" src="/admin/photos/{{ values.photo_id }}/image" alt="{{ values.get('alt','') }}">{% endif %}
+<label>Выбрать из библиотеки<select name="photo_id"><option value="">Без фотографии</option>{% for photo in photos %}<option value="{{ photo.id }}"{% if values.get('photo_id')|string==photo.id|string %} selected{% endif %}>{{ photo.title }}</option>{% endfor %}</select></label>
+<label>Или загрузить новую фотографию<input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></label><p class="field-note">JPG, PNG или WebP до 10 МБ и 24 мегапикселей. Новый файл заменит выбранную фотографию этой карточки. Черновые фото доступны только администратору.</p>
+<label>Описание фотографии (ALT)<input name="alt" maxlength="300" value="{{ values.get('alt','') }}"></label></fieldset>
+<label>Порядок показа: меньшие числа раньше<input name="position" type="number" min="0" max="999999" value="{{ values.get('position',0) }}"></label>{% endif %}
+<div class="button-row"><button class="button button-outline" name="action" value="save">Сохранить черновик</button><a class="button button-outline" href="{{ preview_url }}" target="_blank" rel="noopener">Предпросмотр сохранённого</a><button class="button button-orange" name="action" value="publish">Опубликовать</button>{% if is_card and published %}<button class="button button-outline" name="action" value="unpublish" formnovalidate>Снять с публикации</button>{% endif %}</div></form></section>{% endblock %}

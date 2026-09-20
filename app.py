@@ -12,6 +12,7 @@ import sqlite3
 import ssl
 import time
 import uuid
+from urllib.parse import urlencode
 
 import click
 from flask import Flask, abort, flash, g, redirect, render_template, request, send_file, session, url_for
@@ -23,7 +24,8 @@ from project_sheets import HEADERS, register_sheets
 from photo_library import register_photos
 from seo_panel import SEOPanel
 from lead_analytics import LeadAnalytics, PUBLIC_ENDPOINTS
-from case_studies import CaseStudies
+from case_studies import CaseStudies, CATEGORIES
+from owner_content import OwnerContent
 from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
 
@@ -223,8 +225,14 @@ def create_app(test_config=None):
     def projects_page():
         if request.path == '/nashi-raboty':
             return redirect('/produkciya',301)
+        category_services = {'buildings': ['building'], 'metal': ['izgotovleniye-metallokonstruktsiy', 'montaj-konstruktsii'],
+                             'concrete': ['betonnye-raboty'], 'panels': ['montazh-sendvich-panelej'], 'roofing': ['krovelnye-raboty']}
+        available = {'building'} | {s['slug'] for s in catalog.all(published=True)}
+        category_enquiries = {key: '/request?' + urlencode(
+            [('services', slug) for slug in category_services.get(key, []) if slug in available] or [('body', 'Интересуют работы: ' + label)])
+            for key, label in CATEGORIES.items()}
         return render('gallery.html', 'Объекты и фотографии работ — Металл-Каркас',
-                      'Фотографии металлоконструкций и строительных работ. Посмотрите примеры и отправьте задачу для своего объекта.', gallery=public_gallery())
+                      'Фотографии металлоконструкций и строительных работ. Посмотрите примеры и отправьте задачу для своего объекта.', gallery=public_gallery(), category_enquiries=category_enquiries)
 
     @app.get('/prays-list')
     def models_page():
@@ -501,7 +509,9 @@ def create_app(test_config=None):
                     title=request.form.get('title','').strip()[:160]
                     description=request.form.get('description','').strip()[:3000]
                     if not title or not description: raise ValueError('Укажите название и состав выполненных работ.')
-                    db().execute('INSERT INTO showcases(title,description,image,location) VALUES(?,?,?,?)',(title,description,image,request.form.get('location','')[:160]))
+                    category=request.form.get('category', 'construction')
+                    if category not in CATEGORIES: raise ValueError('Выберите категорию работ.')
+                    db().execute('INSERT INTO showcases(title,description,image,location,category) VALUES(?,?,?,?,?)',(title,description,image,request.form.get('location','')[:160],category))
                     db().commit()
                     flash('Объект опубликован.')
                 elif action=='unpublish':
@@ -608,6 +618,9 @@ def create_app(test_config=None):
     catalog = ServiceCatalog(app, db, media, data)
     media.services = catalog
     cases = CaseStudies(app, db, protected, render, data)
+    owner_content = OwnerContent(app, db, catalog, data)
+    media.owner_content = owner_content
+    owner_content.register(protected, render)
     analytics = LeadAnalytics(app, db, protected, render, limited)
     seo = SEOPanel(app, db, ROOT, catalog)
     seo.register(app, protected, render)

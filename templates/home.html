@@ -3,11 +3,12 @@
   <div class="hero-copy"><div class="hero-copy-inner">
     <span class="eyebrow">Для зданий и сооружений</span>
     <h1>{% if seo_h1 %}{{ seo_h1 }}{% else %}Металло&shy;конструкции,<br><em>бетон и кровля</em>{% endif %}</h1>
-    <p>Изготовление, монтаж и строительные работы. Возьмём на себя весь объект или отдельный этап по вашему проекту.</p>
+    <p class="preserve-lines">{{ owner_sections.home.intro }}</p>
+    {% if owner_sections.home.benefit1 or owner_sections.home.benefit2 or owner_sections.home.benefit3 %}<ul class="hero-benefits">{% for key in ['benefit1','benefit2','benefit3'] %}{% if owner_sections.home[key] %}<li>{{ owner_sections.home[key] }}</li>{% endif %}{% endfor %}</ul>{% endif %}
     <div class="hero-buttons"><a class="button button-orange" href="/request">Запросить расчёт {{ arrow() }}</a><a class="text-link" href="/produkciya">Посмотреть работы ↗</a></div>
     <p class="hero-help">Можно начать с описания задачи, без готовых чертежей.</p>
   </div></div>
-  <div class="hero-image">{{ picture('hero','Ангар из металлоконструкций — фотография с сайта Металл-Каркас',true) }}<div class="image-note"><span>Промышленные и складские здания</span><a href="/angary-i-sklady" aria-label="Посмотреть ангары и склады">{{ arrow() }}</a></div></div>
+  <div class="hero-image">{{ picture('hero','Ангар из металлоконструкций — фотография с сайта Металл-Каркас',true) }}{% if owner_sections.home.caption %}<div class="image-note"><span>{{ owner_sections.home.caption }}</span>{% if owner_sections.home.caption_url %}<a href="{{ owner_sections.home.caption_url }}" aria-label="Подробнее об объекте">{{ arrow() }}</a>{% endif %}</div>{% endif %}</div>
 </section>
 <section class="task-zone" aria-labelledby="task-heading"><div class="container">
   <h2 id="task-heading">С чего начнём ваш проект?</h2>

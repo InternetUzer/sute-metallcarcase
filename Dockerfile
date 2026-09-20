@@ -3,7 +3,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home --uid 10001 appuser
-COPY app.py content.py project_sheets.py photo_library.py media_catalog.py seo_panel.py case_studies.py lead_analytics.py enquiry_fields.py service_catalog.py ./
+COPY app.py content.py project_sheets.py photo_library.py media_catalog.py seo_panel.py case_studies.py lead_analytics.py enquiry_fields.py service_catalog.py owner_content.py ./
 COPY templates/ templates/
 COPY static/ static/
 COPY content/ content/
