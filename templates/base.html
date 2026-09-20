@@ -3,6 +3,7 @@
 {% macro cta(label='Обсудить ваш проект', text='Расскажите, что нужно построить или выполнить. Чертежи и точные размеры можно уточнить вместе.') %}<section class="cta-band"><div class="container cta-inner"><div><span class="eyebrow">Следующий шаг</span><h2>{{ label }}</h2><p>{{ text }}</p></div><a class="button button-white" href="/request">Запросить расчёт {{ arrow() }}</a></div></section>{% endmacro %}
 {% macro faq_list(items) %}<div class="faq-list">{% for question,answer in items %}<details><summary>{{ question }}<span aria-hidden="true">+</span></summary><p>{{ answer }}</p></details>{% endfor %}</div>{% endmacro %}
 {% macro hidden_csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
+{% set private_screen = request.path.startswith(('/admin', '/cabinet', '/login', '/forgot', '/reset')) and not (request.path.startswith('/admin/services/') and request.path.endswith('/preview')) %}
 <!doctype html>
 <html lang="ru">
 <head>
@@ -11,16 +12,17 @@
   {% if seo_noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
   {% if seo_verification.google %}<meta name="google-site-verification" content="{{ seo_verification.google }}">{% endif %}
   {% if seo_verification.yandex %}<meta name="yandex-verification" content="{{ seo_verification.yandex }}">{% endif %}
-  <link rel="canonical" href="{{ canonical }}"><meta name="theme-color" content="#eeede7"><meta name="color-scheme" content="light">
+  <link rel="canonical" href="{{ canonical }}"><meta name="theme-color" content="{{ '#eeede7' if private_screen else '#303a3f' }}"><meta name="color-scheme" content="{{ 'light' if private_screen else 'dark' }}">
   <meta property="og:type" content="website"><meta property="og:locale" content="ru_RU"><meta property="og:site_name" content="Металл-Каркас"><meta property="og:title" content="{{ title }}"><meta property="og:description" content="{{ description }}"><meta property="og:url" content="{{ canonical }}">
   <link rel="icon" href="/static/brand/logo-stamp-v2.png" type="image/png">
   <link rel="apple-touch-icon" href="/static/brand/logo-stamp-v2.png">
   <link rel="stylesheet" href="/static/site.css?v=brand-logo-1">
   <link rel="stylesheet" href="/static/daylight.css?v=2">
+  {% if not private_screen %}<link rel="stylesheet" href="/static/graphite.css?v=1">{% endif %}
   <script src="/static/site.js" defer></script>
   {% if analytics_public %}<meta name="analytics-csrf" content="{{ csrf_token() }}"><script src="/static/analytics.js" data-counter="{{ metrica_id }}" defer></script>{% endif %}
 </head>
-<body>
+<body{% if not private_screen %} class="site-graphite"{% endif %}>
 <a class="skip-link" href="#main">Перейти к содержимому</a>
 <header class="site-header">
   <div class="container header-inner">

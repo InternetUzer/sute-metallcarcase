@@ -1,15 +1,20 @@
 {
-  "base_commit": "8ee143180fe0e9a2457656791c866c7d01b888e7",
+  "base_commit": "7b5e79396a2e8cd2fbdb9aaa365c3cc51a3b70e3",
   "files": [
     {
       "path": "templates/base.html",
-      "sha256": "0ec26652ceed5c93e8db255c11f6f725ee53a9edac8c7edee81d2e79e191d4b5",
-      "base_sha256": "bac423b2f2c3fec7e3b66c94a2d405699f059572f7b2b55d8e0914e22b5ced49"
+      "sha256": "0e6fb7cfd5cf34f7e391f6e189107c917e950fb3361a869b3662abaa8b526396",
+      "base_sha256": "0ec26652ceed5c93e8db255c11f6f725ee53a9edac8c7edee81d2e79e191d4b5"
     },
     {
-      "path": "static/daylight.css",
-      "sha256": "d2f4b91bf10735f2e3481b94d6aa6f1731ba6fb470305a74fcd0a6f66e44f6ad",
-      "base_sha256": "dfea3985f8137544bb6dfa5ff7c83ea303ba5a07459deaa070c16c15ca97eaa0"
+      "path": "templates/home.html",
+      "sha256": "d2d57b074430d61a654d2a0b9a37d152dd1c2ff786f0e6b730291d135bc35deb",
+      "base_sha256": "a9ce5eb126860677fc675f2a8de05223cb06ccc65954bde426c54c4ebc60d795"
+    },
+    {
+      "path": "static/graphite.css",
+      "sha256": "f41ffe44a9db0d1f9980ab87841fe05c15f4135c01052f1775ba314b017dc8c6",
+      "base_sha256": null
     }
   ]
 }

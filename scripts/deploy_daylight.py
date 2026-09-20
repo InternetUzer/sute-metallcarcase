@@ -101,7 +101,7 @@ from app import create_app
 app=create_app({'TESTING':True})
 client=app.test_client()
 base=app.config['SITE_URL']
-for path in ['/', '/uslugi', '/request', '/produkciya', '/sitemap.xml', '/betonnye-raboty', '/krovelnye-raboty', '/static/daylight.css', '/static/brand/logo-stamp-v2.png']:
+for path in ['/', '/uslugi', '/request', '/produkciya', '/sitemap.xml', '/betonnye-raboty', '/krovelnye-raboty', '/static/daylight.css', '/static/graphite.css', '/static/brand/logo-stamp-v2.png']:
     response=client.get(path,base_url=base)
     assert response.status_code==200, (path,response.status_code)
 with sqlite3.connect(app.config['DATABASE']) as db:
