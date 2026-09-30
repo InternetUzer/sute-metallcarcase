@@ -26,6 +26,7 @@ from seo_panel import SEOPanel
 from lead_analytics import LeadAnalytics, PUBLIC_ENDPOINTS
 from case_studies import CaseStudies, CATEGORIES
 from owner_content import OwnerContent
+from messengers import public_links, validate_settings as validate_messengers
 from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
 
@@ -153,7 +154,7 @@ def create_app(test_config=None):
         settings = {r['key']:r['value'] for r in db().execute('SELECT * FROM settings')}
         company = {**COMPANY, **settings}
         company['phone_link'] = '+' + re.sub(r'\D','',company['phone'])
-        return dict(company=company, services=catalog.all(published=True), all_services=catalog.all(), buildings=BUILDINGS, models=MODELS,
+        return dict(company=company, messenger_links=public_links(company), services=catalog.all(published=True), all_services=catalog.all(), buildings=BUILDINGS, models=MODELS,
                     assets=assets(), csrf_token=csrf_token, year=datetime.now().year,
                     canonical=app.config['SITE_URL'] + request.path,
                     site_url=app.config['SITE_URL'], indexable=app.config['SITE_INDEXABLE'],
@@ -501,6 +502,12 @@ def create_app(test_config=None):
                         db().execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,value))
                     db().commit()
                     flash('Контакты обновлены.')
+                elif action=='messengers':
+                    for key, value in validate_messengers(request.form).items():
+                        db().execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
+                    db().commit()
+                    flash('Кнопки мессенджеров обновлены.')
+                    return redirect('/admin#messengers')
                 elif action=='showcase':
                     image=request.form.get('image','')
                     if image not in [a['src'] for a in assets().values()] and not db().execute(
