@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parent
 PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net'
 # Место объекта для погоды по адресу — те же сервисы, что в приложении (OpenStreetMap и Open-Meteo)
 PRORAB_GEO = 'https://nominatim.openstreetmap.org https://geocoding-api.open-meteo.com'
-PRORAB_VERSION = '3'
+PRORAB_VERSION = '4'
 PRORAB_DEFAULT_ROOT = '/Прораб+'
 # Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
 # он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.
@@ -159,7 +159,7 @@ def create_app(test_config=None):
             response.headers['Content-Security-Policy'] = response.headers['Content-Security-Policy'].replace(
                 "script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'").replace(
                 "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT + ' ' + PRORAB_GEO).replace(
-                "img-src 'self' data:", "img-src 'self' data: " + PRORAB_CONNECT)
+                "img-src 'self' data:", "img-src 'self' data: blob: " + PRORAB_CONNECT)
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab'))

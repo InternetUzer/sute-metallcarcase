@@ -8,6 +8,7 @@
 (function () {
   'use strict';
   const S = window.ProrabSync, M = window.ProrabModel, D = window.ProrabDisk, SCHEMA = window.PRORAB_SCHEMA, O = window.ProrabOffice;
+  const R = window.ProrabPersistence;
   const app = document.getElementById('prorab');
   const CLIENT_ID = app.dataset.clientId || '';
   const DOCS = 'Документы';
@@ -16,24 +17,17 @@
   // ───────── хранилище браузера (только удобства; данные — на Диске) ─────────
   // data-store — отдельное хранилище (демо не трогает ключ и настройки рабочего кабинета)
   const PREFIX = 'prorab.' + (app.dataset.store ? app.dataset.store + '.' : '');
-  const store = {
-    get(k) { try { return localStorage.getItem(PREFIX + k); } catch (e) { return null; } },
-    set(k, v) { try { if (v === null || v === undefined) localStorage.removeItem(PREFIX + k); else localStorage.setItem(PREFIX + k, v); } catch (e) { /* приватный режим */ } },
-    json(k, def) { try { return JSON.parse(this.get(k) || '') || def; } catch (e) { return def; } },
-  };
+  let rawStorage;
+  try { rawStorage = localStorage; } catch (_) { rawStorage = null; }
+  const authStore = R.storage(rawStorage, PREFIX);
+  let store = R.storage(rawStorage, PREFIX + 'signed-out:');
   // Рабочий стол — сама папка «Прораб+» (у приглашённого в общую папку она может называться иначе —
   // выбирается в меню «Папка рабочего стола»): объекты (папки с data) и всё, что создано на рабочем столе
   // Порядок: своя папка этого браузера (у приглашённого общая папка может называться иначе) → папка,
   // закреплённая владельцем на сайте (data-root) → «Прораб+»
-  const ROOT = D.normalize(store.get('root') || app.dataset.root || '/Прораб+');
+  let ROOT = D.normalize(app.dataset.root || '/Прораб+');
   const ROOT_SAVE = app.dataset.rootSave || '';
-  const HOME = ROOT;
-
-  function deviceId() {
-    let id = store.get('device');
-    if (!id) { id = 'web-' + S.newId().slice(0, 8); store.set('device', id); }
-    return id;
-  }
+  let HOME = ROOT;
 
   // ───────── форматирование ─────────
   const pad = (n) => String(n).padStart(2, '0');
@@ -113,8 +107,8 @@
   // ───────── состояние ─────────
   let disk = null;
   let status = { text: '', error: false };
-  const me = deviceId();
-  const clock = new S.Clock(Number(store.get('clock')) || 0);
+  let me = '', writerLease = null, starting = false, leaving = false;
+  const clock = new S.Clock();
   const today = S.today();
   let projects = null; // [{ path, name }]
   let projectsError = null;
@@ -129,7 +123,7 @@
   const WALLS = [['default', 'Синий вечер'], ['sunset', 'Закат'], ['forest', 'Лес'], ['sea', 'Море'], ['graphite', 'Графит'], ['steel', 'Сталь'], ['sand', 'Песок'], ['night', 'Ночь']];
   // Настройки рабочего стола — общие для всех компьютеров и всех, с кем владелец поделился папкой:
   // фон и объекты из других папок Диска
-  const DESK_FILE = ROOT + '/.prorab-desktop.json';
+  let DESK_FILE = ROOT + '/.prorab-desktop.json';
   let wall = store.json('wall', { kind: 'preset', id: 'default' });
   let extraList = store.json('extra', []);
   // Ярлыки на папки Диска (вне рабочего стола): [{ path, name }]
@@ -164,10 +158,19 @@
   // ───────── вход ─────────
   function takeTokenFromUrl() {
     if (!location.hash.includes('access_token=')) return;
-    const p = new URLSearchParams(location.hash.slice(1));
-    const t = p.get('access_token');
-    if (t) store.set('token', t);
+    const params = new URLSearchParams(location.hash.slice(1));
+    const expected = authStore.json('oauth-state', null);
+    const valid = expected && Date.now() - expected.at < 10 * 60 * 1000 && params.get('state') === expected.value;
     history.replaceState(null, '', location.pathname + location.search);
+    if (!valid) throw new Error('Не удалось проверить возврат от Яндекса. Нажмите «Войти через Яндекс» ещё раз или вставьте ключ вручную.');
+    authStore.set('oauth-state', null);
+    if (params.get('access_token')) authStore.set('token', params.get('access_token'));
+  }
+
+  function beginYandexLogin(auth) {
+    const state = { value: S.newId(), at: Date.now() };
+    authStore.set('oauth-state', JSON.stringify(state));
+    window.open(auth + '&state=' + encodeURIComponent(state.value), '_blank', 'noopener');
   }
 
   /** Ключ из того, что вставили: сам ключ или целая ссылка со страницы Яндекса (…#access_token=…). */
@@ -180,19 +183,15 @@
   function loginScreen(message) {
     app.classList.remove('pp-desk-app');
     const input = h('input', { type: 'password', autocomplete: 'off', placeholder: 'y0_…' });
-    const go = () => { const t = tokenFrom(input.value); if (!t) return; store.set('token', t); start(); };
+    const go = () => { if (starting) return; const t = tokenFrom(input.value); if (!t) return; authStore.set('token', t); start(); };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    // Яндекс вернул на сайт в другой вкладке (приложение с адресом возврата на сайт) — ключ уже сохранён
-    window.addEventListener('storage', function onStore(e) {
-      if (e.key === PREFIX + 'token' && e.newValue && !disk) { window.removeEventListener('storage', onStore); start(); }
-    });
     const auth = CLIENT_ID ? 'https://oauth.yandex.ru/authorize?response_type=token&client_id=' + encodeURIComponent(CLIENT_ID) : null;
     app.replaceChildren(h('section', { class: 'pp-card pp-narrow' },
       h('h1', null, 'Прораб+ на компьютере'),
       h('p', { class: 'pp-muted' }, 'Все объекты — те же, что в телефоне: данные берутся из папки «' + lastName(ROOT) + '» на Яндекс Диске и записываются обратно. Ключ хранится только в этом браузере.'),
       message ? h('p', { class: 'pp-error' }, message) : null,
       auth ? h('ol', { class: 'pp-steps' },
-        h('li', null, button('Войти через Яндекс', () => window.open(auth, '_blank'), 'pp-primary'), h('span', { class: 'pp-muted' }, ' — откроется Яндекс: войдите своим аккаунтом и нажмите «Разрешить».')),
+        h('li', null, button('Войти через Яндекс', () => beginYandexLogin(auth), 'pp-primary'), h('span', { class: 'pp-muted' }, ' — откроется Яндекс: войдите своим аккаунтом и нажмите «Разрешить».')),
         h('li', null, 'Яндекс покажет ключ доступа — скопируйте его и вставьте сюда:'),
         h('li', null, field('Ключ доступа', input), button('Войти', go, 'pp-primary'))) : null,
       h('details', { open: !auth },
@@ -207,18 +206,20 @@
   }
 
   function fail(e) {
-    if (e && e.status === 401) { store.set('token', null); return loginScreen(e.message); }
+    if (e && e.status === 401) { if (Object.keys(ctxs).length) return logout(); authStore.set('token', null); return loginScreen(e.message); }
     app.classList.remove('pp-desk-app');
     app.replaceChildren(h('section', { class: 'pp-card pp-narrow' }, h('p', { class: 'pp-error' }, (e && e.message) || String(e)), button('Повторить', start)));
   }
 
+  function persistAll() {
+    for (const c of Object.values(ctxs)) if (c.project && (c.project.dirty || c.saving)) persist(c);
+  }
+
   function logout() {
-    for (const c of Object.values(ctxs)) save(c);
-    store.set('token', null);
-    clearInterval(refreshTimer);
-    wins = []; projects = null; disk = null;
-    for (const k of Object.keys(ctxs)) delete ctxs[k];
-    loginScreen();
+    persistAll();
+    authStore.set('token', null);
+    leaving = true;
+    location.reload(); // stops old callbacks before another account can start
   }
 
   // ───────── объекты на Диске ─────────
@@ -316,7 +317,25 @@
     return out;
   }
 
-  const pendingKey = (c) => 'pending:' + c.path;
+  function snapshot(c) { return S.toFile(c.project.state, c.project.projectId, c.project.project.name, me); }
+
+  function persist(c) {
+    if (!c.drafts || !c.project) return;
+    if (!c.drafts.write(snapshot(c))) {
+      setStatus('Браузер не смог сохранить резервную копию правок. Не закрывайте страницу до записи на Диск.', true);
+    }
+    store.set('clock', String(clock.last));
+  }
+
+  function watchChanges(c) {
+    c.project.onChange = () => {
+      // One durable checkpoint for a group of synchronous edits, including additions
+      // from a form which is later cancelled. Also flush synchronously on pagehide.
+      if (c.checkpointQueued) return;
+      c.checkpointQueued = true;
+      queueMicrotask(() => { c.checkpointQueued = false; persist(c); scheduleSave(c); });
+    };
+  }
 
   /** Загрузить объект (один раз); окна объекта показывают «Загружаю…», пока он не готов. */
   function openCtx(path) {
@@ -329,10 +348,11 @@
         const best = files.slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
         const pid = best.projectId;
         if (files.some((f) => f.projectId && f.projectId !== pid)) throw new Error('В папке данные разных объектов.');
-        const pending = store.get(pendingKey(c));
-        const extra = pending ? [JSON.parse(pending)] : [];
-        c.project = new M.Project(S.mergeFiles(files.concat(extra), pid, clock), SCHEMA, pid, me, clock);
-        if (extra.length) { c.project.dirty = true; scheduleSave(c, 0); }
+        c.drafts = new R.Drafts(store, path, pid, me);
+        const drafts = c.drafts.read();
+        c.project = new M.Project(S.mergeFiles(files.concat(drafts.map((d) => d.file)), pid, clock), SCHEMA, pid, me, clock);
+        watchChanges(c);
+        if (drafts.length) { c.project.dirty = true; persist(c); scheduleSave(c, 0); }
         const names = store.json('names', {});
         names[path] = c.project.project.name || lastName(path);
         store.set('names', JSON.stringify(names));
@@ -355,10 +375,10 @@
     if (!c.project || c.saving || modalOpen()) return;
     try {
       const files = await readFiles(c.path);
-      if (modalOpen()) return; // форму открыли, пока читали Диск — обновим в следующий раз
+      if (modalOpen() || c.saving) return; // форма или сохранение начались во время чтения Диска
       const mine = S.toFile(c.project.state, c.project.projectId, c.project.project.name, me);
       const dirty = c.project.dirty;
-      c.project = new M.Project(S.mergeFiles(files.concat([mine]), c.project.projectId, clock), SCHEMA, c.project.projectId, me, clock);
+      c.project.state = S.mergeFiles(files.concat([mine]), c.project.projectId, clock);
       c.project.dirty = dirty;
       store.set('clock', String(clock.last));
       c.status = 'Обновлено в ' + time();
@@ -380,27 +400,34 @@
     if (!c || !c.project || !c.project.dirty) return;
     if (c.saving) return scheduleSave(c, 1000);
     c.saving = true;
-    const text = JSON.stringify(S.toFile(c.project.state, c.project.projectId, c.project.project.name, me));
-    // До записи на Диск правки лежат в браузере: закрытая вкладка их не теряет
-    store.set(pendingKey(c), text);
-    store.set('clock', String(clock.last));
-    c.project.dirty = false;
+    persist(c);
+    let drafts;
+    try { drafts = c.drafts.read(); }
+    catch (e) { c.saving = false; setStatus(e.message, true); return; }
+    // Include recovery drafts, keeping the Project instance captured by open forms/uploads.
+    c.project.state = S.mergeFiles(drafts.map((d) => d.file).concat([snapshot(c)]), c.project.projectId, clock);
+    const text = JSON.stringify(snapshot(c));
+    const revision = c.project.revision;
+    const targetDisk = disk;
     c.status = 'Сохраняю на Диск…';
     setStatus(projName(c.path) + ': сохраняю…');
     try {
-      await disk.putText(c.path + '/data/' + me + '.json', text);
-      store.set(pendingKey(c), null);
+      await targetDisk.putText(c.path + '/data/' + me + '.json', text);
+      c.drafts.acknowledge(drafts);
+      c.project.dirty = c.project.revision !== revision;
+      if (c.project.dirty) { persist(c); scheduleSave(c, 0); }
       c.status = 'Сохранено в ' + time() + ' — телефон получит при синхронизации';
       setStatus(projName(c.path) + ': сохранено в ' + time());
     } catch (e) {
       c.project.dirty = true;
       c.status = 'Не сохранилось: ' + e.message;
-      setStatus(projName(c.path) + ': не сохранилось на Диск — правки в браузере, повторю через минуту', true);
+      setStatus(projName(c.path) + ': не сохранилось на Диск. Не закрывайте страницу, повторю через минуту.', true);
+      persist(c);
       scheduleSave(c, 60000);
     } finally { c.saving = false; if (!modalOpen()) render(); }
   }
 
-  function changed(c) { scheduleSave(c); render(); }
+  function changed(c) { persist(c); scheduleSave(c); render(); }
 
   /** Новый объект с компьютера: папка «Прораб+/<название>» и файл этого устройства; на телефоне — «Открыть из облака». */
   async function newProject() {
@@ -2378,11 +2405,27 @@
 
   // ───────── запуск ─────────
   async function start() {
-    takeTokenFromUrl();
-    const token = store.get('token');
-    if (!token) return loginScreen();
-    disk = new D.Disk(token);
-    try { await disk.user(); } catch (e) { disk = null; return fail(e); }
+    if (starting || disk) return;
+    starting = true;
+    try { takeTokenFromUrl(); } catch (e) { starting = false; return loginScreen(e.message); }
+    const token = authStore.get('token');
+    if (!token) { starting = false; return loginScreen(); }
+    const candidate = new D.Disk(token);
+    try {
+      const user = await candidate.user();
+      store = R.accountStorage(rawStorage, PREFIX, user.uid);
+      writerLease = await R.acquireWriter(store, navigator.locks);
+      me = writerLease.id;
+      ROOT = D.normalize(store.get('root') || app.dataset.root || '/Прораб+');
+      HOME = ROOT;
+      DESK_FILE = ROOT + '/.prorab-desktop.json';
+      wall = store.json('wall', { kind: 'preset', id: 'default' });
+      extraList = store.json('extra', []);
+      linkList = store.json('links', []);
+      clock.last = Number(store.get('clock')) || 0;
+      disk = candidate;
+    } catch (e) { starting = false; return fail(e); }
+    starting = false;
     render();
     home.loading = true;
     // Сначала настройки стола с Диска (в них объекты из других папок), затем объекты
@@ -2392,9 +2435,14 @@
     setInterval(() => { const el = document.querySelector('.pp-clock'); if (el) el.textContent = time(); }, 30000);
   }
 
+  window.addEventListener('storage', (e) => {
+    if (e.key === PREFIX + 'token') { persistAll(); leaving = true; location.reload(); }
+  });
+  window.addEventListener('pagehide', persistAll);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistAll(); });
   window.addEventListener('beforeunload', (e) => {
     const busy = Object.values(ctxs).some((c) => c.project && (c.project.dirty || c.saving));
-    if (busy) { Object.values(ctxs).forEach((c) => save(c)); e.preventDefault(); e.returnValue = ''; }
+    if (busy) { persistAll(); if (!leaving) { e.preventDefault(); e.returnValue = ''; } }
   });
   start();
 })();

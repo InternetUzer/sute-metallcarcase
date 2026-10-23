@@ -30,7 +30,8 @@
       const r = await this.call('GET', '');
       if (!r.ok) throw new DiskError('Яндекс Диск ответил ' + r.status, r.status);
       const j = await r.json();
-      return (j.user && (j.user.display_name || j.user.login)) || '';
+      if (!j.user || !j.user.uid) throw new DiskError('Яндекс Диск не вернул идентификатор аккаунта.', 0);
+      return { uid: String(j.user.uid), name: j.user.display_name || j.user.login || '' };
     }
 
     /** Содержимое папки: [{ name, type: 'dir'|'file', path, modified, size, md5 }] или null, если папки нет. */
@@ -97,16 +98,38 @@
       return (await r.json()).href;
     }
 
+    /** 202 means queued, not finished. Wait before publishing a reference to the file. */
+    async completed(response) {
+      if (response.status !== 202) return;
+      const link = await response.json();
+      let url;
+      try { url = new URL(link.href); } catch (_) { throw new DiskError('Нет адреса проверки операции Диска.', 202); }
+      if (url.origin !== 'https://cloud-api.yandex.net' || !url.pathname.startsWith('/v1/disk/operations/')) {
+        throw new DiskError('Неожиданный адрес операции Диска.', 202);
+      }
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const r = await this.call('GET', url.pathname.slice('/v1/disk'.length));
+        if (!r.ok) throw new DiskError('Не удалось проверить операцию Диска (' + r.status + ')', r.status);
+        const result = await r.json();
+        if (result.status === 'success') return;
+        if (result.status !== 'in-progress') throw new DiskError('Яндекс Диск не выполнил операцию.', 0);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new DiskError('Операция ещё выполняется на Диске. Обновите папку позднее.', 202);
+    }
+
     /** В корзину Диска (можно восстановить на disk.yandex.ru). */
     async remove(path) {
       const r = await this.call('DELETE', '/resources', { path: diskPath(path) });
       if (!r.ok && r.status !== 202 && r.status !== 204) throw new DiskError('Не удалось удалить (' + r.status + ')', r.status);
+      await this.completed(r);
     }
 
     async move(from, to) {
       const r = await this.call('POST', '/resources/move', { from: diskPath(from), path: diskPath(to) });
       if (r.status === 409) throw new DiskError('Имя уже занято', 409);
       if (!r.ok && r.status !== 201 && r.status !== 202) throw new DiskError('Не удалось переименовать (' + r.status + ')', r.status);
+      await this.completed(r);
     }
 
     /** Копия файла на Диске (без скачивания в браузер). */
@@ -114,6 +137,7 @@
       const r = await this.call('POST', '/resources/copy', { from: diskPath(from), path: diskPath(to), overwrite: 'false' });
       if (r.status === 409) throw new DiskError('Имя уже занято', 409);
       if (!r.ok && r.status !== 201 && r.status !== 202) throw new DiskError('Не удалось скопировать (' + r.status + ')', r.status);
+      await this.completed(r);
     }
 
     async mkdir(path) {

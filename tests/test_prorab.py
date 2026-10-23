@@ -33,7 +33,7 @@ def test_only_owner_opens_journal(app):
     r = client.get('/admin/prorab')
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    for name in ['schema.js', 'sync.js', 'model.js', 'disk.js', 'office.js', 'app.js', 'prorab.css']:
+    for name in ['schema.js', 'sync.js', 'persistence.js', 'model.js', 'disk.js', 'office.js', 'app.js', 'prorab.css']:
         assert '/static/prorab/' + name in html
         assert (ROOT / 'static/prorab' / name).is_file()
     assert 'style=' not in html and '<script>' not in html  # без встроенных скриптов и стилей (CSP)
@@ -48,10 +48,12 @@ def test_disk_allowed_only_for_journal(app):
     assert "connect-src 'self' https://cloud-api.yandex.net" in csp
     assert "script-src 'self' 'wasm-unsafe-eval';" in csp  # только WebAssembly для перевода DWG
     # Место объекта по адресу и «Где я сейчас» — только в журнале
+    assert "img-src 'self' data: blob:" in csp  # local photo decoding uses blob URLs
     assert 'https://nominatim.openstreetmap.org' in csp and 'https://geocoding-api.open-meteo.com' in csp
     assert 'geolocation=(self)' in client.get('/admin/prorab').headers['Permissions-Policy']
     other = client.get('/admin').headers['Content-Security-Policy']
     assert 'yandex' not in other.split('connect-src')[1].split(';')[0]
+    assert 'blob:' not in other
     assert 'openstreetmap' not in other and 'wasm-unsafe-eval' not in other
     assert 'geolocation=()' in client.get('/admin').headers['Permissions-Policy']
     assert 'href="/admin/prorab"' in client.get('/admin').get_data(as_text=True)

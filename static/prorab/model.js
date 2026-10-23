@@ -49,7 +49,7 @@
     /** state — объединённые записи ({ таблица: { id: { values, vers } } }). */
     constructor(state, schema, projectId, me, clock) {
       this.state = state; this.schema = schema; this.projectId = projectId; this.me = me; this.clock = clock;
-      this.dirty = false;
+      this.dirty = false; this.revision = 0; this.onChange = null;
     }
 
     rows(table, all) {
@@ -64,7 +64,7 @@
     get(table, id) { const r = (this.state[table] || {})[id]; return r ? r.values : null; }
     put(table, id, changes) {
       const r = S.edit(this.state, this.schema, table, id, Object.assign({}, changes), this.me, this.clock);
-      if (r) this.dirty = true;
+      if (r) { this.dirty = true; this.revision++; if (this.onChange) this.onChange(); }
       return r ? r.values : this.get(table, id);
     }
     del(table, id) { if (this.get(table, id)) this.put(table, id, { deleted: 1 }); }
