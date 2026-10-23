@@ -96,6 +96,7 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-menu { position: fixed; z-index: 2000; min-width: 220px; background: var(--pp-card); color: var(--pp-text); border: 1px solid var(--pp-line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.3); padding: 6px; }
 .pp-menu button { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .pp-menu button:hover { background: var(--pp-bg); }
+.pp-menu-head { font-size: 12px; color: var(--pp-muted); padding: 6px 10px 2px; }
 .pp-menu hr { border: 0; border-top: 1px solid var(--pp-line); margin: 4px 0; }
 .pp-toolbar { padding: 4px 0 8px; border-bottom: 1px solid var(--pp-line); margin-bottom: 8px; }
 .pp-crumbs { flex: 1; min-width: 120px; font-weight: 600; }

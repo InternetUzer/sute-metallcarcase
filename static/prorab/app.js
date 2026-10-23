@@ -314,7 +314,7 @@
     const scroll = Object.fromEntries(Array.from(document.querySelectorAll('.pp-win')).map((el, i) => [i, el.querySelector('.pp-winbody') ? el.querySelector('.pp-winbody').scrollTop : 0]));
     const icons = [
       ...Object.entries(APPS).map(([k, a]) => ({ key: 'app:' + k, icon: a.icon, name: a.title, open: () => openWindow(k) })),
-      ...(desk.items || []).map((it) => ({ key: 'doc:' + it.name, icon: fileIcon(it), name: it.name, item: it, open: () => openItem(null, it, DOCS) })),
+      ...(desk.items || []).map((it) => ({ key: 'doc:' + it.name, icon: fileIcon(it), name: shownName(it), item: it, open: () => openItem(null, it, DOCS) })),
     ];
     const visible = wins.filter((w) => !w.min).sort((a, b) => a.z - b.z);
     const clock = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -325,7 +325,7 @@
           type: 'button', class: 'pp-icon-btn' + (desk.selected === ic.key ? ' pp-selected' : ''), title: ic.name,
           onclick: () => { if (small() || desk.selected === ic.key) ic.open(); else { desk.selected = ic.key; render(); } },
           ondblclick: ic.open,
-          oncontextmenu: ic.item ? (e) => { e.preventDefault(); itemMenu(e.clientX, e.clientY, null, ic.item, DOCS); } : null,
+          oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); if (ic.item) itemMenu(e.clientX, e.clientY, null, ic.item, DOCS); else popup(e.clientX, e.clientY, [['Открыть', ic.open]]); },
         }, h('span', { class: 'pp-icon-img' }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
         visible.map(windowEl)),
       h('footer', { class: 'pp-taskbar' },
@@ -341,9 +341,9 @@
 
   function popup(x, y, items) {
     document.querySelectorAll('.pp-menu').forEach((m) => m.remove());
-    const m = h('div', { class: 'pp-menu' }, items.filter(Boolean).map(([t, f]) => (t === '-' ? h('hr') : h('button', { type: 'button', onclick: () => { m.remove(); f(); } }, t))));
+    const m = h('div', { class: 'pp-menu', oncontextmenu: (e) => e.preventDefault() }, items.filter(Boolean).map(([t, f]) => (t === '-' ? h('hr') : t.startsWith('#') ? h('div', { class: 'pp-menu-head' }, t.slice(1)) : h('button', { type: 'button', onclick: () => { m.remove(); f(); } }, t))));
     m.style.left = Math.min(x, window.innerWidth - 240) + 'px';
-    m.style.top = Math.min(y, window.innerHeight - 40 * items.length - 20) + 'px';
+    m.style.top = Math.max(4, Math.min(y, window.innerHeight - 36 * items.length - 60)) + 'px';
     document.body.append(m);
     setTimeout(() => window.addEventListener('click', () => m.remove(), { once: true }), 0);
   }
@@ -359,9 +359,23 @@
   }
 
   // ───────── документы: папки и файлы на Диске (Word, Excel, свои файлы) ─────────
-  const EXT_ICON = { docx: '📝', doc: '📝', xlsx: '📊', xls: '📊', csv: '📊', pdf: '📕', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', webp: '🖼️', dwg: '📐', dxf: '📐', zip: '🗜️', txt: '📄', pptx: '📽️' };
+  const EXT_ICON = { url: '🔗', docx: '📝', doc: '📝', xlsx: '📊', xls: '📊', csv: '📊', pdf: '📕', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', webp: '🖼️', dwg: '📐', dxf: '📐', zip: '🗜️', txt: '📄', pptx: '📽️' };
   const ext = (n) => (n.includes('.') ? n.split('.').pop().toLowerCase() : '');
   const fileIcon = (it) => (it.type === 'dir' ? '📁' : EXT_ICON[ext(it.name)] || '📄');
+  /** Как в Windows: у ярлыка «.url» не показывается. */
+  const shownName = (it) => (it.type === 'file' && ext(it.name) === 'url' ? it.name.slice(0, -4) : it.name);
+  /** Ярлык на сайт — файл Windows «Интернет-ярлык» (.url): открывается и в Windows двойным щелчком. */
+  const shortcutText = (url) => '[InternetShortcut]\r\nURL=' + url + '\r\n';
+  function parseShortcut(text) {
+    const m = /^URL=(.+)$/m.exec(String(text || ''));
+    return m ? m[1].trim() : null;
+  }
+  function cleanUrl(input) {
+    let u = String(input || '').trim();
+    if (!u) return null;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+    try { const x = new URL(u); return x.protocol === 'http:' || x.protocol === 'https:' ? x.href : null; } catch (e) { return null; }
+  }
   const sortItems = (items) => items.filter((i) => !i.name.startsWith('.')).sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, 'ru') : a.type === 'dir' ? -1 : 1));
 
   async function loadDesktop() {
@@ -393,7 +407,25 @@
 
   const validName = (n) => n && !/[\\/:*?"<>|]/.test(n) && n !== '.' && n !== '..' && n.length <= 120;
 
+  /** Ярлык на сайт: адрес и имя → файл «Имя.url» в папке. */
+  async function createShortcut(rel, old) {
+    const oldUrl = old ? parseShortcut(await disk.getText(docsRoot() + (rel ? '/' + rel : '') + '/' + old.name)) : '';
+    const url = cleanUrl(prompt('Адрес сайта', oldUrl || 'https://'));
+    if (!url) { if (url === null && !old) alert('Нужен адрес сайта, например metalcarcase.ru или https://disk.yandex.ru'); return; }
+    let name = old ? old.name.slice(0, -4) : (prompt('Имя ярлыка', new URL(url).hostname.replace(/^www\./, '')) || '').trim();
+    if (!name) return;
+    if (!validName(name)) return alert('В имени нельзя использовать \\ / : * ? " < > |');
+    const dir = docsRoot() + (rel ? '/' + rel : '');
+    try {
+      await disk.mkdir(folder + '/' + DOCS);
+      await disk.putBlob(dir + '/' + name + '.url', new Blob([shortcutText(url)], { type: 'text/plain' }), !!old);
+      setStatus((old ? 'Ярлык изменён: ' : 'Создан ярлык: ') + name);
+      reloadFolder(rel);
+    } catch (e) { alert(e.message); }
+  }
+
   async function createIn(rel, kind) {
+    if (kind === 'url') return createShortcut(rel, null);
     const label = { dir: 'Имя новой папки', docx: 'Название документа Word', xlsx: 'Название таблицы Excel' }[kind];
     const base = { dir: 'Новая папка', docx: 'Новый документ', xlsx: 'Новая таблица' }[kind];
     let name = (prompt(label, base) || '').trim();
@@ -442,6 +474,16 @@
       return;
     }
     const full = docsRoot() + (rel ? '/' + rel : '') + '/' + it.name;
+    if (ext(it.name) === 'url') {
+      // Новая вкладка открывается сразу (иначе браузер её заблокирует), адрес — после чтения ярлыка
+      const tab = window.open('about:blank', '_blank');
+      try {
+        const url = cleanUrl(parseShortcut(await disk.getText(full)));
+        if (!url) throw new Error('В ярлыке нет адреса сайта');
+        if (tab) { tab.opener = null; tab.location.href = url; } else window.open(url, '_blank', 'noopener');
+      } catch (e) { if (tab) tab.close(); alert(e.message); }
+      return;
+    }
     if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'csv', 'txt', 'pdf'].includes(ext(it.name))) {
       window.open(D.webEdit(full), '_blank', 'noopener');
     } else {
@@ -454,9 +496,12 @@
     const full = docsRoot() + (rel ? '/' + rel : '') + '/' + it.name;
     popup(x, y, [
       ['Открыть', () => openItem(w, it, relDir)],
-      it.type === 'file' ? ['Скачать', async () => { try { window.open(await disk.downloadHref(full), '_blank', 'noopener'); } catch (e) { alert(e.message); } }] : null,
+      ext(it.name) === 'url' ? ['Изменить адрес', () => createShortcut(rel, it)] : null,
+      it.type === 'file' && ext(it.name) !== 'url' ? ['Скачать', async () => { try { window.open(await disk.downloadHref(full), '_blank', 'noopener'); } catch (e) { alert(e.message); } }] : null,
       ['Переименовать', async () => {
-        const n = (prompt('Новое имя', it.name) || '').trim();
+        const isUrl = ext(it.name) === 'url';
+        let n = (prompt('Новое имя', shownName(it)) || '').trim();
+        if (isUrl && n) n += '.url';
         if (!n || n === it.name) return;
         if (!validName(n)) return alert('В имени нельзя использовать \\ / : * ? " < > |');
         try { await disk.move(full, full.slice(0, -it.name.length) + n); reloadFolder(rel); } catch (e) { alert(e.message); }
@@ -471,8 +516,11 @@
   function createMenu(x, y, w) {
     const rel = w ? w.path : '';
     popup(x, y, [
-      ['📁 Новая папка', () => createIn(rel, 'dir')], ['📝 Документ Word', () => createIn(rel, 'docx')], ['📊 Таблица Excel', () => createIn(rel, 'xlsx')],
-      ['⬆ Загрузить файлы', () => uploadInto(rel)], ['-'], ['Открыть на Диске', () => window.open(D.webFolder(docsRoot() + (rel ? '/' + rel : '')), '_blank', 'noopener')],
+      ['⟳ Обновить', () => { if (w) loadFolder(w); else { desk.items = null; render(); } }],
+      ['-'], ['#Создать'],
+      ['🔗 Ярлык на сайт', () => createIn(rel, 'url')], ['📁 Папку', () => createIn(rel, 'dir')], ['📝 Документ Word', () => createIn(rel, 'docx')], ['📊 Таблицу Excel', () => createIn(rel, 'xlsx')],
+      ['-'], ['⬆ Загрузить файлы…', () => uploadInto(rel)], ['Открыть папку на Диске', () => window.open(D.webFolder(docsRoot() + (rel ? '/' + rel : '')), '_blank', 'noopener')],
+      w ? null : ['-'], w ? null : ['+ Сделано', () => doneForm({ date: today })], w ? null : ['+ Задача', () => taskForm({ date: today })],
     ]);
   }
 
@@ -483,7 +531,7 @@
       h('div', { class: 'pp-row pp-wrap pp-toolbar' },
         button('←', () => { if (up === null) return; w.path = up; w.key = 'explorer:' + up; loadFolder(w); render(); }, 'pp-icon'),
         h('span', { class: 'pp-crumbs' }, crumbs.join(' › ')),
-        button('📁 Папка', () => createIn(w.path, 'dir')), button('📝 Word', () => createIn(w.path, 'docx')), button('📊 Excel', () => createIn(w.path, 'xlsx')),
+        button('🔗 Ярлык', () => createIn(w.path, 'url')), button('📁 Папка', () => createIn(w.path, 'dir')), button('📝 Word', () => createIn(w.path, 'docx')), button('📊 Excel', () => createIn(w.path, 'xlsx')),
         button('⬆ Загрузить', () => uploadInto(w.path)), button('⟳', () => loadFolder(w), 'pp-icon')),
       w.error ? h('p', { class: 'pp-error' }, w.error) : null,
       w.items === null ? h('p', { class: 'pp-muted' }, 'Загружаю…') :
@@ -491,10 +539,10 @@
           type: 'button', class: 'pp-file', title: it.name, ondblclick: () => openItem(w, it, w.path || DOCS),
           onclick: () => { if (small()) openItem(w, it, w.path || DOCS); },
           oncontextmenu: (e) => { e.preventDefault(); itemMenu(e.clientX, e.clientY, w, it, w.path || DOCS); },
-        }, h('span', { class: 'pp-icon-img' }, fileIcon(it)), h('span', { class: 'pp-icon-name' }, it.name),
-          h('small', null, it.type === 'dir' ? 'папка' : (it.size ? Math.max(1, Math.round(it.size / 1024)) + ' КБ' : ''))))) :
-          h('p', { class: 'pp-muted' }, 'Пусто. Создайте папку, документ Word, таблицу Excel или загрузите файлы — они хранятся на вашем Яндекс Диске в папке «' + DOCS + '» объекта.'),
-      h('p', { class: 'pp-muted' }, 'Двойной щелчок — открыть (Word и Excel — в Яндекс Документах), правая кнопка — переименовать, скачать, удалить.'));
+        }, h('span', { class: 'pp-icon-img' }, fileIcon(it)), h('span', { class: 'pp-icon-name' }, shownName(it)),
+          h('small', null, it.type === 'dir' ? 'папка' : ext(it.name) === 'url' ? 'ярлык' : (it.size ? Math.max(1, Math.round(it.size / 1024)) + ' КБ' : ''))))) :
+          h('p', { class: 'pp-muted' }, 'Пусто. Создайте ярлык на сайт, папку, документ Word, таблицу Excel или загрузите файлы — они хранятся на вашем Яндекс Диске в папке «' + DOCS + '» объекта.'),
+      h('p', { class: 'pp-muted' }, 'Двойной щелчок — открыть (Word и Excel — в Яндекс Документах, ярлык — сайт), правая кнопка — меню: создать, переименовать, скачать, удалить.'));
   }
 
   function periodBar() {
