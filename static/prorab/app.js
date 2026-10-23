@@ -10,9 +10,6 @@
   const S = window.ProrabSync, M = window.ProrabModel, D = window.ProrabDisk, SCHEMA = window.PRORAB_SCHEMA, O = window.ProrabOffice;
   const app = document.getElementById('prorab');
   const CLIENT_ID = app.dataset.clientId || '';
-  const ROOT = D.normalize(app.dataset.root || '/Прораб+');
-  // Рабочий стол — сама папка «Прораб+»: объекты (папки с data) и всё, что создано на рабочем столе
-  const HOME = ROOT;
   const DOCS = 'Документы';
   const DEFAULT_UNITS = ['м', 'п.м.', 'м²', 'м³', 'шт.', 'кг', 'т', 'компл.'];
 
@@ -24,6 +21,11 @@
     set(k, v) { try { if (v === null || v === undefined) localStorage.removeItem(PREFIX + k); else localStorage.setItem(PREFIX + k, v); } catch (e) { /* приватный режим */ } },
     json(k, def) { try { return JSON.parse(this.get(k) || '') || def; } catch (e) { return def; } },
   };
+  // Рабочий стол — сама папка «Прораб+» (у приглашённого в общую папку она может называться иначе —
+  // выбирается в меню «Папка рабочего стола»): объекты (папки с data) и всё, что создано на рабочем столе
+  const ROOT = D.normalize(store.get('root') || app.dataset.root || '/Прораб+');
+  const HOME = ROOT;
+
   function deviceId() {
     let id = store.get('device');
     if (!id) { id = 'web-' + S.newId().slice(0, 8); store.set('device', id); }
@@ -106,8 +108,22 @@
   // Фон рабочего стола: готовый (класс CSS) или своя картинка. Настройка — на Диске («Прораб+/.prorab-desktop.json»),
   // картинка — там же, а в браузере её копия для быстрого показа
   const WALLS = [['default', 'Синий вечер'], ['sunset', 'Закат'], ['forest', 'Лес'], ['sea', 'Море'], ['graphite', 'Графит'], ['steel', 'Сталь'], ['sand', 'Песок'], ['night', 'Ночь']];
-  const WALL_FILE = ROOT + '/.prorab-desktop.json';
+  // Настройки рабочего стола — общие для всех компьютеров и всех, с кем владелец поделился папкой:
+  // фон и объекты из других папок Диска
+  const DESK_FILE = ROOT + '/.prorab-desktop.json';
   let wall = store.json('wall', { kind: 'preset', id: 'default' });
+  let extraList = store.json('extra', []);
+  const extraProjects = () => extraList.slice();
+  function setExtra(list) {
+    extraList = Array.from(new Set(list));
+    store.set('extra', JSON.stringify(extraList));
+    saveDesk();
+  }
+  function saveDesk() {
+    const conf = { version: 1, wall: wall.kind === 'image' ? { kind: 'image', file: wall.file } : { kind: 'preset', id: wall.id }, extra: extraList };
+    return disk.mkdir(ROOT).then(() => disk.putText(DESK_FILE, JSON.stringify(conf, null, 1)))
+      .then(() => setStatus('Настройки рабочего стола сохранены на Диске'), (e) => setStatus('Настройки не сохранились на Диске: ' + e.message, true));
+  }
 
   function setStatus(text, error) {
     status = { text, error: !!error };
@@ -175,7 +191,7 @@
     try {
       const root = (await disk.list(ROOT)) || [];
       const paths = root.filter((i) => i.type === 'dir' && !i.name.startsWith('.')).map((i) => ROOT + '/' + i.name);
-      for (const p of store.json('extra', [])) if (!paths.includes(p)) paths.push(p);
+      for (const p of extraProjects()) if (!paths.includes(p)) paths.push(p);
       const found = [];
       for (let i = 0; i < paths.length; i += 6) {
         const part = paths.slice(i, i + 6);
@@ -360,7 +376,7 @@
       return where + (w.path ? ' › ' + w.path.split('/').join(' › ') : '');
     }
     if (w.kind === 'project') return projName(w.folder);
-    if (w.kind === 'picker') return APPS.picker.title;
+    if (w.kind === 'picker') return w.mode === 'root' ? 'Папка рабочего стола' : APPS.picker.title;
     return projName(w.folder) + ' · ' + APPS[w.kind].title;
   }
   function rememberLayout(w) {
@@ -465,6 +481,7 @@
       ['-'], ['🗂️ Рабочий стол в проводнике', () => openWindow('explorer', null, { base: HOME })],
       open.length ? ['💾 Сохранить всё сейчас', () => open.forEach((p) => save(ctxs[p]))] : null,
       ['🎨 Фон рабочего стола…', wallDialog],
+      ['📂 Папка рабочего стола…', () => { const w = openWindow('picker', null); w.mode = 'root'; render(); }],
       ['-'], ['Выйти', logout],
     ]);
   }
@@ -491,10 +508,7 @@
     wall = next;
     try { store.set('wall', JSON.stringify(wall)); } catch (e) { /* большая картинка не влезла — покажем с Диска */ }
     render();
-    if (toDisk) {
-      const conf = wall.kind === 'image' ? { kind: 'image', file: wall.file } : { kind: 'preset', id: wall.id };
-      disk.mkdir(ROOT).then(() => disk.putText(WALL_FILE, JSON.stringify(conf))).then(() => setStatus('Фон сохранён на Диске'), (e) => setStatus('Фон не сохранился на Диске: ' + e.message, true));
-    }
+    if (toDisk) saveDesk();
   }
 
   /** Картинка → JPEG не больше 2560 px (data:, его разрешает политика безопасности страницы). */
@@ -517,12 +531,22 @@
   const dataToBlob = (data) => { const [head, b64] = data.split(','); const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: head.slice(5).split(';')[0] }); };
   const blobToData = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
 
-  /** Фон с Диска: настройка общая для всех компьютеров владельца. */
-  async function loadWall() {
+  /** Настройки рабочего стола с Диска: объекты из других папок и фон. */
+  async function loadDesk() {
+    let conf;
     try {
-      const text = await disk.getText(WALL_FILE);
+      const text = await disk.getText(DESK_FILE);
       if (!text) return;
-      const conf = JSON.parse(text);
+      const j = JSON.parse(text);
+      // Прежний формат файла — только фон
+      conf = j.wall || (j.kind ? j : {});
+      if (Array.isArray(j.extra)) { extraList = j.extra.filter((p) => typeof p === 'string'); store.set('extra', JSON.stringify(extraList)); }
+    } catch (e) { return; }
+    loadWallFrom(conf);
+  }
+
+  async function loadWallFrom(conf) {
+    try {
       if (conf.kind === 'preset' && conf.id !== wall.id) setWall({ kind: 'preset', id: conf.id }, false);
       if (conf.kind === 'image' && conf.file && (wall.kind !== 'image' || wall.file !== conf.file || !wall.data)) {
         const r = await fetch(await disk.downloadHref(ROOT + '/' + conf.file));
@@ -534,7 +558,7 @@
   function wallDialog() {
     const close = () => wrap.remove();
     const pick = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp' });
-    const note = h('p', { class: 'pp-muted' }, 'Фон сохраняется на вашем Диске в папке «' + lastName(ROOT) + '» — он будет одинаковым на всех компьютерах.');
+    const note = h('p', { class: 'pp-muted' }, 'Фон сохраняется на Диске в папке «' + lastName(ROOT) + '» — он будет одинаковым на всех компьютерах и у всех, с кем вы поделились папкой.');
     pick.addEventListener('change', async () => {
       const f = pick.files[0];
       if (!f) return;
@@ -569,13 +593,13 @@
   }
 
   function projectMenu(x, y, p) {
-    const extra = store.json('extra', []).includes(p.path);
+    const extra = extraProjects().includes(p.path);
     popup(x, y, [
       ['Открыть', () => openWindow('project', p.path)],
       ['-'], ...PROJECT_APPS.map((k) => [APPS[k].icon + ' ' + APPS[k].title, () => openWindow(k, p.path)]),
       ['-'], ['+ Сделано', () => withCtx(p.path, (c) => doneForm(c, { date: today }))], ['+ Задача', () => withCtx(p.path, (c) => taskForm(c, { date: today }))],
       ['-'], ['Открыть папку на Диске', () => window.open(D.webFolder(p.path), '_blank', 'noopener')],
-      extra ? ['Убрать из списка', () => { store.set('extra', JSON.stringify(store.json('extra', []).filter((x) => x !== p.path))); loadProjects(); }] : null,
+      extra ? ['Убрать с рабочего стола', () => { setExtra(extraProjects().filter((x) => x !== p.path)); loadProjects(); }] : null,
     ]);
   }
 
@@ -1002,6 +1026,17 @@
   /** Добавить объект из любой папки Диска (если он лежит не в «Прораб+»). */
   function pickerView(w) {
     const path = w.path || '/';
+    if (w.mode === 'root') {
+      const up0 = path === '/' ? null : path.split('/').slice(0, -1).join('/') || '/';
+      const go0 = (p) => { w.path = p; loadFolder(w); render(); };
+      return h('div', null,
+        h('p', { class: 'pp-muted' }, 'Сейчас рабочий стол — папка «' + ROOT + '». Если вас пригласили в общую папку и она называется иначе, выберите её здесь.'),
+        h('div', { class: 'pp-row pp-wrap pp-toolbar' }, button('←', () => { if (up0) go0(up0); }, 'pp-icon'), h('span', { class: 'pp-crumbs' }, path),
+          path !== '/' ? button('Сделать рабочим столом', () => { store.set('root', path); location.reload(); }, 'pp-primary') : null,
+          store.get('root') ? button('Вернуть «Прораб+»', () => { store.set('root', null); location.reload(); }) : null),
+        w.items === null ? h('p', { class: 'pp-muted' }, 'Загружаю…') : h('div', { class: 'pp-list' },
+          w.items.filter((i) => i.type === 'dir').map((d) => h('button', { type: 'button', class: 'pp-item', onclick: () => go0(path.replace(/\/$/, '') + '/' + d.name) }, '📁 ' + d.name))));
+    }
     const up = path === '/' ? null : path.split('/').slice(0, -1).join('/') || '/';
     const isObject = (w.items || []).some((i) => i.type === 'dir' && i.name === 'data');
     const go = (p) => { w.path = p; loadFolder(w); render(); };
@@ -1009,9 +1044,7 @@
       h('p', { class: 'pp-muted' }, 'Найдите папку объекта (в ней есть папка data) — она появится на рабочем столе.'),
       h('div', { class: 'pp-row pp-wrap pp-toolbar' }, button('←', () => { if (up) go(up); }, 'pp-icon'), h('span', { class: 'pp-crumbs' }, path),
         isObject ? button('Добавить этот объект', () => {
-          const list = store.json('extra', []);
-          if (!list.includes(path)) list.push(path);
-          store.set('extra', JSON.stringify(list));
+          setExtra(extraProjects().concat([path]));
           closeWindow(w); loadProjects();
         }, 'pp-primary') : null),
       w.items === null ? h('p', { class: 'pp-muted' }, 'Загружаю…') : h('div', { class: 'pp-list' },
@@ -1188,8 +1221,8 @@
     try { await disk.user(); } catch (e) { disk = null; return fail(e); }
     render();
     home.loading = true;
-    loadProjects().then(() => { home.loading = false; });
-    loadWall();
+    // Сначала настройки стола с Диска (в них объекты из других папок), затем объекты
+    loadDesk().finally(() => loadProjects().then(() => { home.loading = false; }));
     clearInterval(refreshTimer);
     refreshTimer = setInterval(refreshAll, 60000);
     setInterval(() => { const el = document.querySelector('.pp-clock'); if (el) el.textContent = time(); }, 30000);

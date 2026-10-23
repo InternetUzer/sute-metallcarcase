@@ -144,13 +144,13 @@ def create_app(test_config=None):
             policy = policy.replace("connect-src 'self'", "connect-src 'self' https://mc.yandex.ru https://mc.yandex.com")
             policy = policy.replace("img-src 'self' data:", "img-src 'self' data: https://mc.yandex.ru https://mc.yandex.com")
             response.headers['Content-Security-Policy'] = policy
-        if request.endpoint == 'prorab':
+        if request.endpoint in ('prorab', 'prorab_shared'):
             # Журнал «Прораб+» читает и пишет папку объекта на Яндекс Диске владельца прямо из браузера
             response.headers['Content-Security-Policy'] = response.headers['Content-Security-Policy'].replace(
                 "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT)
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
-        private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot'))
+        private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab'))
         page_seo = seo.get(request.path)
         if private or not seo.enabled() or (page_seo and page_seo['noindex']) or response.status_code >= 400:
             response.headers['X-Robots-Tag'] = 'noindex, nofollow'
@@ -642,13 +642,22 @@ def create_app(test_config=None):
     seo.register(app, protected, render)
     catalog.register(protected, render)
 
+    def prorab_page(shared):
+        # Журнал работ «Прораб+»: данные — в папке «Прораб+» на Яндекс Диске (те же, что в приложении
+        # на телефоне), сайт их не хранит. ClientID приложения Яндекс OAuth — для кнопки «Войти через Яндекс».
+        client_id = os.environ.get('YANDEX_CLIENT_ID') or (db().execute("SELECT value FROM settings WHERE key='prorab_client_id'").fetchone() or [''])[0]
+        return render_template('prorab.html', client_id=client_id, version=PRORAB_VERSION, shared=shared)
+
     @app.get('/admin/prorab')
     @protected(admin=True)
     def prorab():
-        # Журнал работ «Прораб+»: данные — в папке объекта на Яндекс Диске (те же, что в приложении
-        # на телефоне), сайт их не хранит. ClientID приложения Яндекс OAuth — для кнопки «Войти через Яндекс».
-        client_id = os.environ.get('YANDEX_CLIENT_ID') or (db().execute("SELECT value FROM settings WHERE key='prorab_client_id'").fetchone() or [''])[0]
-        return render_template('prorab.html', client_id=client_id, version=PRORAB_VERSION)
+        return prorab_page(False)
+
+    @app.get('/prorab')
+    def prorab_shared():
+        # Для тех, с кем владелец поделился папкой «Прораб+» на Яндекс Диске: вход своим Яндексом,
+        # видно только то, к чему у этого аккаунта есть доступ на Диске. Сайт данных не выдаёт.
+        return prorab_page(True)
 
     return app
 

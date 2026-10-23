@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/static/prorab/prorab.css?v={{ version }}">
 </head>
 <body class="pp-body">
-<div class="pp-bar"><a href="/admin">← Панель управления</a><span>Прораб+ · журнал работ</span></div>
+<div class="pp-bar">{% if shared %}<a href="/">Металл-Каркас</a>{% else %}<a href="/admin">← Панель управления</a>{% endif %}<span>Прораб+ · журнал работ</span></div>
 <div id="prorab" class="pp-app" data-client-id="{{ client_id }}"><p class="pp-card">Загружаю…</p></div>
 <noscript><p class="pp-card">Для журнала нужен включённый JavaScript.</p></noscript>
 <script src="/static/prorab/schema.js?v={{ version }}"></script>

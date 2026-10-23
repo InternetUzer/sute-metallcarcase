@@ -67,3 +67,15 @@ def test_browser_core_tests_pass():
     except FileNotFoundError:
         pytest.skip('Node.js не установлен')
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_shared_page_for_invited_people(app):
+    """Открытый адрес для тех, с кем поделились папкой на Диске: без входа на сайт, закрыт от поиска."""
+    client = app.test_client()
+    r = client.get('/prorab')
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert '/static/prorab/app.js' in html and 'href="/admin"' not in html
+    assert r.headers['X-Robots-Tag'] == 'noindex, nofollow'
+    assert "connect-src 'self' https://cloud-api.yandex.net" in r.headers['Content-Security-Policy']
+    assert 'Disallow: /prorab' in client.get('/robots.txt').get_data(as_text=True)
