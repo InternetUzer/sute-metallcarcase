@@ -6,9 +6,11 @@
   const CLIENT_ID = app.dataset.clientId || '';
 
   // ───────── хранилище браузера (только удобства; данные — на Диске) ─────────
+  // data-store — отдельное хранилище (демо не трогает ключ и настройки рабочего кабинета)
+  const PREFIX = 'prorab.' + (app.dataset.store ? app.dataset.store + '.' : '');
   const store = {
-    get(k) { try { return localStorage.getItem('prorab.' + k); } catch (e) { return null; } },
-    set(k, v) { try { if (v === null || v === undefined) localStorage.removeItem('prorab.' + k); else localStorage.setItem('prorab.' + k, v); } catch (e) { /* приватный режим */ } },
+    get(k) { try { return localStorage.getItem(PREFIX + k); } catch (e) { return null; } },
+    set(k, v) { try { if (v === null || v === undefined) localStorage.removeItem(PREFIX + k); else localStorage.setItem(PREFIX + k, v); } catch (e) { /* приватный режим */ } },
   };
   function deviceId() {
     let id = store.get('device');
