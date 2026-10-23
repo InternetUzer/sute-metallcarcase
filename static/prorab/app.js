@@ -142,26 +142,39 @@
     history.replaceState(null, '', location.pathname + location.search);
   }
 
+  /** Ключ из того, что вставили: сам ключ или целая ссылка со страницы Яндекса (…#access_token=…). */
+  function tokenFrom(text) {
+    const t = String(text || '').trim();
+    const m = /access_token=([^&\s]+)/.exec(t);
+    return m ? decodeURIComponent(m[1]) : t.replace(/\s/g, '');
+  }
+
   function loginScreen(message) {
     app.classList.remove('pp-desk-app');
     const input = h('input', { type: 'password', autocomplete: 'off', placeholder: 'y0_…' });
+    const go = () => { const t = tokenFrom(input.value); if (!t) return; store.set('token', t); start(); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    // Яндекс вернул на сайт в другой вкладке (приложение с адресом возврата на сайт) — ключ уже сохранён
+    window.addEventListener('storage', function onStore(e) {
+      if (e.key === PREFIX + 'token' && e.newValue && !disk) { window.removeEventListener('storage', onStore); start(); }
+    });
+    const auth = CLIENT_ID ? 'https://oauth.yandex.ru/authorize?response_type=token&client_id=' + encodeURIComponent(CLIENT_ID) : null;
     app.replaceChildren(h('section', { class: 'pp-card pp-narrow' },
       h('h1', null, 'Прораб+ на компьютере'),
-      h('p', { class: 'pp-muted' }, 'Все ваши объекты — те же, что в телефоне: данные берутся из папок объектов на вашем Яндекс Диске и записываются обратно. Ключ хранится только в этом браузере.'),
+      h('p', { class: 'pp-muted' }, 'Все объекты — те же, что в телефоне: данные берутся из папки «' + lastName(ROOT) + '» на Яндекс Диске и записываются обратно. Ключ хранится только в этом браузере.'),
       message ? h('p', { class: 'pp-error' }, message) : null,
-      CLIENT_ID ? button('Войти через Яндекс', () => {
-        // Один адрес возврата для всех: /prorab (ключ общий для /prorab и /admin/prorab — тот же сайт)
-        const back = /\/prorab\/?$/.test(location.pathname) ? location.origin + '/prorab' : location.origin + location.pathname;
-        location.href = 'https://oauth.yandex.ru/authorize?response_type=token&client_id=' + encodeURIComponent(CLIENT_ID) + '&redirect_uri=' + encodeURIComponent(back);
-      }, 'pp-primary') : null,
-      h('details', { open: !CLIENT_ID },
-        h('summary', null, 'Войти по ключу Яндекс Диска'),
+      auth ? h('ol', { class: 'pp-steps' },
+        h('li', null, button('Войти через Яндекс', () => window.open(auth, '_blank'), 'pp-primary'), h('span', { class: 'pp-muted' }, ' — откроется Яндекс: войдите своим аккаунтом и нажмите «Разрешить».')),
+        h('li', null, 'Яндекс покажет ключ доступа — скопируйте его и вставьте сюда:'),
+        h('li', null, field('Ключ доступа', input), button('Войти', go, 'pp-primary'))) : null,
+      h('details', { open: !auth },
+        h('summary', null, auth ? 'Другой способ: ключ с Полигона Яндекс Диска' : 'Войти по ключу Яндекс Диска'),
         h('ol', null,
           h('li', null, 'Откройте ', h('a', { href: 'https://yandex.ru/dev/disk/poligon/', target: '_blank', rel: 'noopener' }, 'Полигон Яндекс Диска'), ' и войдите своим Яндексом.'),
           h('li', null, 'Нажмите «Получить OAuth-токен» и скопируйте строку.'),
-          h('li', null, 'Вставьте её сюда. Никому её не пересылайте.')),
-        field('Ключ', input),
-        button('Войти', () => { const t = input.value.trim(); if (!t) return; store.set('token', t); start(); }, 'pp-primary')),
+          h('li', null, 'Вставьте её в поле ключа. Никому её не пересылайте.')),
+        auth ? null : h('div', null, field('Ключ', input), button('Войти', go, 'pp-primary'))),
+      h('p', { class: 'pp-muted' }, 'Ключ даёт доступ к Яндекс Диску этого аккаунта. Не вводите его на чужих сайтах и не пересылайте. Выйти — меню «Прораб+» → «Выйти».'),
     ));
   }
 

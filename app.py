@@ -35,6 +35,9 @@ ROOT = Path(__file__).resolve().parent
 # Журнал «Прораб+» (/admin/prorab): адреса Яндекс Диска, к которым обращается браузер владельца
 PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net'
 PRORAB_VERSION = '1'
+# Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
+# он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.
+PRORAB_CLIENT_ID = '637047bceacd46c9b55023e0658d2a6e'
 
 
 def create_app(test_config=None):
@@ -645,7 +648,7 @@ def create_app(test_config=None):
     def prorab_page(shared):
         # Журнал работ «Прораб+»: данные — в папке «Прораб+» на Яндекс Диске (те же, что в приложении
         # на телефоне), сайт их не хранит. ClientID приложения Яндекс OAuth — для кнопки «Войти через Яндекс».
-        client_id = os.environ.get('YANDEX_CLIENT_ID') or (db().execute("SELECT value FROM settings WHERE key='prorab_client_id'").fetchone() or [''])[0]
+        client_id = os.environ.get('YANDEX_CLIENT_ID') or (db().execute("SELECT value FROM settings WHERE key='prorab_client_id'").fetchone() or [''])[0] or PRORAB_CLIENT_ID
         return render_template('prorab.html', client_id=client_id, version=PRORAB_VERSION, shared=shared)
 
     @app.get('/admin/prorab')

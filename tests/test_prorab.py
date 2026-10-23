@@ -55,7 +55,7 @@ def test_disk_allowed_only_for_journal(app):
 def test_client_id_for_yandex_login(app, monkeypatch):
     client = app.test_client()
     login(client, 1)
-    assert 'data-client-id=""' in client.get('/admin/prorab').get_data(as_text=True)
+    assert 'data-client-id="637047bceacd46c9b55023e0658d2a6e"' in client.get('/admin/prorab').get_data(as_text=True)
     monkeypatch.setenv('YANDEX_CLIENT_ID', 'abc123')
     assert 'data-client-id="abc123"' in client.get('/admin/prorab').get_data(as_text=True)
 

@@ -153,3 +153,6 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
 .pp-wall-swatch { height: 78px; border-radius: 10px; border: 2px solid transparent; color: #fff; font: inherit; font-size: 13px; display: flex; align-items: flex-end; padding: 6px 8px; cursor: pointer; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 .pp-wall-swatch.pp-selected { border-color: var(--pp-accent); box-shadow: 0 0 0 2px var(--pp-card) inset; }
+
+.pp-steps { padding-left: 20px; }
+.pp-steps li { margin: 10px 0; }
