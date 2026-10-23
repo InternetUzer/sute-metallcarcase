@@ -149,8 +149,10 @@ def create_app(test_config=None):
             response.headers['Content-Security-Policy'] = policy
         if request.endpoint in ('prorab', 'prorab_shared'):
             # Журнал «Прораб+» читает и пишет папку объекта на Яндекс Диске владельца прямо из браузера
+            # Фото объекта показываются по временным ссылкам Яндекс Диска
             response.headers['Content-Security-Policy'] = response.headers['Content-Security-Policy'].replace(
-                "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT)
+                "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT).replace(
+                "img-src 'self' data:", "img-src 'self' data: " + PRORAB_CONNECT)
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab'))

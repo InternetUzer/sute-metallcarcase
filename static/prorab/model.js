@@ -255,6 +255,60 @@
       return this.put('crews', c.id || S.newId(), { projectId: this.projectId, name: c.name || '', archived: c.archived ? 1 : 0, deleted: 0 });
     }
 
+    // ───────── фото (вложения) ─────────
+    /** Фото и видео записи (журнала, замечания…): файлы — в «<объект>/files/», как у телефона. */
+    attachmentsOf(ownerId) {
+      return this.rows('attachments').filter((x) => x.ownerId === ownerId).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    }
+    addAttachment(ownerId, file, kind) {
+      return this.put('attachments', S.newId(), { projectId: this.projectId, ownerId, kind: kind || 'photo', file, deleted: 0 });
+    }
+    removeAttachment(id) { this.del('attachments', id); }
+
+    // ───────── справочники ─────────
+    addNamed(table, name) {
+      const n = String(name || '').trim();
+      if (!n) return null;
+      const same = this.rows(table).find((r) => (r.name || '').trim().toLowerCase() === n.toLowerCase());
+      return same || this.put(table, S.newId(), { projectId: this.projectId, name: n, deleted: 0 });
+    }
+
+    // ───────── ведомость ─────────
+    saveBoqItem(it) {
+      const id = it.id || S.newId();
+      const position = it.id ? undefined : this.rows('boq_items').reduce((m, r) => Math.max(m, r.position || 0), -1) + 1;
+      const changes = {
+        projectId: this.projectId, name: it.name || '', workTypeId: it.workTypeId || null, unitId: it.unitId || null,
+        planQty: it.planQty === undefined ? null : it.planQty, priceCents: it.priceCents === undefined ? null : it.priceCents,
+        startDate: it.startDate || null, dueDate: it.dueDate || null, contractorId: it.contractorId || null,
+        finishedDate: it.finishedDate || null, deleted: 0,
+      };
+      if (position !== undefined) changes.position = position;
+      return this.put('boq_items', id, changes);
+    }
+    /** Позицию с записями «Сделано» не удаляем — её объём уже в журнале. */
+    itemHasHistory(id) { return this.rows('volumes').some((v) => v.itemId === id) || this.rows('tasks').some((t) => t.itemId === id); }
+    deleteBoqItem(id) { if (!this.itemHasHistory(id)) this.del('boq_items', id); }
+
+    // ───────── замечания ─────────
+    remarks() { return this.rows('remarks').sort((a, b) => (b.number || 0) - (a.number || 0)); }
+    saveRemark(r) {
+      const id = r.id || S.newId();
+      const changes = {
+        projectId: this.projectId, date: r.date, text: r.text || '', place: r.place || '', contractorId: r.contractorId || null,
+        dueDate: r.dueDate || null, deleted: 0,
+      };
+      if (!r.id) {
+        changes.number = this.rows('remarks', true).reduce((m, x) => Math.max(m, x.number || 0), 0) + 1;
+        changes.status = 'OPEN';
+      }
+      return this.put('remarks', id, changes);
+    }
+    setRemarkDone(id, done, note, date) {
+      return this.put('remarks', id, done ? { status: 'DONE', doneDate: date, doneNote: note || '' } : { status: 'OPEN', doneDate: null, doneNote: '' });
+    }
+    deleteRemark(id) { this.del('remarks', id); }
+
     /** Ведомость: позиции с планом, сделанным (сумма записей «Сделано»), процентом, остатком и сроком. */
     boq() {
       const names = this.names();

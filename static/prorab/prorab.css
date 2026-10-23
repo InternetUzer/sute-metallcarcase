@@ -156,3 +156,12 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 
 .pp-steps { padding-left: 20px; }
 .pp-steps li { margin: 10px 0; }
+
+/* ───────── фото, ссылки ───────── */
+.pp-photobox { margin: 6px 0; }
+.pp-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin: 6px 0; }
+.pp-photo { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--pp-bg); border: 1px solid var(--pp-line); cursor: zoom-in; }
+.pp-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pp-photo-video { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 30px; }
+.pp-photo-x { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 13px; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; }
+.pp-link { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--pp-accent); cursor: pointer; text-align: left; }
