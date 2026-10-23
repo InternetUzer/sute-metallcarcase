@@ -117,3 +117,98 @@ test('DXF: кириллица в старой кодировке Windows и дв
   assert.equal(X.kindOf('a.PDF'), 'pdf');
   assert.equal(X.kindOf('чертёж', new TextEncoder().encode('AC1032....')), 'dwg');
 });
+
+test('доп. работы считаются сами: сверх плана (часть записи), без плана, без позиции, заведённые заранее', () => {
+  const p = project({
+    boq_items: [
+      { id: 'a', projectId: P, name: 'Бетон', planQty: 100, priceCents: 500000, position: 0, updatedAt: 1 },
+      { id: 'b', projectId: P, name: 'Новая работа', position: 1, updatedAt: 1 },
+      { id: 'c', projectId: P, name: 'Навес', planQty: 20, extraDate: 20400, position: 2, updatedAt: 1 },
+    ],
+    volumes: [
+      { id: 'v1', projectId: P, itemId: 'a', date: 20401, quantity: 90, createdAt: 1, updatedAt: 1 },
+      { id: 'v2', projectId: P, itemId: 'a', date: 20402, quantity: 25, createdAt: 2, updatedAt: 1 },
+      { id: 'v3', projectId: P, itemId: 'b', date: 20403, quantity: 3, createdAt: 3, updatedAt: 1 },
+      { id: 'v4', projectId: P, itemId: null, name: 'Уборка', date: 20404, quantity: 1, createdAt: 4, updatedAt: 1 },
+    ],
+  });
+  const list = p.extraWorks();
+  const by = Object.fromEntries(list.map((x) => [x.kind, x]));
+  assert.equal(by.OVER_PLAN.extra, 15);
+  assert.equal(by.OVER_PLAN.parts.length, 1);
+  assert.equal(by.OVER_PLAN.parts[0].qty, 15); // из записи 25 сверх плана только 15
+  assert.equal(by.OVER_PLAN.since, 20402);
+  assert.equal(by.OVER_PLAN.cost, 15 * 500000);
+  assert.equal(by.NO_PLAN.extra, 3);
+  assert.equal(by.EXTRA_ITEM.extra, 20); // ещё не сделано — объём по плану
+  assert.equal(by.NO_ITEM.parts.length, 1);
+  // Согласование: постоянный id, только нужные поля
+  const a = p.saveExtraApproval('a', { description: 'Перерасход', supervisorDate: 20410, bogus: 1 });
+  assert.equal(a.id, 'extra:a');
+  assert.equal(p.extraApproval('a').supervisorDate, 20410);
+  assert.equal(p.extraApproval(null), null);
+  assert.equal(p.saveExtraApproval(null, {}).id, 'extra:loose:' + P);
+  // На чертёж: пометка с текстом, повторная постановка убирает старую
+  const n1 = p.placeExtra('a', 'd', 0, 1, 2, null);
+  assert.equal(n1.text, 'Доп. работа: Бетон\nПерерасход');
+  const n2 = p.placeExtra('a', 'd', 0, 3, 4, null);
+  assert.equal(p.notesOf('d').length, 1);
+  assert.equal(n2.number, 2);
+  assert.equal(p.extraApproval('a').noteId, n2.id);
+});
+
+test('приёмка: предъявить, не принять, предъявить снова, отменить — как в приложении', () => {
+  const p = project({
+    projects: [{ id: P, name: 'Ангар', supervisor: 'Петров', updatedAt: 1 }],
+    boq_items: [{ id: 'a', projectId: P, name: 'Кладка', unitId: 'u', planQty: 10, position: 0, updatedAt: 1 }],
+    units: [{ id: 'u', projectId: P, name: 'м³', updatedAt: 1 }],
+  });
+  assert.deepEqual(p.acceptors(), ['Петров (технадзор)']);
+  const a = p.submitAcceptance('a', 20500, 20502, 'Петров (технадзор)');
+  assert.equal(p.get('boq_items', 'a').finishedDate, 20500);
+  assert.equal(a.workName, 'Кладка');
+  assert.equal(p.acceptancesCurrent().length, 1);
+  p.saveAcceptance(a.id, { readyDate: 20501, result: 'REJECTED', resultDate: 20503, acceptedBy: 'Петров', note: 'трещины' });
+  assert.equal(p.get('boq_items', 'a').finishedDate, 20501); // дата «Закончено» — дата окончания позиции
+  const r = p.saveRemark({ acceptanceId: a.id, date: 20503, text: 'Трещина' });
+  assert.deepEqual([p.acceptanceRemarks(a.id).open, p.acceptanceRemarks(a.id).total], [1, 1]);
+  p.setRemarkDone(r.id, true, '', 20504);
+  assert.equal(p.acceptanceRemarks(a.id).open, 0);
+  // Чтобы порядок предъявлений не зависел от одной миллисекунды
+  p.put('acceptances', a.id, { createdAt: 1 });
+  const b = p.resubmitAcceptance(a.id, 20505);
+  assert.equal(p.acceptancesCurrent().map((x) => x.id).join(), b.id);
+  assert.equal(p.acceptanceHistory(b).length, 1);
+  p.cancelAcceptance(b.id, 20506);
+  assert.equal(p.acceptancesCurrent().length, 0);
+  assert.equal(p.get('boq_items', 'a').finishedDate, null);
+});
+
+test('замечание на чертёж: становится пометкой с фото, само замечание убирается', () => {
+  const p = project({ remarks: [{ id: 'r', projectId: P, number: 5, date: 20500, text: 'Скол', place: 'ось 3', status: 'DONE', doneDate: 20501, doneNote: 'заделали', updatedAt: 1 }],
+    attachments: [{ id: 'f1', projectId: P, ownerId: 'r', file: 'a.jpg', updatedAt: 1 }, { id: 'f2', projectId: P, ownerId: 'r:done', file: 'b.jpg', updatedAt: 1 }] });
+  const n = p.placeRemark('r', 'd', 1, 10, 20, null);
+  assert.equal(n.text, 'Скол (ось 3)\nУстранено 17.02.2026: заделали');
+  assert.equal(n.status, 'DONE');
+  assert.equal(p.get('remarks', 'r').deleted, 1);
+  assert.equal(p.attachmentsOf(n.id).length, 1);
+  assert.equal(p.attachmentsOf(n.id + ':done').length, 1);
+});
+
+test('«Сегодня»: просрочки, сроки ведомости, приёмки, замечания, люди', () => {
+  const day = 20500;
+  const p = project({
+    tasks: [{ id: 't1', projectId: P, date: day, title: 'Бетон', done: 0, updatedAt: 1 }, { id: 't2', projectId: P, date: day - 2, title: 'Арматура', done: 0, updatedAt: 1 }, { id: 't3', projectId: P, date: day - 1, title: 'Готово', done: 1, updatedAt: 1 }],
+    boq_items: [{ id: 'a', projectId: P, name: 'Кладка', dueDate: day - 1, position: 0, updatedAt: 1 }],
+    remarks: [{ id: 'r', projectId: P, number: 1, date: day - 3, dueDate: day, status: 'OPEN', updatedAt: 1 }, { id: 'r2', projectId: P, number: 2, date: day - 3, status: 'OPEN', updatedAt: 1 }],
+    crew_days: [{ id: 'c:' + day, projectId: P, crewId: 'c', date: day, people: 7, updatedAt: 1 }],
+  });
+  const v = p.todayView(day);
+  assert.deepEqual(v.tasks.map((t) => t.id), ['t1']);
+  assert.deepEqual(v.overdueTasks.map((t) => t.id), ['t2']);
+  assert.equal(v.itemsDue.length, 1);
+  assert.equal(v.remarksDue.length, 1);
+  assert.equal(v.remarksOpen, 2);
+  assert.equal(v.people, 7);
+  assert.equal(v.attention, 3);
+});

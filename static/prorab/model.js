@@ -30,6 +30,9 @@
     return m + ' мин';
   }
 
+  const dmy = (d) => { const x = new Date(d * 86400000); const p = (n) => String(n).padStart(2, '0'); return p(x.getUTCDate()) + '.' + p(x.getUTCMonth() + 1) + '.' + x.getUTCFullYear(); };
+  const numText = (q) => (q === null || q === undefined ? '' : String(Math.round(Number(q) * 1e6) / 1e6).replace('.', ','));
+
   function equipmentTitle(e) {
     const parts = [e.kind || '', e.name || ''].map((s) => String(s).trim()).filter((s) => s);
     const uniq = parts.filter((s, i) => parts.indexOf(s) === i);
@@ -301,9 +304,10 @@
         projectId: this.projectId, date: r.date, text: r.text || '', place: r.place || '', contractorId: r.contractorId || null,
         dueDate: r.dueDate || null, deleted: 0,
       };
-      if (!r.id) {
+      if (!r.id || !this.get('remarks', r.id)) {
         changes.number = this.rows('remarks', true).reduce((m, x) => Math.max(m, x.number || 0), 0) + 1;
         changes.status = 'OPEN';
+        if (r.acceptanceId) changes.acceptanceId = r.acceptanceId;
       }
       return this.put('remarks', id, changes);
     }
@@ -402,6 +406,211 @@
       return this.put('drawing_views', v.id || S.newId(), Object.assign(changes, { projectId: this.projectId, drawingId: v.drawingId, position, rotation: 0, deleted: 0 }));
     }
     deleteView(id) { this.del('drawing_views', id); }
+
+    /** Следующий номер пометки на чертеже (с удалёнными — как в телефоне). */
+    nextNoteNumber(drawingId) { return this.rows('drawing_notes', true).filter((x) => x.drawingId === drawingId).reduce((m, x) => Math.max(m, x.number || 0), 0) + 1; }
+
+    /** Замечание из журнала — на чертёж: становится пометкой с теми же фото, само замечание убирается (как в телефоне). */
+    placeRemark(remarkId, drawingId, page, x, y, viewId) {
+      const r = this.get('remarks', remarkId);
+      if (!r) throw new Error('Замечание не найдено');
+      const done = r.status === 'DONE';
+      let text = r.text || '';
+      if (r.place) text += ' (' + r.place + ')';
+      if (done) text += '\nУстранено' + (r.doneDate ? ' ' + dmy(r.doneDate) : '') + (r.doneNote ? ': ' + r.doneNote : '');
+      const id = S.newId();
+      const note = this.put('drawing_notes', id, {
+        projectId: this.projectId, drawingId, page: page || 0, x, y, viewId: viewId || null, number: this.nextNoteNumber(drawingId), text,
+        status: done ? 'DONE' : 'NOTE', doneDate: done ? r.doneDate || null : null, contractorId: r.contractorId || null, dueDate: r.dueDate || null,
+        acceptanceId: r.acceptanceId || null, deleted: 0,
+      });
+      for (const a of this.attachmentsOf(remarkId)) this.put('attachments', a.id, { ownerId: id });
+      for (const a of this.attachmentsOf(remarkId + ':done')) this.put('attachments', a.id, { ownerId: id + ':done' });
+      this.del('remarks', remarkId);
+      return note;
+    }
+
+    // ───────── доп. работы ─────────
+    /**
+     * Доп. работы — считаются сами из ведомости и журнала (как extraWorksOf в приложении):
+     * EXTRA_ITEM — заведены заранее; OVER_PLAN — сверх плана; NO_PLAN — позиции без плана (если у объекта есть план);
+     * NO_ITEM — записи без позиции. parts — записи журнала (или их части) сверх плана.
+     */
+    extraWorks() {
+      const EPS = 1e-9;
+      const items = this.rows('boq_items').sort((a, b) => (a.position || 0) - (b.position || 0));
+      const entries = this.rows('volumes');
+      const known = new Set(items.map((i) => i.id));
+      const usesPlan = items.some((i) => i.extraDate === null || i.extraDate === undefined ? (Number(i.planQty) || 0) > 0 : false);
+      const sorted = (l) => l.slice().sort((a, b) => (a.date - b.date) || ((a.createdAt || 0) - (b.createdAt || 0)));
+      const qty = (e) => Number(e.quantity) || 0;
+      const out = [];
+      for (const item of items) {
+        const list = sorted(entries.filter((e) => e.itemId === item.id));
+        const fact = list.reduce((s, e) => s + qty(e), 0);
+        const plan = Number(item.planQty) > 0 ? Number(item.planQty) : null;
+        if (item.extraDate !== null && item.extraDate !== undefined) {
+          out.push({ kind: 'EXTRA_ITEM', item, plan, fact, extra: Math.max(plan || 0, fact), since: item.extraDate, parts: list.map((e) => ({ entry: e, qty: qty(e) })) });
+          continue;
+        }
+        if (fact <= EPS) continue;
+        if (plan === null) {
+          if (usesPlan) out.push({ kind: 'NO_PLAN', item, plan: null, fact, extra: fact, since: list.length ? list[0].date : null, parts: list.map((e) => ({ entry: e, qty: qty(e) })) });
+          continue;
+        }
+        if (fact <= plan + EPS) continue;
+        let sum = 0;
+        const parts = [];
+        for (const e of list) {
+          const before = sum;
+          sum += qty(e);
+          if (sum > plan + EPS && qty(e) > 0) parts.push({ entry: e, qty: Math.min(qty(e), sum - Math.max(before, plan)) });
+        }
+        out.push({ kind: 'OVER_PLAN', item, plan, fact, extra: fact - plan, since: parts.length ? parts[0].entry.date : null, parts });
+      }
+      const loose = sorted(entries.filter((e) => (!e.itemId || !known.has(e.itemId)) && qty(e) > EPS));
+      if (loose.length) {
+        const fact = loose.reduce((s, e) => s + qty(e), 0);
+        out.push({ kind: 'NO_ITEM', item: null, plan: null, fact, extra: fact, since: loose[0].date, parts: loose.map((e) => ({ entry: e, qty: qty(e) })) });
+      }
+      for (const w of out) {
+        w.extra = Math.round(w.extra * 1e6) / 1e6;
+        w.cost = w.item && w.item.priceCents ? Math.round(w.extra * w.item.priceCents) : null;
+      }
+      return out;
+    }
+    /** Карточка доп. работы: постоянный id «extra:<позиция>» (или «extra:loose:<объект>»). */
+    extraApprovalId(itemId) { return itemId ? 'extra:' + itemId : 'extra:loose:' + this.projectId; }
+    extraApproval(itemId) { const a = this.get('extra_approvals', this.extraApprovalId(itemId)); return a && !Number(a.deleted) ? a : null; }
+    saveExtraApproval(itemId, changes) {
+      const id = this.extraApprovalId(itemId);
+      const base = this.get('extra_approvals', id) ? {} : { projectId: this.projectId, itemId: itemId || null };
+      const allowed = ['note', 'description', 'designerDate', 'supervisorDate', 'contractorDate', 'customerDate', 'noteId'];
+      const out = Object.assign(base, { deleted: 0 });
+      for (const k of allowed) if (k in changes) out[k] = changes[k] === undefined ? null : changes[k];
+      return this.put('extra_approvals', id, out);
+    }
+    /** Поставить доп. работу на чертёж: пометка с номером, старая пометка этой работы убирается. */
+    placeExtra(itemId, drawingId, page, x, y, viewId) {
+      const a = this.extraApproval(itemId);
+      const item = itemId ? this.get('boq_items', itemId) : null;
+      const title = (item && String(item.name || '').trim()) || 'доп. работа';
+      const desc = a && a.description && a.description.trim() ? '\n' + a.description : '';
+      if (a && a.noteId && this.get('drawing_notes', a.noteId)) this.del('drawing_notes', a.noteId);
+      const id = S.newId();
+      const note = this.put('drawing_notes', id, {
+        projectId: this.projectId, drawingId, page: page || 0, x, y, viewId: viewId || null, number: this.nextNoteNumber(drawingId),
+        text: 'Доп. работа: ' + title + desc, status: 'NOTE', contractorId: (item && item.contractorId) || null, deleted: 0,
+      });
+      this.saveExtraApproval(itemId, { noteId: id });
+      return note;
+    }
+
+    // ───────── журнал приёмки ─────────
+    /** Текущие приёмки: последняя по позиции и последняя по записи журнала; отменённая — значит текущей нет. */
+    acceptancesCurrent() {
+      const latest = new Map();
+      for (const a of this.rows('acceptances')) {
+        const key = a.entryId ? 'e:' + a.entryId : 'i:' + a.itemId;
+        const was = latest.get(key);
+        if (!was || (a.createdAt || 0) > (was.createdAt || 0)) latest.set(key, a);
+      }
+      return Array.from(latest.values()).filter((a) => a.result !== 'CANCELLED');
+    }
+    acceptanceTitle(a) {
+      const name = a.workName || this.itemName(a.itemId) || 'Позиция';
+      if (!a.entryId) return name;
+      const unit = a.unitName !== null && a.unitName !== undefined ? a.unitName : (this.names().units[(this.get('boq_items', a.itemId) || {}).unitId] || '');
+      return name + ' — ' + numText(a.qty) + (unit ? ' ' + unit : '') + ' за ' + dmy(a.readyDate);
+    }
+    /** История предъявлений той же работы (вся позиция или та же запись), новые сверху. */
+    acceptanceHistory(a) {
+      return this.rows('acceptances').filter((x) => x.itemId === a.itemId && (x.entryId || null) === (a.entryId || null) && x.id !== a.id)
+        .sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+    }
+    /** Замечания по приёмке (журнал замечаний и пометки на чертежах): { open, total }. */
+    acceptanceRemarks(id) {
+      const rs = this.rows('remarks').filter((r) => r.acceptanceId === id);
+      const ns = this.rows('drawing_notes').filter((n) => n.acceptanceId === id);
+      return { remarks: rs, notes: ns, open: rs.filter((r) => r.status !== 'DONE').length + ns.filter((n) => n.status !== 'DONE').length, total: rs.length + ns.length };
+    }
+    /** «Закончено — готово к приёмке»: дата окончания у позиции + запись в журнале приёмки. */
+    submitAcceptance(itemId, finishDate, planDate, acceptedBy) {
+      const item = this.get('boq_items', itemId);
+      if (!item) throw new Error('Позиция не найдена');
+      this.put('boq_items', itemId, { finishedDate: finishDate });
+      return this.put('acceptances', S.newId(), {
+        projectId: this.projectId, itemId, readyDate: finishDate, planDate: planDate || null, result: 'PENDING', acceptedBy: String(acceptedBy || '').trim(),
+        workName: this.itemName(itemId), unitName: this.names().units[item.unitId] || '', entryId: null, qty: null, note: '', deleted: 0,
+      });
+    }
+    isCurrentForItem(a) {
+      if (a.entryId || a.result === 'CANCELLED') return false;
+      const list = this.rows('acceptances').filter((x) => x.itemId === a.itemId && !x.entryId);
+      return list.reduce((m, x) => (!m || (x.createdAt || 0) > (m.createdAt || 0) ? x : m), null).id === a.id;
+    }
+    saveAcceptance(id, c) {
+      const result = ['PENDING', 'ACCEPTED', 'REJECTED'].includes(c.result) ? c.result : 'PENDING';
+      const a = this.put('acceptances', id, {
+        readyDate: c.readyDate, planDate: c.planDate || null, result, resultDate: result === 'PENDING' ? null : c.resultDate || null,
+        acceptedBy: String(c.acceptedBy || '').trim(), note: String(c.note || '').trim(),
+      });
+      if (this.isCurrentForItem(a)) {
+        const item = this.get('boq_items', a.itemId);
+        if (item && item.finishedDate !== a.readyDate) this.put('boq_items', a.itemId, { finishedDate: a.readyDate });
+      }
+      return a;
+    }
+    /** Отменить предъявление: в истории как «Отменено», позиция снова «в работе». */
+    cancelAcceptance(id, day) {
+      const a = this.put('acceptances', id, { result: 'CANCELLED', resultDate: day });
+      if (!a.entryId && this.get('boq_items', a.itemId)) this.put('boq_items', a.itemId, { finishedDate: null });
+      return a;
+    }
+    /** После «Не принято» и устранения замечаний — предъявить снова. */
+    resubmitAcceptance(id, day) {
+      const a = this.get('acceptances', id);
+      const n = this.put('acceptances', S.newId(), {
+        projectId: this.projectId, itemId: a.itemId, entryId: a.entryId || null, qty: a.qty === undefined ? null : a.qty, readyDate: day, planDate: null,
+        result: 'PENDING', acceptedBy: a.acceptedBy || '', workName: a.workName || null, unitName: a.unitName === undefined ? null : a.unitName, note: '', deleted: 0,
+      });
+      if (!a.entryId && this.get('boq_items', a.itemId)) this.put('boq_items', a.itemId, { finishedDate: day });
+      return n;
+    }
+    /** Кто может принимать: технадзор и заказчик из карточки + все, кто уже принимал. */
+    acceptors() {
+      const p = this.project, out = [];
+      const add = (s) => { s = String(s || '').trim(); if (s && !out.includes(s)) out.push(s); };
+      add(p.supervisor && p.supervisor.trim() ? p.supervisor.trim() + ' (технадзор)' : 'Технадзор');
+      if (p.customer && p.customer.trim()) add(p.customer.trim() + ' (заказчик)');
+      this.rows('acceptances').forEach((a) => add(a.acceptedBy));
+      return out;
+    }
+
+    // ───────── сегодня ─────────
+    /** «Сегодня на объекте» — как todayView в приложении (только чтение). */
+    todayView(day) {
+      const tasks = this.rows('tasks');
+      const boq = this.boq();
+      const pending = this.acceptancesCurrent().filter((a) => a.result === 'PENDING').sort((a, b) => (a.planDate || a.readyDate) - (b.planDate || b.readyDate));
+      const remarks = this.rows('remarks');
+      const v = {
+        day,
+        tasks: tasks.filter((t) => t.date === day && !Number(t.done)),
+        overdueTasks: tasks.filter((t) => t.date < day && !Number(t.done)).sort((a, b) => a.date - b.date),
+        itemsDue: boq.filter((r) => r.due && r.due <= day && !r.finished).sort((a, b) => a.due - b.due),
+        acceptancesPending: pending,
+        remarksDue: remarks.filter((r) => r.status !== 'DONE' && r.dueDate && r.dueDate <= day).sort((a, b) => a.dueDate - b.dueDate),
+        remarksOpen: remarks.filter((r) => r.status !== 'DONE').length,
+        calls: this.rows('rental_calls').filter((c) => c.date === day && c.status !== 'CANCELLED').sort((a, b) => (a.timeMin === null || a.timeMin === undefined ? 1e9 : a.timeMin) - (b.timeMin === null || b.timeMin === undefined ? 1e9 : b.timeMin)),
+        machineWork: this.rows('rental_work').filter((w) => w.date === day),
+        crewDays: this.rows('crew_days').filter((c) => c.date === day),
+        doneToday: this.rows('volumes').filter((e) => e.date === day),
+      };
+      v.people = v.crewDays.reduce((s, c) => s + (Number(c.people) || 0), 0);
+      v.attention = v.overdueTasks.length + v.itemsDue.filter((r) => r.due < day).length + v.acceptancesPending.length + v.remarksDue.length;
+      return v;
+    }
 
     /** Ведомость: позиции с планом, сделанным (сумма записей «Сделано»), процентом, остатком и сроком. */
     boq() {

@@ -351,9 +351,11 @@
 
   /** Забрать чужие правки (раз в минуту и по кнопке); свои несохранённые не теряются. */
   async function refreshCtx(c) {
-    if (!c.project || c.saving) return;
+    // Пока открыта форма, объект не подменяем: она пишет в текущий (иначе её правки потерялись бы)
+    if (!c.project || c.saving || modalOpen()) return;
     try {
       const files = await readFiles(c.path);
+      if (modalOpen()) return; // форму открыли, пока читали Диск — обновим в следующий раз
       const mine = S.toFile(c.project.state, c.project.projectId, c.project.project.name, me);
       const dirty = c.project.dirty;
       c.project = new M.Project(S.mergeFiles(files.concat([mine]), c.project.projectId, clock), SCHEMA, c.project.projectId, me, clock);
@@ -437,10 +439,13 @@
     dirs: { title: 'Справочники', icon: '📇', view: (w, c) => dirsView(w, c) },
     drawings: { title: 'Чертежи', icon: '📐', view: (w, c) => drawingsView(w, c) },
     drawing: { title: 'Чертёж', icon: '📐', view: (w, c) => drawingView(w, c) },
+    today: { title: 'Сегодня', icon: '☀️', view: (w, c) => todayView(w, c) },
+    extras: { title: 'Доп. работы', icon: '➕', view: (w, c) => extrasView(w, c) },
+    acceptance: { title: 'Журнал приёмки', icon: '✅', view: (w, c) => acceptanceView(w, c) },
     project: { title: 'Объект', icon: '🏗️', view: (w, c) => projectView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['card', 'journal', 'calendar', 'boq', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
+  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -910,7 +915,13 @@
     const P = c.project;
     const names = P.names();
     w.remarkFilter = w.remarkFilter || 'open';
-    const all = P.remarks();
+    // Как в телефоне: пометки с чертежей тоже в журнале замечаний («Ч№»)
+    const drawingNames = Object.fromEntries(P.drawings().map((d) => [d.id, d.name]));
+    const notes = P.rows('drawing_notes').filter((n) => drawingNames[n.drawingId] !== undefined).map((n) => ({
+      id: n.id, isNote: true, number: n.number, text: n.text, status: n.status === 'DONE' ? 'DONE' : 'OPEN', dueDate: n.dueDate, contractorId: n.contractorId,
+      date: Math.floor(((n.createdAt || 0) - new Date().getTimezoneOffset() * 60000) / 86400000), place: '📐 ' + drawingNames[n.drawingId], drawingId: n.drawingId, problem: n.status === 'PROBLEM',
+    }));
+    const all = P.remarks().concat(notes.sort((a, b) => b.date - a.date));
     const list = w.remarkFilter === 'open' ? all.filter((r) => r.status !== 'DONE') : all;
     return h('main', null,
       h('div', { class: 'pp-row pp-between pp-wrap' },
@@ -920,14 +931,15 @@
       list.length ? h('section', { class: 'pp-card' }, list.map((r) => {
         const late = r.status !== 'DONE' && r.dueDate && r.dueDate < today;
         const photos = P.attachmentsOf(r.id).length;
-        return h('button', { type: 'button', class: 'pp-line', onclick: () => remarkForm(c, r.id) },
-          h('span', null, '№' + r.number + ' — ' + (r.text || 'без текста')),
+        return h('button', { type: 'button', class: 'pp-line', onclick: () => (r.isNote ? openDrawing(c, r.drawingId, { noteId: r.id }) : remarkForm(c, r.id)) },
+          h('span', null, (r.isNote ? 'Ч№' : '№') + r.number + ' — ' + (r.problem ? '❗ ' : '') + (r.text || 'без текста')),
           h('small', null, [dayTitle(r.date), r.place, names.contractors[r.contractorId], r.dueDate ? 'срок ' + shortDate(r.dueDate) : '', photos ? '📷 ' + photos : ''].filter(Boolean).join(' · ')),
           h('strong', { class: r.status === 'DONE' ? 'pp-plus' : late ? 'pp-error' : '' }, r.status === 'DONE' ? 'устранено' : late ? 'просрочено' : 'открыто'));
       })) : h('p', { class: 'pp-card pp-muted' }, w.remarkFilter === 'open' ? 'Открытых замечаний нет.' : 'Замечаний нет.'));
   }
 
-  function remarkForm(c, id) {
+  function remarkForm(c, id, opts) {
+    opts = opts || {};
     const P = c.project;
     const r = id ? P.get('remarks', id) : null;
     const dateIn = h('input', { type: 'date', value: dayToInput(r ? r.date : today), required: true });
@@ -943,12 +955,17 @@
       h('div', { class: 'pp-row pp-wrap' }, field('Дата', dateIn), field('Срок устранения', due, 'необязательно')),
       field('Замечание', text), h('div', { class: 'pp-row pp-wrap' }, field('Место', place), field('Кто устраняет', who)),
       photos.el,
-      r ? h('div', null, h('h3', null, 'Устранение'), h('label', { class: 'pp-check' }, done, ' Устранено'), field('Комментарий', doneNote), donePhotos.el) : null), () => {
+      r ? h('div', null, h('h3', null, 'Устранение'), h('label', { class: 'pp-check' }, done, ' Устранено'), field('Комментарий', doneNote), donePhotos.el) : null,
+      r ? h('div', { class: 'pp-row pp-wrap pp-between' }, h('small', { class: 'pp-muted' }, 'На чертеже замечание станет пометкой с теми же фото.'),
+        button('📍 Поставить на чертёж', () => {
+          document.querySelector('.pp-modal').remove();
+          pickDrawing(c, (drawingId) => openDrawing(c, drawingId, { place: { kind: 'remark', remarkId: r.id, title: 'Замечание №' + r.number } }));
+        })) : null), () => {
       const day = inputToDay(dateIn.value);
       if (day === null) bad('Укажите дату');
       if (!text.value.trim()) bad('Опишите замечание');
       if (photos.busy() || (donePhotos && donePhotos.busy())) bad('Подождите — фото ещё загружаются');
-      const saved = P.saveRemark({ id: r ? r.id : null, date: day, text: text.value.trim(), place: place.value.trim(), contractorId: who.value && who.value !== '__add' ? who.value : null, dueDate: due.value ? inputToDay(due.value) : null });
+      const saved = P.saveRemark({ id: r ? r.id : null, acceptanceId: opts.acceptanceId || null, date: day, text: text.value.trim(), place: place.value.trim(), contractorId: who.value && who.value !== '__add' ? who.value : null, dueDate: due.value ? inputToDay(due.value) : null });
       photos.commit(saved.id);
       if (r) {
         if (done.checked !== (r.status === 'DONE') || (done.checked && doneNote.value.trim() !== (r.doneNote || ''))) P.setRemarkDone(r.id, done.checked, doneNote.value.trim(), r.doneDate || today);
@@ -1223,6 +1240,13 @@
     opts = opts || {};
     if (opts.noteId) { w.focusNote = opts.noteId; if (w.viewer) { const n = c.project.get('drawing_notes', opts.noteId); if (n) w.viewer.focus(n); } }
     if (opts.viewId) { w.pendingView = opts.viewId; if (w.viewer) applyPlanView(w, c, opts.viewId); }
+    if (opts.place) {
+      // Постановка замечания или доп. работы: следующий щелчок по чертежу ставит точку
+      w.placeFor = opts.place; w.placing = true;
+      if (w.viewer) w.viewer.setMode('place');
+      setStatus('Щёлкните по месту на чертеже: ' + opts.place.title);
+      render();
+    }
     return w;
   }
 
@@ -1264,10 +1288,23 @@
       w.viewer = window.ProrabViewer.create(w.host, {
         kind: d.kind, dxf: w.dxf, pdf: w.pdf, hidden: w.hidden, notes,
         onNote: (id) => noteForm(c, w, { id }),
-        onPlace: (x, y, page) => { w.placing = false; w.viewer.setMode('view'); render(); noteForm(c, w, { x, y, page }); },
+        onPlace: (x, y, page) => {
+          w.placing = false; w.viewer.setMode('view');
+          const pf = w.placeFor;
+          w.placeFor = null;
+          if (!pf) { render(); noteForm(c, w, { x, y, page }); return; }
+          try {
+            const n = pf.kind === 'extra' ? c.project.placeExtra(pf.itemId, w.path, page, x, y, w.viewId) : c.project.placeRemark(pf.remarkId, w.path, page, x, y, w.viewId);
+            changed(c);
+            w.viewer.setNotes(c.project.notesOf(w.path));
+            w.viewer.focus(n);
+            setStatus(pf.title + ' — на чертеже, пометка №' + n.number);
+          } catch (e) { alert(e.message); render(); }
+        },
         onError: (e) => { w.load = { state: 'error', error: e.message }; w.viewer.destroy(); w.host = null; w.viewer = null; render(); },
         onChange: () => { const el = document.querySelector('.pp-win[data-key="' + CSS.escape(w.key) + '"] .pp-plan-page'); if (el && w.viewer) el.textContent = (w.viewer.page + 1) + ' / ' + w.viewer.pageCount; },
       });
+      if (w.placing) w.viewer.setMode('place');
       if (w.pendingView) { const v = w.pendingView; w.pendingView = null; setTimeout(() => applyPlanView(w, c, v), 0); }
       if (w.focusNote) { const n = P.get('drawing_notes', w.focusNote); w.focusNote = null; if (n) setTimeout(() => w.viewer.focus(n), 0); }
     } else w.viewer.setNotes(notes);
@@ -1289,7 +1326,7 @@
       h('small', { class: 'pp-muted' }, 'Щелчок — показать, двойной — изменить.'));
     return h('div', { class: 'pp-planwrap' },
       h('div', { class: 'pp-row pp-wrap pp-plan-bar' },
-        button(w.placing ? 'Щёлкните по месту… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
+        button(w.placing ? 'Щёлкните по месту' + (w.placeFor ? ' для «' + w.placeFor.title + '»' : '') + '… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; if (!w.placing) w.placeFor = null; w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
         button('⤢', () => w.viewer.fit(), 'pp-icon', 'Весь чертёж'), button('−', () => w.viewer.zoom(1 / 1.5), 'pp-icon', 'Дальше'), button('+', () => w.viewer.zoom(1.5), 'pp-icon', 'Ближе'),
         pageBar, w.dxf ? button('Слои', () => layersDialog(w)) : null,
         viewSel, button('Сохранить вид', () => saveViewDialog(w, c, d)),
@@ -1359,10 +1396,271 @@
     }, n ? { text: 'Удалить', run: () => { if (!confirm('Удалить пометку №' + n.number + '?')) return false; P.deleteNote(n.id); } } : null);
   }
 
+  // ───────── сегодня ─────────
+  function todayView(w, c) {
+    const P = c.project;
+    const v = P.todayView(today);
+    const names = P.names();
+    const sec = (title, list, row, empty) => (list.length || empty ? h('section', { class: 'pp-card' }, h('h3', null, title + (list.length ? ' (' + list.length + ')' : '')),
+      list.length ? list.map(row) : h('p', { class: 'pp-muted' }, empty)) : null);
+    const taskRow = (t) => h('button', { type: 'button', class: 'pp-line', onclick: () => taskForm(c, { taskId: t.id }) },
+      h('span', null, '○ ' + (t.title || P.itemName(t.itemId) || 'Задача')), h('small', null, [t.date !== today ? dayTitle(t.date) : '', t.planQty ? 'план ' + num(t.planQty) : '', t.note].filter(Boolean).join(' · ')));
+    return h('main', null,
+      h('div', { class: 'pp-row pp-between pp-wrap' }, h('h2', null, dayTitle(today)),
+        h('div', { class: 'pp-row' }, button('📄 Отчёт за сегодня', () => reportDialog(c, today)), button('+ Задача', () => taskForm(c, { date: today })), button('+ Сделано', () => doneForm(c, { date: today }), 'pp-primary'))),
+      h('p', { class: v.attention ? 'pp-error' : 'pp-muted' }, v.attention ? 'Требует внимания: ' + v.attention : 'Просрочек нет 👍'),
+      sec('Просрочено', v.overdueTasks, taskRow),
+      sec('План на сегодня', v.tasks, taskRow, 'На сегодня задач нет.'),
+      sec('Сроки по ведомости', v.itemsDue, (r) => h('button', { type: 'button', class: 'pp-line', onclick: () => boqForm(c, r.id) },
+        h('span', null, r.name), h('small', null, 'срок ' + shortDate(r.due) + (r.plan !== null ? ' · сделано ' + num(r.fact) + ' из ' + num(r.plan) + ' ' + r.unit : '')),
+        h('strong', { class: r.due < today ? 'pp-error' : '' }, r.due < today ? 'просрочено' : 'сегодня'))),
+      sec('Ждут приёмки', v.acceptancesPending, (a) => h('button', { type: 'button', class: 'pp-line', onclick: () => acceptanceForm(c, a.id) },
+        h('span', null, P.acceptanceTitle(a)), h('small', null, a.planDate ? 'приёмка ' + shortDate(a.planDate) : 'дата приёмки не назначена'))),
+      sec('Замечания со сроком', v.remarksDue, (r) => h('button', { type: 'button', class: 'pp-line', onclick: () => remarkForm(c, r.id) },
+        h('span', null, '№' + r.number + ' — ' + (r.text || 'без текста')), h('small', null, [names.contractors[r.contractorId], 'срок ' + shortDate(r.dueDate)].filter(Boolean).join(' · ')))),
+      v.remarksOpen > v.remarksDue.length ? h('p', { class: 'pp-muted' }, 'Всего открытых замечаний: ' + v.remarksOpen) : null,
+      sec('Техника сегодня', v.calls.concat(v.machineWork), (x) => h('div', { class: 'pp-line' },
+        h('span', null, P.orderTitle(x.orderId)), h('small', null, x.minutes ? 'работала ' + M.hm(x.minutes) : x.timeMin !== undefined && x.timeMin !== null ? 'вызов к ' + pad(Math.floor(x.timeMin / 60)) + ':' + pad(x.timeMin % 60) : 'вызов'))),
+      v.people ? h('section', { class: 'pp-card' }, h('h3', null, 'Людей на объекте: ' + v.people)) : null,
+      sec('Сделано сегодня', v.doneToday, (e) => h('button', { type: 'button', class: 'pp-line', onclick: () => doneForm(c, { entryId: e.id }) },
+        h('span', null, e.name || P.itemName(e.itemId) || 'Работа'), h('strong', null, num(e.quantity) + (names.units[e.unitId] ? ' ' + names.units[e.unitId] : '')))));
+  }
+
+  // ───────── доп. работы ─────────
+  const EXTRA_KINDS = [['EXTRA_ITEM', 'Заведены заранее', 'Выполнение записывайте в журнал работ как обычно — выбрав эту позицию.'], ['OVER_PLAN', 'Сверх плана', ''],
+    ['NO_PLAN', 'Не было в ведомости', 'Позиции без плана — появились по ходу работ. Если это не доп. работы, укажите план в ведомости.'], ['NO_ITEM', 'Записи без позиции', 'Записи журнала, не привязанные к позиции ведомости.']];
+  const SIGNS = [['designerDate', 'Проектировщик'], ['supervisorDate', 'Технадзор'], ['contractorDate', 'Исполнитель'], ['customerDate', 'Заказчик']];
+
+  function extraLine(P, x, names) {
+    const unit = x.item && names.units[x.item.unitId] ? ' ' + names.units[x.item.unitId] : '';
+    if (x.kind === 'OVER_PLAN') return 'план ' + num(x.plan) + unit + ' · сделано ' + num(x.fact) + unit + ' · +' + Math.round(x.extra / x.plan * 100) + '%' + (x.since ? ' · с ' + shortDate(x.since) : '');
+    if (x.kind === 'NO_PLAN') return 'плана нет · сделано ' + num(x.fact) + unit;
+    if (x.kind === 'EXTRA_ITEM') return [x.since ? 'заведена ' + shortDate(x.since) : '', x.plan ? 'план ' + num(x.plan) + unit : '', x.fact > 0 ? 'сделано ' + num(x.fact) + unit + (x.plan ? ' (' + Math.round(x.fact / x.plan * 100) + '%)' : '') : 'ещё не начата'].filter(Boolean).join(' · ');
+    return 'записей: ' + x.parts.length;
+  }
+
+  function extrasView(w, c) {
+    const P = c.project;
+    const names = P.names();
+    const list = P.extraWorks();
+    const cost = list.reduce((s, x) => s + (x.cost || 0), 0);
+    const waiting = list.filter((x) => { const a = P.extraApproval(x.item && x.item.id); return !a || !SIGNS.some(([k]) => a[k]); }).length;
+    return h('main', null,
+      h('section', { class: 'pp-card' },
+        h('div', { class: 'pp-row pp-between pp-wrap' }, h('h3', null, 'Итого'),
+          h('div', { class: 'pp-row' }, list.length ? button('⬇ Excel', () => exportExtras(c, list)) : null, button('+ Доп. работа', () => boqForm(c, null, { extra: true }), 'pp-primary'))),
+        !list.length ? h('p', null, 'Пока всё в пределах плана 👍') : h('div', null,
+          EXTRA_KINDS.map(([k, t]) => { const n = list.filter((x) => x.kind === k).length; return n ? h('div', null, t + ': ' + n) : null; }),
+          cost ? h('strong', null, 'На сумму: ' + money(cost)) : null,
+          h('p', { class: waiting ? 'pp-error' : 'pp-plus' }, waiting ? 'Не согласовано: ' + waiting : 'Все согласованы ✓')),
+        h('small', { class: 'pp-muted' }, 'Считается само: план — из ведомости, сделанное — из журнала работ. Доп. работу можно завести заранее кнопкой «+ Доп. работа».')),
+      EXTRA_KINDS.map(([k, t, note]) => {
+        const part = list.filter((x) => x.kind === k);
+        if (!part.length) return null;
+        return h('section', { class: 'pp-card' }, h('h3', null, t), part.map((x) => {
+          const a = P.extraApproval(x.item && x.item.id);
+          const signed = a ? SIGNS.filter(([key]) => a[key]).map(([, nm]) => nm.toLowerCase()) : [];
+          const proofs = a ? P.attachmentsOf(a.id).length + P.attachmentsOf(a.id + ':work').length : 0;
+          return h('button', { type: 'button', class: 'pp-line', onclick: () => extraForm(c, x) },
+            h('span', null, x.item ? P.itemName(x.item.id) : 'Без позиции'),
+            h('small', null, [extraLine(P, x, names), x.cost ? 'на ' + money(x.cost) : '', signed.length ? '✓ согласовали: ' + signed.join(', ') : 'не согласовано', proofs ? '📎 ' + proofs : '', a && a.noteId ? '📍 на чертеже' : ''].filter(Boolean).join(' · ')),
+            x.kind !== 'NO_ITEM' ? h('strong', { class: 'pp-error' }, '+' + num(x.extra) + (x.item && names.units[x.item.unitId] ? ' ' + names.units[x.item.unitId] : '')) : null);
+        }), note ? h('small', { class: 'pp-muted' }, note) : null);
+      }));
+  }
+
+  function extraForm(c, x) {
+    const P = c.project;
+    const itemId = x.item ? x.item.id : null;
+    const a = P.extraApproval(itemId) || {};
+    const id = P.extraApprovalId(itemId);
+    const names = P.names();
+    const desc = h('textarea', { rows: 3, placeholder: 'Что и почему нужно сделать…' }, a.description || '');
+    const note = h('textarea', { rows: 2, placeholder: 'Причина, как и кем согласовано (в чате, письмом, на бумаге)…' }, a.note || '');
+    const signs = SIGNS.map(([k, t]) => {
+      const box = h('input', { type: 'checkbox' }); box.checked = !!a[k];
+      const date = h('input', { type: 'date', value: a[k] ? dayToInput(a[k]) : '' });
+      box.addEventListener('change', () => { if (box.checked && !date.value) date.value = dayToInput(today); if (!box.checked) date.value = ''; });
+      date.addEventListener('change', () => { box.checked = !!date.value; });
+      return { k, el: h('div', { class: 'pp-row pp-between' }, h('label', { class: 'pp-check' }, box, ' ' + t), date), date };
+    });
+    const work = photoBox(c, id + ':work', 'Фото работы');
+    const proof = photoBox(c, id, 'Подтверждение (фото подписанной бумаги или скриншот из чата)');
+    const placed = a.noteId ? P.get('drawing_notes', a.noteId) : null;
+    const where = placed && !Number(placed.deleted) ? (P.get('drawings', placed.drawingId) || {}).name + ', пометка №' + placed.number : null;
+    const save = () => {
+      if (work.busy() || proof.busy()) bad('Подождите — фото ещё загружаются');
+      const ch = { description: desc.value.trim(), note: note.value.trim() };
+      signs.forEach((s) => { ch[s.k] = s.date.value ? inputToDay(s.date.value) : null; });
+      P.saveExtraApproval(itemId, ch);
+      work.commit(id + ':work'); proof.commit(id);
+    };
+    modal(c, 'Доп. работа', h('div', null,
+      h('h3', null, x.item ? P.itemName(itemId) : 'Записи без позиции'), h('p', null, extraLine(P, x, names) + (x.cost ? ' · на сумму ' + money(x.cost) : '')),
+      x.parts.length ? h('details', null, h('summary', null, 'Записи журнала (' + x.parts.length + ')'), x.parts.map((p) => h('div', { class: 'pp-line' },
+        h('span', null, dayTitle(p.entry.date) + (p.entry.note ? ' · ' + p.entry.note : '')), h('strong', null, '+' + num(p.qty))))) : null,
+      field('Пояснение', desc), work.el,
+      h('h3', null, 'Место на чертеже'),
+      h('div', { class: 'pp-row pp-wrap pp-between' }, h('span', { class: 'pp-muted' }, where ? '📍 «' + where + '»' : 'Не отмечено (необязательно)'),
+        h('div', { class: 'pp-row' }, where ? button('Показать', () => { document.querySelector('.pp-modal').remove(); openDrawing(c, placed.drawingId, { noteId: placed.id }); }) : null,
+          button(where ? 'Перенести' : 'Отметить на чертеже', () => {
+            try { save(); } catch (e) { alert(e.message); return; }
+            document.querySelector('.pp-modal').remove(); changed(c);
+            pickDrawing(c, (drawingId) => openDrawing(c, drawingId, { place: { kind: 'extra', itemId, title: 'Доп. работа: ' + (x.item ? P.itemName(itemId) : 'без позиции') } }));
+          }))),
+      h('h3', null, 'Кто согласовал'), signs.map((s) => s.el), h('small', { class: 'pp-muted' }, 'Галочка — сегодняшняя дата; дату можно поменять.'),
+      field('Примечание', note), proof.el,
+      x.item ? button('Открыть позицию ведомости', () => { document.querySelector('.pp-modal').remove(); boqForm(c, itemId); }) : null), save);
+  }
+
+  /** Выбрать чертёж объекта (для постановки замечания или доп. работы). */
+  function pickDrawing(c, onPick) {
+    const list = c.project.drawings();
+    if (!list.length) return alert('В объекте пока нет чертежей. Добавьте их в окне «Чертежи».');
+    if (list.length === 1) return onPick(list[0].id);
+    const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap) wrap.remove(); } },
+      h('div', { class: 'pp-dialog' }, h('div', { class: 'pp-row pp-between' }, h('h2', null, 'Какой чертёж открыть?'), button('✕', () => wrap.remove(), 'pp-icon')),
+        h('div', { class: 'pp-list' }, list.map((d) => h('button', { type: 'button', class: 'pp-item', onclick: () => { wrap.remove(); onPick(d.id); } }, (d.kind === 'pdf' ? '📕 ' : '📐 ') + (d.name || 'Чертёж'))))));
+    document.body.append(wrap);
+  }
+
+  function exportExtras(c, list) {
+    const P = c.project, names = P.names();
+    const rows = [['Вид', 'Работа', 'Ед.', 'План', 'Сделано', 'Доп. объём', 'Сумма, ₽', 'С какого дня', 'Согласовали', 'Пояснение', 'Примечание']];
+    for (const x of list) {
+      const a = P.extraApproval(x.item && x.item.id) || {};
+      rows.push([(EXTRA_KINDS.find(([k]) => k === x.kind) || [])[1], x.item ? P.itemName(x.item.id) : 'Без позиции', x.item ? names.units[x.item.unitId] || '' : '', x.plan, Math.round(x.fact * 1e6) / 1e6, x.extra,
+        x.cost ? x.cost / 100 : null, x.since ? { date: x.since } : null, SIGNS.filter(([k]) => a[k]).map(([k, t]) => t + ' ' + shortDate(a[k])).join(', '), a.description || '', a.note || '']);
+    }
+    const bytes = O.book([{ name: 'Доп. работы', header: true, widths: [20, 44, 8, 10, 10, 12, 14, 14, 36, 40, 30], rows }]);
+    const a = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: ('Доп. работы ' + (P.project.name || '') + ' ' + shortDate(today)).replace(/[\\/:*?"<>|]/g, '_') + '.xlsx' });
+    document.body.append(a); a.click(); a.remove();
+  }
+
+  // ───────── журнал приёмки ─────────
+  const ACCEPT = { PENDING: ['Ждёт приёмки', ''], ACCEPTED: ['Выполнено', 'pp-plus'], REJECTED: ['Не принято', 'pp-error'], CANCELLED: ['Отменено', 'pp-muted'] };
+  function acceptanceView(w, c) {
+    const P = c.project;
+    const cur = P.acceptancesCurrent();
+    const names = P.names();
+    const groups = [['Ждут приёмки', 'PENDING'], ['Не принято — устранить замечания', 'REJECTED'], ['Принято — выполнено', 'ACCEPTED']];
+    return h('main', null,
+      h('section', { class: 'pp-card' },
+        h('div', { class: 'pp-row pp-between pp-wrap' }, h('h3', null, 'Итого'),
+          h('div', { class: 'pp-row' }, cur.length ? button('⬇ Excel', () => exportAcceptances(c, cur)) : null, button('Предъявить работу к приёмке', () => submitPicker(c), 'pp-primary'))),
+        groups.map(([t, k]) => h('div', { class: ACCEPT[k][1] }, t.split(' —')[0] + ': ' + cur.filter((a) => a.result === k).length)),
+        h('small', { class: 'pp-muted' }, 'Работу ставят на приёмку здесь или кнопкой «Закончено — на приёмку» в позиции ведомости.')),
+      groups.map(([t, k]) => {
+        const part = cur.filter((a) => a.result === k).sort((a, b) => (b.readyDate - a.readyDate));
+        if (!part.length) return null;
+        return h('section', { class: 'pp-card' }, h('h3', null, t), part.map((a) => {
+          const item = P.get('boq_items', a.itemId);
+          const rc = P.acceptanceRemarks(a.id);
+          return h('button', { type: 'button', class: 'pp-line', onclick: () => acceptanceForm(c, a.id) },
+            h('span', null, P.acceptanceTitle(a)),
+            h('small', null, [item && names.contractors[item.contractorId] ? '👷 ' + names.contractors[item.contractorId] : '', 'закончено ' + shortDate(a.readyDate),
+              a.result === 'PENDING' ? (a.planDate ? 'приёмка ' + shortDate(a.planDate) : 'дата приёмки не назначена') : a.resultDate ? (a.result === 'ACCEPTED' ? 'принято ' : 'не принято ') + shortDate(a.resultDate) : '',
+              a.acceptedBy, rc.total ? (rc.open ? 'замечаний открыто: ' + rc.open + ' из ' + rc.total : 'замечания устранены (' + rc.total + ')') : ''].filter(Boolean).join(' · ')),
+            h('strong', { class: ACCEPT[a.result][1] }, ACCEPT[a.result][0]));
+        }));
+      }),
+      cur.length ? null : h('p', { class: 'pp-card pp-muted' }, 'Пока ничего не предъявлено к приёмке.'));
+  }
+
+  function acceptorSelect(P, value) {
+    const s = h('input', { value: value || '', list: 'pp-acceptors-' + P.projectId, placeholder: 'Кто принимает' });
+    const dl = h('datalist', { id: 'pp-acceptors-' + P.projectId }, P.acceptors().map((n) => h('option', { value: n })));
+    return { el: h('span', null, s, dl), input: s };
+  }
+
+  function submitPicker(c) {
+    const P = c.project;
+    const busy = new Set(P.acceptancesCurrent().filter((a) => !a.entryId && a.result !== 'REJECTED').map((a) => a.itemId));
+    const items = P.boq().filter((r) => !busy.has(r.id));
+    if (!items.length) return alert('Все позиции ведомости уже на приёмке или приняты.');
+    const sel = h('select', null, items.map((r) => h('option', { value: r.id }, r.name + (r.plan !== null ? ' — ' + num(r.fact) + ' из ' + num(r.plan) + ' ' + r.unit : ''))));
+    readyDialog(c, sel, null);
+  }
+
+  /** «Готово к приёмке»: дата окончания, дата приёмки, кто принимает. */
+  function readyDialog(c, sel, itemId) {
+    const P = c.project;
+    const finish = h('input', { type: 'date', value: dayToInput(today) });
+    const plan = h('input', { type: 'date', value: dayToInput(today) });
+    const who = acceptorSelect(P, P.acceptors()[0]);
+    modal(c, 'Готово к приёмке', h('div', null, sel ? field('Работа', sel) : h('h3', null, P.itemName(itemId)),
+      h('div', { class: 'pp-row pp-wrap' }, field('Закончено', finish), field('Дата приёмки', plan, 'необязательно')), field('Кто принимает', who.el),
+      h('small', { class: 'pp-muted' }, 'Работа попадёт в «Журнал приёмки». Там отмечается «Принято / Не принято» и замечания.')), () => {
+      const f = inputToDay(finish.value);
+      if (f === null) bad('Укажите, когда закончено');
+      P.submitAcceptance(sel ? sel.value : itemId, f, plan.value ? inputToDay(plan.value) : null, who.input.value);
+      setStatus('Работа предъявлена к приёмке');
+    });
+  }
+
+  function acceptanceForm(c, id) {
+    const P = c.project;
+    const a = P.get('acceptances', id);
+    const item = P.get('boq_items', a.itemId);
+    const names = P.names();
+    const ready = h('input', { type: 'date', value: dayToInput(a.readyDate) });
+    const plan = h('input', { type: 'date', value: a.planDate ? dayToInput(a.planDate) : '' });
+    const result = h('select', null, [['PENDING', 'Ждёт'], ['ACCEPTED', 'Принято'], ['REJECTED', 'Не принято']].map(([k, t]) => h('option', { value: k }, t)));
+    result.value = a.result === 'CANCELLED' ? 'PENDING' : a.result;
+    const who = acceptorSelect(P, a.acceptedBy);
+    const resDate = h('input', { type: 'date', value: dayToInput(a.resultDate || today) });
+    const resField = field('Дата проверки', resDate);
+    const note = h('textarea', { rows: 2, placeholder: 'Примечание (акт №, что проверили)' }, a.note || '');
+    const rc = P.acceptanceRemarks(a.id);
+    const sync = () => { resField.style.display = result.value === 'PENDING' ? 'none' : ''; resField.firstChild.textContent = result.value === 'ACCEPTED' ? 'Дата приёмки (принято)' : 'Дата проверки'; };
+    result.addEventListener('change', sync); sync();
+    const closeAnd = (fn) => () => { document.querySelector('.pp-modal').remove(); fn(); };
+    const progress = item ? P.boq().find((r) => r.id === item.id) : null;
+    const history = P.acceptanceHistory(a);
+    const cancelled = a.result === 'CANCELLED';
+    modal(c, 'Приёмка', h('div', null,
+      h('h3', null, P.acceptanceTitle(a)),
+      item && names.contractors[item.contractorId] ? h('p', null, 'Исполнитель: ' + names.contractors[item.contractorId]) : null,
+      !a.entryId && progress ? h('p', { class: 'pp-muted' }, 'Сделано ' + num(progress.fact) + ' ' + progress.unit + (progress.plan !== null ? ' из ' + num(progress.plan) + ' ' + progress.unit : '')) : null,
+      cancelled ? h('p', { class: 'pp-error' }, 'Это предъявление отменено. Предъявить снова — «Предъявить работу к приёмке».') : null,
+      h('div', { class: 'pp-row pp-wrap' }, field('Закончено', ready), field('Дата приёмки', plan, 'необязательно')),
+      h('div', { class: 'pp-row pp-wrap' }, field('Результат', result), field('Кто принимал', who.el)), resField, field('Примечание', note),
+      rc.open ? h('p', { class: 'pp-error' }, 'Есть неустранённые замечания: ' + rc.open + '. Обычно сначала их устраняют.') : null,
+      h('h3', null, 'Замечания по приёмке' + (rc.total ? ' (' + rc.open + ' открыто из ' + rc.total + ')' : '')),
+      rc.remarks.map((r) => h('button', { type: 'button', class: 'pp-line', onclick: closeAnd(() => remarkForm(c, r.id)) }, h('span', null, '№' + r.number + ' — ' + (r.text || 'без текста')), h('strong', { class: r.status === 'DONE' ? 'pp-plus' : 'pp-error' }, r.status === 'DONE' ? 'устранено' : 'открыто'))),
+      rc.notes.map((n) => h('button', { type: 'button', class: 'pp-line', onclick: closeAnd(() => openDrawing(c, n.drawingId, { noteId: n.id })) }, h('span', null, 'Ч№' + n.number + ' — ' + (n.text || 'без текста')), h('strong', { class: n.status === 'DONE' ? 'pp-plus' : 'pp-error' }, n.status === 'DONE' ? 'устранено' : 'открыто'))),
+      h('div', { class: 'pp-row pp-wrap' }, button('+ Замечание', closeAnd(() => remarkForm(c, null, { acceptanceId: a.id, text: '' }))),
+        a.result === 'REJECTED' && !rc.open ? button('Замечания устранены — предъявить снова', closeAnd(() => { P.resubmitAcceptance(a.id, today); changed(c); }), 'pp-primary') : null),
+      history.length ? h('details', null, h('summary', null, 'Раньше по этой работе (' + history.length + ')'), history.map((x) => h('div', { class: 'pp-line' },
+        h('span', null, 'закончено ' + shortDate(x.readyDate) + (x.acceptedBy ? ' · ' + x.acceptedBy : '')), h('strong', { class: ACCEPT[x.result][1] }, ACCEPT[x.result][0])))) : null), () => {
+      if (cancelled) return;
+      const rd = inputToDay(ready.value);
+      if (rd === null) bad('Укажите, когда закончено');
+      P.saveAcceptance(a.id, { readyDate: rd, planDate: plan.value ? inputToDay(plan.value) : null, result: result.value, resultDate: inputToDay(resDate.value) || today, acceptedBy: who.input.value, note: note.value });
+    }, cancelled ? null : { text: 'Отменить предъявление', run: () => { if (!confirm('Отменить предъявление? Позиция снова будет «в работе».')) return false; P.cancelAcceptance(a.id, today); } });
+  }
+
+  function exportAcceptances(c, list) {
+    const P = c.project, names = P.names();
+    const rows = [['№', 'Работа', 'Исполнитель', 'Закончено', 'Приёмка', 'Результат', 'Дата результата', 'Кто принимал', 'Замечания', 'Примечание']];
+    list.slice().sort((a, b) => a.readyDate - b.readyDate).forEach((a, i) => {
+      const item = P.get('boq_items', a.itemId), rc = P.acceptanceRemarks(a.id);
+      rows.push([i + 1, P.acceptanceTitle(a), item ? names.contractors[item.contractorId] || '' : '', { date: a.readyDate }, a.planDate ? { date: a.planDate } : null, ACCEPT[a.result][0],
+        a.resultDate ? { date: a.resultDate } : null, a.acceptedBy || '', rc.total ? 'замечаний ' + rc.total + ', открыто ' + rc.open : '', a.note || '']);
+    });
+    const bytes = O.book([{ name: 'Журнал приёмки', header: true, widths: [5, 48, 24, 12, 12, 14, 14, 24, 22, 36], rows }]);
+    const el = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: ('Журнал приёмки ' + (P.project.name || '') + ' ' + shortDate(today)).replace(/[\\/:*?"<>|]/g, '_') + '.xlsx' });
+    document.body.append(el); el.click(); el.remove();
+  }
+
   // ───────── позиция ведомости ─────────
-  function boqForm(c, id) {
+  function boqForm(c, id, opts) {
+    opts = opts || {};
     const P = c.project;
     const it = id ? P.get('boq_items', id) : null;
+    const isExtra = it ? it.extraDate !== null && it.extraDate !== undefined : !!opts.extra;
+    const extra = h('input', { type: 'checkbox' }); extra.checked = isExtra;
+    const cur = it ? P.acceptancesCurrent().find((a) => !a.entryId && a.itemId === it.id) : null;
     const name = h('input', { value: it ? it.name : '', placeholder: 'Бетонирование фундаментов Ф1–Ф6' });
     const work = selectAdd(P.rows('work_types').map((x) => ({ id: x.id, name: x.name })).sort((a, b) => a.name.localeCompare(b.name, 'ru')), it && it.workTypeId, 'Не указан', 'Новый вид работ', (n) => P.addNamed('work_types', n));
     const unit = selectAdd(P.rows('units').map((x) => ({ id: x.id, name: x.name })), it && it.unitId, '—', 'Новая единица', (n) => P.addNamed('units', n));
@@ -1373,11 +1671,15 @@
     const who = selectAdd(P.rows('contractors').map((x) => ({ id: x.id, name: x.name })), it && it.contractorId, 'Не указан', 'Новый исполнитель', (n) => P.addNamed('contractors', n));
     const fin = h('input', { type: 'checkbox' }); fin.checked = !!(it && it.finishedDate);
     const history = it ? P.itemHasHistory(it.id) : false;
-    modal(c, it ? 'Позиция ведомости' : 'Новая позиция', h('div', null,
+    modal(c, it ? 'Позиция ведомости' : opts.extra ? 'Новая доп. работа' : 'Новая позиция', h('div', null,
       field('Наименование работ', name), h('div', { class: 'pp-row pp-wrap' }, field('Вид работ', work), field('Ед. изм.', unit)),
       h('div', { class: 'pp-row pp-wrap' }, field('Объём по плану', plan), field('Цена за ед., ₽', price, 'необязательно')),
       h('div', { class: 'pp-row pp-wrap' }, field('Начало работ', start), field('Срок окончания', due)), field('Исполнитель', who),
+      h('label', { class: 'pp-check' }, extra, ' Доп. работа (вне основного объёма) — видна в «Доп. работах» сразу'),
       it ? h('label', { class: 'pp-check' }, fin, ' Работы по позиции завершены') : null,
+      it ? h('div', { class: 'pp-row pp-wrap' }, cur ? h('span', { class: 'pp-muted' }, 'Приёмка: ' + ACCEPT[cur.result][0]) : null,
+        cur ? button('Открыть приёмку', () => { document.querySelector('.pp-modal').remove(); acceptanceForm(c, cur.id); }) :
+          button('Закончено — на приёмку', () => { document.querySelector('.pp-modal').remove(); readyDialog(c, null, it.id); })) : null,
       history ? h('p', { class: 'pp-muted' }, 'По позиции есть записи в журнале — удалить её нельзя, только изменить.') : null), () => {
       const nm = name.value.trim();
       const wt = work.value && work.value !== '__add' ? work.value : null;
@@ -1386,11 +1688,13 @@
       if (Number.isNaN(q)) bad('Объём — число');
       const pc = parseMoney(price.value);
       if (Number.isNaN(pc)) bad('Цена — число, например 1500 или 1500,50');
-      P.saveBoqItem({
+      const saved = P.saveBoqItem({
         id: it ? it.id : null, name: nm, workTypeId: wt, unitId: unit.value && unit.value !== '__add' ? unit.value : null, planQty: q, priceCents: pc,
         startDate: start.value ? inputToDay(start.value) : null, dueDate: due.value ? inputToDay(due.value) : null,
         contractorId: who.value && who.value !== '__add' ? who.value : null, finishedDate: fin.checked ? (it && it.finishedDate) || today : null,
       });
+      const had = !!it && it.extraDate !== null && it.extraDate !== undefined;
+      if (extra.checked !== had) P.put('boq_items', saved.id, { extraDate: extra.checked ? today : null });
     }, it && !history ? { text: 'Удалить позицию', run: () => { if (!confirm('Удалить позицию?')) return false; P.deleteBoqItem(it.id); } } : null);
   }
 
