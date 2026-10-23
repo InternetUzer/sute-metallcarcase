@@ -103,6 +103,11 @@
   let zTop = 10;
   let home = { items: null, loading: false, selected: null };
   let refreshTimer = null;
+  // Фон рабочего стола: готовый (класс CSS) или своя картинка. Настройка — на Диске («Прораб+/.prorab-desktop.json»),
+  // картинка — там же, а в браузере её копия для быстрого показа
+  const WALLS = [['default', 'Синий вечер'], ['sunset', 'Закат'], ['forest', 'Лес'], ['sea', 'Море'], ['graphite', 'Графит'], ['steel', 'Сталь'], ['sand', 'Песок'], ['night', 'Ночь']];
+  const WALL_FILE = ROOT + '/.prorab-desktop.json';
+  let wall = store.json('wall', { kind: 'preset', id: 'default' });
 
   function setStatus(text, error) {
     status = { text, error: !!error };
@@ -417,7 +422,7 @@
     const visible = wins.filter((w) => !w.min).sort((a, b) => a.z - b.z);
     app.classList.add('pp-desk-app');
     app.replaceChildren(
-      h('div', { class: 'pp-desktop', oncontextmenu: (e) => { if (e.target.classList.contains('pp-desktop') || e.target.classList.contains('pp-icons')) { e.preventDefault(); homeMenu(e.clientX, e.clientY); } } },
+      wallEl(h('div', { class: 'pp-desktop', oncontextmenu: (e) => { if (e.target.classList.contains('pp-desktop') || e.target.classList.contains('pp-icons')) { e.preventDefault(); homeMenu(e.clientX, e.clientY); } } },
         h('div', { class: 'pp-icons', onclick: (e) => { if (e.target.classList.contains('pp-icons')) { home.selected = null; render(); } } },
           projects === null ? h('p', { class: 'pp-desk-note' }, 'Ищу объекты на Диске…') : null,
           projects && !projects.length ? h('p', { class: 'pp-desk-note' }, 'Рабочий стол — папка «' + lastName(ROOT) + '» на вашем Яндекс Диске. Объектов в ней пока нет: правый щелчок → «Новый объект» или «Добавить объект из папки».') : null,
@@ -428,7 +433,7 @@
             ondblclick: ic.open,
             oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); ic.menu(e.clientX, e.clientY); },
           }, h('span', { class: 'pp-icon-img' }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
-        visible.map(windowEl)),
+        visible.map(windowEl))),
       h('footer', { class: 'pp-taskbar' },
         h('button', { type: 'button', class: 'pp-start', onclick: (e) => startMenu(e) }, '▦ Прораб+'),
         h('div', { class: 'pp-tasks' }, wins.map((w) => h('button', { type: 'button', class: 'pp-task' + (!w.min && w.z === zTop ? ' pp-active' : ''), title: winTitle(w), onclick: () => { if (!w.min && w.z === zTop) w.min = true; else { w.min = false; w.z = ++zTop; } render(); } }, APPS[w.kind].icon + ' ' + winTitle(w)))),
@@ -459,6 +464,7 @@
       ['+ Новый объект', newProject], ['➕ Добавить объект из папки…', () => openWindow('picker', null)],
       ['-'], ['🗂️ Рабочий стол в проводнике', () => openWindow('explorer', null, { base: HOME })],
       open.length ? ['💾 Сохранить всё сейчас', () => open.forEach((p) => save(ctxs[p]))] : null,
+      ['🎨 Фон рабочего стола…', wallDialog],
       ['-'], ['Выйти', logout],
     ]);
   }
@@ -470,7 +476,96 @@
       ['🔗 Ярлык на сайт', () => createIn(HOME, '', 'url')], ['📁 Папку', () => createIn(HOME, '', 'dir')], ['📝 Документ Word', () => createIn(HOME, '', 'docx')], ['📊 Таблицу Excel', () => createIn(HOME, '', 'xlsx')],
       ['🏗️ Новый объект', newProject],
       ['-'], ['➕ Добавить объект из папки…', () => openWindow('picker', null)], ['⬆ Загрузить файлы…', () => uploadInto(HOME, '')], ['Открыть папку на Диске', () => window.open(D.webFolder(HOME), '_blank', 'noopener')],
+      ['-'], ['🎨 Фон рабочего стола…', wallDialog],
     ]);
+  }
+
+  // ───────── фон рабочего стола ─────────
+  function wallEl(el) {
+    if (wall.kind === 'image' && wall.data) { el.classList.add('pp-wall-image'); el.style.backgroundImage = 'url("' + wall.data + '")'; }
+    else el.classList.add('pp-wall-' + (WALLS.some(([k]) => k === wall.id) ? wall.id : 'default'));
+    return el;
+  }
+
+  function setWall(next, toDisk) {
+    wall = next;
+    try { store.set('wall', JSON.stringify(wall)); } catch (e) { /* большая картинка не влезла — покажем с Диска */ }
+    render();
+    if (toDisk) {
+      const conf = wall.kind === 'image' ? { kind: 'image', file: wall.file } : { kind: 'preset', id: wall.id };
+      disk.mkdir(ROOT).then(() => disk.putText(WALL_FILE, JSON.stringify(conf))).then(() => setStatus('Фон сохранён на Диске'), (e) => setStatus('Фон не сохранился на Диске: ' + e.message, true));
+    }
+  }
+
+  /** Картинка → JPEG не больше 2560 px (data:, его разрешает политика безопасности страницы). */
+  function shrink(blob) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        const k = Math.min(1, 2560 / Math.max(img.naturalWidth, img.naturalHeight));
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(img.naturalWidth * k)); cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        resolve(cv.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Это не картинка (нужен JPG, PNG или WebP)')); };
+      img.src = url;
+    });
+  }
+  const dataToBlob = (data) => { const [head, b64] = data.split(','); const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: head.slice(5).split(';')[0] }); };
+  const blobToData = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+
+  /** Фон с Диска: настройка общая для всех компьютеров владельца. */
+  async function loadWall() {
+    try {
+      const text = await disk.getText(WALL_FILE);
+      if (!text) return;
+      const conf = JSON.parse(text);
+      if (conf.kind === 'preset' && conf.id !== wall.id) setWall({ kind: 'preset', id: conf.id }, false);
+      if (conf.kind === 'image' && conf.file && (wall.kind !== 'image' || wall.file !== conf.file || !wall.data)) {
+        const r = await fetch(await disk.downloadHref(ROOT + '/' + conf.file));
+        if (r.ok) setWall({ kind: 'image', file: conf.file, data: await blobToData(await r.blob()) }, false);
+      }
+    } catch (e) { /* нет настройки — фон по умолчанию */ }
+  }
+
+  function wallDialog() {
+    const close = () => wrap.remove();
+    const pick = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp' });
+    const note = h('p', { class: 'pp-muted' }, 'Фон сохраняется на вашем Диске в папке «' + lastName(ROOT) + '» — он будет одинаковым на всех компьютерах.');
+    pick.addEventListener('change', async () => {
+      const f = pick.files[0];
+      if (!f) return;
+      if (f.size > 25 * 1024 * 1024) return alert('Картинка больше 25 МБ');
+      try {
+        note.textContent = 'Обрабатываю и загружаю на Диск…';
+        const data = await shrink(f);
+        const file = '.prorab-desktop-' + Date.now().toString(36) + '.jpg';
+        await disk.mkdir(ROOT);
+        await disk.putBlob(ROOT + '/' + file, dataToBlob(data), true);
+        const old = wall.kind === 'image' ? wall.file : null;
+        setWall({ kind: 'image', file, data }, true);
+        if (old && old !== file) disk.remove(ROOT + '/' + old).catch(() => {});
+        close();
+      } catch (e) { note.textContent = e.message; }
+    });
+    const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap) close(); } },
+      h('div', { class: 'pp-dialog' },
+        h('div', { class: 'pp-row pp-between' }, h('h2', null, 'Фон рабочего стола'), button('✕', close, 'pp-icon')),
+        h('div', { class: 'pp-walls' }, WALLS.map(([id, name]) => h('button', {
+          type: 'button', class: 'pp-wall-swatch pp-wall-' + id + (wall.kind === 'preset' && wall.id === id ? ' pp-selected' : ''),
+          onclick: () => {
+            const old = wall.kind === 'image' ? wall.file : null;
+            setWall({ kind: 'preset', id }, true);
+            if (old) disk.remove(ROOT + '/' + old).catch(() => {});
+            close();
+          },
+        }, h('span', null, name)))),
+        h('div', { class: 'pp-row pp-wrap' }, button('🖼️ Своя картинка…', () => pick.click(), 'pp-primary')),
+        note));
+    document.body.append(wrap);
   }
 
   function projectMenu(x, y, p) {
@@ -1094,6 +1189,7 @@
     render();
     home.loading = true;
     loadProjects().then(() => { home.loading = false; });
+    loadWall();
     clearInterval(refreshTimer);
     refreshTimer = setInterval(refreshAll, 60000);
     setInterval(() => { const el = document.querySelector('.pp-clock'); if (el) el.textContent = time(); }, 30000);

@@ -65,8 +65,7 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 /* ───────── рабочий стол ───────── */
 .pp-desk-app { max-width: none; padding: 0; }
 .pp-desktop { position: relative; height: calc(100vh - 40px - 44px); height: calc(100dvh - 40px - 44px); overflow: hidden;
-  background: linear-gradient(160deg, #2b5876 0%, #4e4376 100%); }
-@media (prefers-color-scheme: dark) { .pp-desktop { background: linear-gradient(160deg, #0f2027 0%, #203a43 50%, #2c5364 100%); } }
+  background: #2b5876; }
 .pp-icons { position: absolute; inset: 0; padding: 12px; display: grid; grid-auto-flow: column; grid-template-rows: repeat(auto-fill, 96px); grid-auto-columns: 96px; gap: 6px; align-content: start; }
 .pp-icon-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px; border: 1px solid transparent; border-radius: 8px; background: none; color: #fff; font: inherit; font-size: 12.5px; cursor: pointer; text-align: center; }
 .pp-icon-btn:hover { background: rgba(255,255,255,.12); }
@@ -140,3 +139,17 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-progress > .pp-bar-fill.pp-full { background: var(--pp-plus); }
 .pp-dialog textarea[readonly] { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
 @media (max-width: 720px) { .pp-cal-day { min-height: 56px; padding: 3px; } .pp-mark { font-size: 10px; } }
+
+/* ───────── фон рабочего стола ───────── */
+.pp-wall-default { background: linear-gradient(160deg, #2b5876 0%, #4e4376 100%); }
+.pp-wall-sunset { background: linear-gradient(160deg, #ff7e5f 0%, #feb47b 45%, #6a3093 100%); }
+.pp-wall-forest { background: linear-gradient(160deg, #134e5e 0%, #71b280 100%); }
+.pp-wall-sea { background: linear-gradient(160deg, #2193b0 0%, #6dd5ed 100%); }
+.pp-wall-graphite { background: linear-gradient(160deg, #303a3f 0%, #4a565c 100%); }
+.pp-wall-steel { background: linear-gradient(160deg, #536976 0%, #bbd2c5 100%); }
+.pp-wall-sand { background: linear-gradient(160deg, #c79081 0%, #dfa579 50%, #8e9eab 100%); }
+.pp-wall-night { background: linear-gradient(160deg, #0f2027 0%, #203a43 50%, #2c5364 100%); }
+.pp-wall-image { background-color: #222; background-size: cover; background-position: center; }
+.pp-walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+.pp-wall-swatch { height: 78px; border-radius: 10px; border: 2px solid transparent; color: #fff; font: inherit; font-size: 13px; display: flex; align-items: flex-end; padding: 6px 8px; cursor: pointer; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.pp-wall-swatch.pp-selected { border-color: var(--pp-accent); box-shadow: 0 0 0 2px var(--pp-card) inset; }
