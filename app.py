@@ -160,7 +160,7 @@ def create_app(test_config=None):
             response.headers['Content-Security-Policy'] = response.headers['Content-Security-Policy'].replace(
                 "script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'").replace(
                 "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT + ' ' + PRORAB_GEO).replace(
-                "img-src 'self' data:", "img-src 'self' data: blob: " + PRORAB_CONNECT)
+                "img-src 'self' data:", "img-src 'self' data: blob: " + PRORAB_CONNECT) + "; media-src 'self' " + PRORAB_CONNECT
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab'))
