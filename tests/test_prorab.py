@@ -88,6 +88,38 @@ def test_shared_page_for_invited_people(app):
     assert 'Disallow: /prorab' in client.get('/robots.txt').get_data(as_text=True)
 
 
+def test_signed_download_requires_csrf_and_keeps_url_out_of_response(app, monkeypatch):
+    import io
+    import prorab_transfer
+    client = app.test_client()
+    page = client.get('/prorab')
+    assert b'data-download-url="/prorab/download"' in page.data
+    with client.session_transaction() as session:
+        token = session['csrf']
+    assert client.post('/prorab/download', data={'href': 'private-link'}).status_code == 400
+    seen = []
+    monkeypatch.setattr(prorab_transfer, 'download', lambda href: seen.append(href) or io.BytesIO(b'phone-data'))
+    result = client.post('/prorab/download', data={'href': 'signed-link', 'csrf_token': token})
+    assert result.status_code == 200 and result.data == b'phone-data'
+    assert seen == ['signed-link']
+    assert 'no-store' in result.headers['Cache-Control']
+    assert result.headers['X-Robots-Tag'] == 'noindex, nofollow'
+    assert result.headers['X-Content-Type-Options'] == 'nosniff'
+    assert 'attachment' in result.headers['Content-Disposition']
+    assert client.post('/prorab/download', data={'href': 'signed-link', 'csrf_token': token},
+                       headers={'Authorization': 'OAuth test-token'}).status_code == 400
+    assert seen == ['signed-link']
+
+
+def test_relay_rejects_unrelated_url_without_network(app):
+    client = app.test_client()
+    client.get('/prorab')
+    with client.session_transaction() as session:
+        token = session['csrf']
+    response = client.post('/prorab/download', data={'href': 'http://127.0.0.1', 'csrf_token': token})
+    assert response.status_code == 400 and response.is_json
+
+
 def test_owner_pins_desktop_folder_for_everyone(app):
     """Папка рабочего стола закрепляется владельцем на сайте и подставляется всем (и приглашённым на /prorab)."""
     client = app.test_client()

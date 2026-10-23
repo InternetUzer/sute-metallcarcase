@@ -12,7 +12,7 @@
   const diskPath = (p) => 'disk:' + normalize(p);
 
   class Disk {
-    constructor(token) { this.token = token; }
+    constructor(token, options) { this.token = token; this.options = options || {}; }
 
     async call(method, path, query, opts) {
       const qs = new URLSearchParams(query || {}).toString();
@@ -57,7 +57,7 @@
       if (r.status === 404) return null;
       if (!r.ok) throw new DiskError('Не удалось скачать ' + path.split('/').pop() + ' (' + r.status + ')', r.status);
       const { href } = await r.json();
-      const d = await fetch(href);
+      const d = await this.download(href);
       if (!d.ok) throw new DiskError('Не удалось скачать ' + path.split('/').pop() + ' (' + d.status + ')', d.status);
       return d.arrayBuffer();
     }
@@ -67,9 +67,31 @@
       if (r.status === 404) return null;
       if (!r.ok) throw new DiskError('Не удалось скачать ' + path + ' (' + r.status + ')', r.status);
       const { href } = await r.json();
-      const d = await fetch(href);
+      const d = await this.download(href);
       if (!d.ok) throw new DiskError('Не удалось скачать ' + path + ' (' + d.status + ')', d.status);
       return d.text();
+    }
+
+    /** Файловый сервер Диска не всегда разрешает CORS. Ключ остаётся в браузере. */
+    async download(href) {
+      let response;
+      try {
+        if (this.options.downloadUrl) {
+          // Signed link is POST-only: no access-log URL, browser history or referrer.
+          response = await fetch(this.options.downloadUrl, { method: 'POST', credentials: 'same-origin',
+            body: new URLSearchParams({ href, csrf_token: this.options.csrf || '' }) });
+        } else {
+          response = await fetch(href, { credentials: 'omit', referrerPolicy: 'no-referrer' });
+        }
+      } catch (_) {
+        throw new DiskError('Нет связи при скачивании файла. Проверьте интернет и повторите.', 0);
+      }
+      if (!response.ok) {
+        const error = this.options.downloadUrl ? await response.json().catch(() => ({})) : {};
+        throw new DiskError(error.error || (response.status === 400 ? 'Обновите страницу кабинета и повторите загрузку.' :
+          'Не удалось скачать файл (' + response.status + '). Повторите позже.'), response.status);
+      }
+      return response;
     }
 
     async putText(path, text) {

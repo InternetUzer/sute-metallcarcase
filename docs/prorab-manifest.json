@@ -1,116 +1,121 @@
 {
-  "base_commit": "8276292655d8d71c2811233b67d4ddb5cd861fec",
+  "base_commit": "96fc99c6958bd6000cf540d70393adf684ad0961",
   "reviewed_pr_head": "f708c2287b69ca9e1d065f844de49575e3745ded",
   "files": [
     {
       "path": "static/prorab/app.js",
-      "sha256": "a7f84dac14ab1cd9c6fc5523a92961bb417fc7988d2bfcc9002724d3fb3e88a9",
-      "base_sha256": null
+      "sha256": "57a27497792562989a5a16cb6a588cd0ebac0577789ef10370ff1ccfb0c35cbb",
+      "base_sha256": "a7f84dac14ab1cd9c6fc5523a92961bb417fc7988d2bfcc9002724d3fb3e88a9"
     },
     {
       "path": "static/prorab/catalog.js",
       "sha256": "4dcb77beb709643d348354df6f1db72e94b21c1136d5fe939fe266bec1c3588f",
-      "base_sha256": null
+      "base_sha256": "4dcb77beb709643d348354df6f1db72e94b21c1136d5fe939fe266bec1c3588f"
     },
     {
       "path": "static/prorab/disk.js",
-      "sha256": "c490fab829189ecec562ed7d06842488ae49a62ecb62c70bf69a011e27e57197",
-      "base_sha256": null
+      "sha256": "ab0c561f794e5d5c1cc80664fe065b92ec79307607f415ea7f43c25c792c6844",
+      "base_sha256": "c490fab829189ecec562ed7d06842488ae49a62ecb62c70bf69a011e27e57197"
     },
     {
       "path": "static/prorab/dxf.js",
       "sha256": "27687c19ddbe4e94abe680c05b7efe4c89e657231d99ddc2fbdf7e01536de5db",
-      "base_sha256": null
+      "base_sha256": "27687c19ddbe4e94abe680c05b7efe4c89e657231d99ddc2fbdf7e01536de5db"
     },
     {
       "path": "static/prorab/model.js",
       "sha256": "0b777a485b3137346d908c5a18d8c53178bd97480b1412517c79ac71974b1d15",
-      "base_sha256": null
+      "base_sha256": "0b777a485b3137346d908c5a18d8c53178bd97480b1412517c79ac71974b1d15"
     },
     {
       "path": "static/prorab/office.js",
       "sha256": "b9837419eeddf5442c70c148aa7832b417a31dc4dc49f3f09e80ba46a99926e2",
-      "base_sha256": null
+      "base_sha256": "b9837419eeddf5442c70c148aa7832b417a31dc4dc49f3f09e80ba46a99926e2"
     },
     {
       "path": "static/prorab/persistence.js",
       "sha256": "9ce593d8ac280080b61eabf80d0cbc43344cb39d5c980ec92b6cae04e29d5e27",
-      "base_sha256": null
+      "base_sha256": "9ce593d8ac280080b61eabf80d0cbc43344cb39d5c980ec92b6cae04e29d5e27"
     },
     {
       "path": "static/prorab/prorab.css",
       "sha256": "ee027f626b21d6cf9558e3296adee2946195bbfed2d5ba47dc0d68c890118a5e",
-      "base_sha256": null
+      "base_sha256": "ee027f626b21d6cf9558e3296adee2946195bbfed2d5ba47dc0d68c890118a5e"
     },
     {
       "path": "static/prorab/schema.js",
       "sha256": "93244dd6e09332fbc690443fa3680e237776098d99c79545f8b3bb9f7f1cbc29",
-      "base_sha256": null
+      "base_sha256": "93244dd6e09332fbc690443fa3680e237776098d99c79545f8b3bb9f7f1cbc29"
     },
     {
       "path": "static/prorab/sync.js",
       "sha256": "65ad44bc739f64b68dd8798c3e83a0c18afc77cdcbba9296c297c24c8c8eeba0",
-      "base_sha256": null
+      "base_sha256": "65ad44bc739f64b68dd8798c3e83a0c18afc77cdcbba9296c297c24c8c8eeba0"
     },
     {
       "path": "static/prorab/vendor/PDFJS-LICENSE.txt",
       "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
-      "base_sha256": null
+      "base_sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
     },
     {
       "path": "static/prorab/vendor/libredwg/COPYING.txt",
       "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
-      "base_sha256": null
+      "base_sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
     },
     {
       "path": "static/prorab/vendor/libredwg/README.txt",
       "sha256": "4610acc2ab3eaf8b0840ad5e6a66ca7d46e85819f241f6096388304821aabdba",
-      "base_sha256": null
+      "base_sha256": "4610acc2ab3eaf8b0840ad5e6a66ca7d46e85819f241f6096388304821aabdba"
     },
     {
       "path": "static/prorab/vendor/libredwg/libredwg-web.js",
       "sha256": "62deaef11c2d6cf8fd0a0ee83d29120ca40bdabc2cdd9baa1f7911410bf9d73f",
-      "base_sha256": null
+      "base_sha256": "62deaef11c2d6cf8fd0a0ee83d29120ca40bdabc2cdd9baa1f7911410bf9d73f"
     },
     {
       "path": "static/prorab/vendor/libredwg/libredwg-web.wasm",
       "sha256": "afb887f6fe784b14bdafd1f335b201ddb50cb24e521a07d2f2581ee2bd87bd9c",
-      "base_sha256": null
+      "base_sha256": "afb887f6fe784b14bdafd1f335b201ddb50cb24e521a07d2f2581ee2bd87bd9c"
     },
     {
       "path": "static/prorab/vendor/pdf.min.js",
       "sha256": "27fc2a057a00f92a4334ad06e17dbd7259912954e9fb7f76400bcca5fd190a9c",
-      "base_sha256": null
+      "base_sha256": "27fc2a057a00f92a4334ad06e17dbd7259912954e9fb7f76400bcca5fd190a9c"
     },
     {
       "path": "static/prorab/vendor/pdf.worker.min.js",
       "sha256": "1baa1844c89c80a5b2797c916e75ab29254be46d8e9cb53cb6364d7aad84be36",
-      "base_sha256": null
+      "base_sha256": "1baa1844c89c80a5b2797c916e75ab29254be46d8e9cb53cb6364d7aad84be36"
     },
     {
       "path": "static/prorab/viewer.js",
       "sha256": "cbdb215d2f2d9240f07b0c54ad85a9bdaeb0a17aa4e8e303ea91eff3c207c3e0",
-      "base_sha256": null
+      "base_sha256": "cbdb215d2f2d9240f07b0c54ad85a9bdaeb0a17aa4e8e303ea91eff3c207c3e0"
     },
     {
       "path": "templates/admin.html",
       "sha256": "4cd28cd0528830bd1b17dcfb8b4ca361512cf29f52cf94b993ab8968a34271dd",
-      "base_sha256": "228f0ec6c5d3f4d46ee7d3923ffd3c8dc8238969cfc2e7526848f610e9d28892"
+      "base_sha256": "4cd28cd0528830bd1b17dcfb8b4ca361512cf29f52cf94b993ab8968a34271dd"
     },
     {
       "path": "templates/prorab.html",
-      "sha256": "e6e9f3d5cef4de832c7226ad536cfa739bd0b735ea37f06de3094e6e0f87a943",
+      "sha256": "65359fa43f95df844ffd5c11fa1eda4e4145ca6b4f88b23be45181b12de4dfd5",
+      "base_sha256": "e6e9f3d5cef4de832c7226ad536cfa739bd0b735ea37f06de3094e6e0f87a943"
+    },
+    {
+      "path": "prorab_transfer.py",
+      "sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68",
       "base_sha256": null
     },
     {
       "path": "app.py",
-      "sha256": "66a35526180569626c3a4b8e31dbd58dfe657b7953cad2325e950de500a0ddc0",
-      "base_sha256": "840b345ab5c2b7d1643925e0248d47b312aeec33d704197f7c2424f5e233c98b"
+      "sha256": "d68302574838c1599058d37d82712b49b1673925d56e729c2af12f0b615522bd",
+      "base_sha256": "66a35526180569626c3a4b8e31dbd58dfe657b7953cad2325e950de500a0ddc0"
     },
     {
       "path": "seo_panel.py",
       "sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b",
-      "base_sha256": "a85853cf0dd40bdd9069a41cb14a879d64568e1837e335a3fd7f032a0f31dfc0"
+      "base_sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b"
     }
   ]
 }

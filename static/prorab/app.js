@@ -690,8 +690,8 @@
     try {
       if (conf.kind === 'preset' && conf.id !== wall.id) setWall({ kind: 'preset', id: conf.id }, false);
       if (conf.kind === 'image' && conf.file && (wall.kind !== 'image' || wall.file !== conf.file || !wall.data)) {
-        const r = await fetch(await disk.downloadHref(ROOT + '/' + conf.file));
-        if (r.ok) setWall({ kind: 'image', file: conf.file, data: await blobToData(await r.blob()) }, false);
+        const bytes = await disk.getBytes(ROOT + '/' + conf.file);
+        if (bytes) setWall({ kind: 'image', file: conf.file, data: await blobToData(new Blob([bytes], { type: 'image/jpeg' })) }, false);
       }
     } catch (e) { /* нет настройки — фон по умолчанию */ }
   }
@@ -2410,7 +2410,7 @@
     try { takeTokenFromUrl(); } catch (e) { starting = false; return loginScreen(e.message); }
     const token = authStore.get('token');
     if (!token) { starting = false; return loginScreen(); }
-    const candidate = new D.Disk(token);
+    const candidate = new D.Disk(token, { downloadUrl: app.dataset.downloadUrl, csrf: app.dataset.csrf });
     try {
       const user = await candidate.user();
       store = R.accountStorage(rawStorage, PREFIX, user.uid);
