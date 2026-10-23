@@ -6,7 +6,7 @@
 
 - Владелец: вход на сайт → «Панель управления» → «Журнал работ (Прораб+)» (`/admin/prorab`, role = admin).
 - Те, с кем владелец поделился папкой «Прораб+» на Яндекс Диске (Диск → «Поделиться» → «Пригласить в папку», право «Редактирование»): `/prorab` без входа на сайт (noindex, `Disallow: /prorab`). Страница без данных: каждый входит **своим** Яндексом и видит только то, к чему у его аккаунта есть доступ на Диске. Если общая папка у человека называется иначе — меню «Прораб+» → «Папка рабочего стола».
-- Затем вход в Яндекс Диск: кнопка «Войти через Яндекс» (OAuth, implicit flow; нужен `YANDEX_CLIENT_ID`, Redirect URI `https://metalcarcase.ru/prorab` и `https://metalcarcase.ru/admin/prorab`, права Яндекс Диска: `cloud_api:disk.read`, `cloud_api:disk.write`, `cloud_api:disk.info`) или ключ с Полигона Яндекс Диска.
+- Затем вход в Яндекс Диск: кнопка «Войти через Яндекс» (OAuth, implicit flow; нужен `YANDEX_CLIENT_ID`, Redirect URI `https://metalcarcase.ru/prorab` (после входа с `/admin/prorab` тоже возвращает на `/prorab`; для тестового сайта — `https://test.metalcarcase.ru/prorab`), права Яндекс Диска: `cloud_api:disk.read`, `cloud_api:disk.write`, `cloud_api:disk.info`) или ключ с Полигона Яндекс Диска.
 
 ## Как устроено
 

@@ -150,7 +150,8 @@
       h('p', { class: 'pp-muted' }, 'Все ваши объекты — те же, что в телефоне: данные берутся из папок объектов на вашем Яндекс Диске и записываются обратно. Ключ хранится только в этом браузере.'),
       message ? h('p', { class: 'pp-error' }, message) : null,
       CLIENT_ID ? button('Войти через Яндекс', () => {
-        const back = location.origin + location.pathname;
+        // Один адрес возврата для всех: /prorab (ключ общий для /prorab и /admin/prorab — тот же сайт)
+        const back = /\/prorab\/?$/.test(location.pathname) ? location.origin + '/prorab' : location.origin + location.pathname;
         location.href = 'https://oauth.yandex.ru/authorize?response_type=token&client_id=' + encodeURIComponent(CLIENT_ID) + '&redirect_uri=' + encodeURIComponent(back);
       }, 'pp-primary') : null,
       h('details', { open: !CLIENT_ID },
