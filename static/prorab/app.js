@@ -132,6 +132,15 @@
   const DESK_FILE = ROOT + '/.prorab-desktop.json';
   let wall = store.json('wall', { kind: 'preset', id: 'default' });
   let extraList = store.json('extra', []);
+  // Ярлыки на папки Диска (вне рабочего стола): [{ path, name }]
+  let linkList = store.json('links', []);
+  function setLinks(list) {
+    const seen = new Set();
+    linkList = list.filter((l) => l && l.path && !seen.has(l.path) && seen.add(l.path));
+    store.set('links', JSON.stringify(linkList));
+    saveDesk();
+    render();
+  }
   const extraProjects = () => extraList.slice();
   function setExtra(list) {
     extraList = Array.from(new Set(list));
@@ -139,7 +148,7 @@
     saveDesk();
   }
   function saveDesk() {
-    const conf = { version: 1, wall: wall.kind === 'image' ? { kind: 'image', file: wall.file } : { kind: 'preset', id: wall.id }, extra: extraList };
+    const conf = { version: 1, wall: wall.kind === 'image' ? { kind: 'image', file: wall.file } : { kind: 'preset', id: wall.id }, extra: extraList, links: linkList };
     return disk.mkdir(ROOT).then(() => disk.putText(DESK_FILE, JSON.stringify(conf, null, 1)))
       .then(() => setStatus('Настройки рабочего стола сохранены на Диске'), (e) => setStatus('Настройки не сохранились на Диске: ' + e.message, true));
   }
@@ -437,7 +446,7 @@
       const lay = store.json('layout', {})[kind] || {};
       const n = wins.length % 8;
       w = {
-        id: S.newId(), key, kind, folder: folder || null, base, path: opts.path || '', items: null, mode: opts.mode || null,
+        id: S.newId(), key, kind, folder: folder || null, base, path: opts.path || '', items: null, mode: opts.mode || null, title: opts.title || null,
         x: lay.x !== undefined ? lay.x + n * 24 : 140 + n * 28, y: lay.y !== undefined ? lay.y + n * 20 : 24 + n * 24,
         w: lay.w || Math.min(kind === 'project' ? 620 : 980, window.innerWidth - 180), h: lay.h || Math.min(kind === 'project' ? 420 : 640, window.innerHeight - 120),
         min: false, max: small(), period: { from: today - 30, to: today }, month: null, selected: today,
@@ -455,11 +464,11 @@
   const closeWindow = (w) => { wins = wins.filter((x) => x !== w); if (w.folder && ctxs[w.folder]) save(ctxs[w.folder]); render(); };
   function winTitle(w) {
     if (w.kind === 'explorer') {
-      const where = w.folder ? projName(w.folder) + ' · ' + DOCS : 'Рабочий стол (' + lastName(ROOT) + ')';
+      const where = w.folder ? projName(w.folder) + ' · ' + DOCS : w.base === HOME ? 'Рабочий стол (' + lastName(ROOT) + ')' : (w.title || lastName(w.base));
       return where + (w.path ? ' › ' + w.path.split('/').join(' › ') : '');
     }
     if (w.kind === 'project') return projName(w.folder);
-    if (w.kind === 'picker') return w.mode === 'root' ? 'Папка рабочего стола' : APPS.picker.title;
+    if (w.kind === 'picker') return w.mode === 'root' ? 'Папка рабочего стола' : w.mode === 'link' ? 'Ярлык на папку Диска' : APPS.picker.title;
     return projName(w.folder) + ' · ' + APPS[w.kind].title;
   }
   function rememberLayout(w) {
@@ -516,6 +525,7 @@
     document.querySelectorAll('.pp-win').forEach((el) => { const b = el.querySelector('.pp-winbody'); if (b) scroll[el.dataset.key] = b.scrollTop; });
     const icons = [
       ...(projects || []).map((p) => ({ key: 'proj:' + p.path, icon: '🏗️', name: p.name, open: () => openWindow('project', p.path), menu: (x, y) => projectMenu(x, y, p) })),
+      ...linkList.map((l) => ({ key: 'link:' + l.path, icon: '📂', badge: true, name: l.name, open: () => openLink(l), menu: (x, y) => linkMenu(x, y, l) })),
       ...(home.items || []).map((it) => ({ key: 'home:' + it.name, icon: fileIcon(it), name: shownName(it), open: () => openItem(null, it, HOME, ''), menu: (x, y) => itemMenu(x, y, null, it, HOME, '') })),
     ];
     const visible = wins.filter((w) => !w.min).sort((a, b) => a.z - b.z);
@@ -538,7 +548,7 @@
             onclick: () => { if (small() || home.selected === ic.key) ic.open(); else { home.selected = ic.key; render(); } },
             ondblclick: ic.open,
             oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); ic.menu(e.clientX, e.clientY); },
-          }, h('span', { class: 'pp-icon-img' }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
+          }, h('span', { class: 'pp-icon-img' + (ic.badge ? ' pp-shortcut' : '') }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
         visible.map(windowEl))),
       h('footer', { class: 'pp-taskbar' },
         h('button', { type: 'button', class: 'pp-start', onclick: (e) => startMenu(e) }, '▦ Прораб+'),
@@ -567,7 +577,7 @@
     popup(r.left, r.top - 400, [
       ['#Объекты'],
       ...(projects || []).slice(0, 12).map((p) => ['🏗️ ' + p.name, () => openWindow('project', p.path)]),
-      ['+ Новый объект', newProject], ['➕ Добавить объект из папки…', () => openWindow('picker', null)],
+      ['+ Новый объект', newProject], ['➕ Добавить объект из папки…', () => openWindow('picker', null)], ['📂 Ярлык на папку Диска…', () => openWindow('picker', null, { mode: 'link' })],
       ['-'], ['🗂️ Рабочий стол в проводнике', () => openWindow('explorer', null, { base: HOME })],
       open.length ? ['💾 Сохранить всё сейчас', () => open.forEach((p) => save(ctxs[p]))] : null,
       ['🎨 Фон рабочего стола…', wallDialog],
@@ -580,7 +590,7 @@
     popup(x, y, [
       ['⟳ Обновить', () => { home.items = null; loadProjects(); }],
       ['-'], ['#Создать'],
-      ['🔗 Ярлык на сайт', () => createIn(HOME, '', 'url')], ['📁 Папку', () => createIn(HOME, '', 'dir')], ['📝 Документ Word', () => createIn(HOME, '', 'docx')], ['📊 Таблицу Excel', () => createIn(HOME, '', 'xlsx')],
+      ['🔗 Ярлык на сайт', () => createIn(HOME, '', 'url')], ['📂 Ярлык на папку Диска…', () => openWindow('picker', null, { mode: 'link' })], ['📁 Папку', () => createIn(HOME, '', 'dir')], ['📝 Документ Word', () => createIn(HOME, '', 'docx')], ['📊 Таблицу Excel', () => createIn(HOME, '', 'xlsx')],
       ['🏗️ Новый объект', newProject],
       ['-'], ['➕ Добавить объект из папки…', () => openWindow('picker', null)], ['⬆ Загрузить файлы…', () => uploadInto(HOME, '')], ['Открыть папку на Диске', () => window.open(D.webFolder(HOME), '_blank', 'noopener')],
       ['-'], ['🎨 Фон рабочего стола…', wallDialog],
@@ -631,6 +641,7 @@
       // Прежний формат файла — только фон
       conf = j.wall || (j.kind ? j : {});
       if (Array.isArray(j.extra)) { extraList = j.extra.filter((p) => typeof p === 'string'); store.set('extra', JSON.stringify(extraList)); }
+      if (Array.isArray(j.links)) { linkList = j.links.filter((l) => l && typeof l.path === 'string').map((l) => ({ path: D.normalize(l.path), name: String(l.name || lastName(l.path)) })); store.set('links', JSON.stringify(linkList)); }
     } catch (e) { return; }
     loadWallFrom(conf);
   }
@@ -690,6 +701,21 @@
       ['-'], ['+ Сделано', () => withCtx(p.path, (c) => doneForm(c, { date: today }))], ['+ Задача', () => withCtx(p.path, (c) => taskForm(c, { date: today }))],
       ['-'], ['Открыть папку на Диске', () => window.open(D.webFolder(p.path), '_blank', 'noopener')],
       extra ? ['Убрать с рабочего стола', () => { setExtra(extraProjects().filter((x) => x !== p.path)); loadProjects(); }] : null,
+    ]);
+  }
+
+  /** Ярлык на папку Диска — открывается в проводнике кабинета; сама папка остаётся на месте. */
+  function openLink(l) { openWindow('explorer', null, { base: l.path, title: l.name }); }
+
+  function linkMenu(x, y, l) {
+    popup(x, y, [
+      ['Открыть', () => openLink(l)],
+      ['Открыть на Диске', () => window.open(D.webFolder(l.path), '_blank', 'noopener')],
+      ['Переименовать ярлык', () => {
+        const n = (prompt('Имя ярлыка', l.name) || '').trim();
+        if (n) setLinks(linkList.map((x2) => (x2.path === l.path ? { path: l.path, name: n } : x2)));
+      }],
+      ['Убрать с рабочего стола', () => { if (confirm('Убрать ярлык «' + l.name + '»? Папка на Диске останется.')) setLinks(linkList.filter((x2) => x2.path !== l.path)); }],
     ]);
   }
 
@@ -1193,7 +1219,7 @@
     if (it.type === 'dir') {
       const path = (rel ? rel + '/' : '') + it.name;
       if (w) { w.path = path; w.key = ['explorer', w.folder || '', base, path].join('|'); loadFolder(w); render(); }
-      else openWindow('explorer', base === HOME ? null : base.slice(0, -(DOCS.length + 1)), { base, path });
+      else openWindow('explorer', base !== HOME && base.endsWith('/' + DOCS) ? base.slice(0, -(DOCS.length + 1)) : null, { base, path });
       return;
     }
     const full = dirOf(base, rel) + '/' + it.name;
@@ -1267,6 +1293,23 @@
   /** Добавить объект из любой папки Диска (если он лежит не в «Прораб+»). */
   function pickerView(w) {
     const path = w.path || '/';
+    if (w.mode === 'link') {
+      const upL = path === '/' ? null : path.split('/').slice(0, -1).join('/') || '/';
+      const goL = (p) => { w.path = p; loadFolder(w); render(); };
+      const exists = linkList.some((l) => l.path === path);
+      return h('div', null,
+        h('p', { class: 'pp-muted' }, 'Выберите любую папку на Диске — на рабочем столе появится её ярлык. Папка останется на своём месте.'),
+        h('div', { class: 'pp-row pp-wrap pp-toolbar' }, button('←', () => { if (upL) goL(upL); }, 'pp-icon'), h('span', { class: 'pp-crumbs' }, path),
+          path !== '/' && path !== ROOT ? button(exists ? 'Уже на рабочем столе' : 'Добавить на рабочий стол', () => {
+            if (exists) return;
+            const n = (prompt('Имя ярлыка', lastName(path)) || '').trim();
+            if (!n) return;
+            setLinks(linkList.concat([{ path, name: n }]));
+            closeWindow(w);
+          }, 'pp-primary') : null),
+        w.items === null ? h('p', { class: 'pp-muted' }, 'Загружаю…') : h('div', { class: 'pp-list' },
+          w.items.filter((i) => i.type === 'dir').map((d) => h('button', { type: 'button', class: 'pp-item', onclick: () => goL(path.replace(/\/$/, '') + '/' + d.name) }, '📁 ' + d.name))));
+    }
     if (w.mode === 'root') {
       const up0 = path === '/' ? null : path.split('/').slice(0, -1).join('/') || '/';
       const go0 = (p) => { w.path = p; loadFolder(w); render(); };
