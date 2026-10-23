@@ -32,6 +32,11 @@ from enquiry_fields import GROUPS, LABELS, parse_parameters
 
 ROOT = Path(__file__).resolve().parent
 
+# Журнал «Прораб+» (/admin/prorab): адреса Яндекс Диска, к которым обращается браузер владельца
+PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net'
+PRORAB_VERSION = '1'
+
+
 def create_app(test_config=None):
     app = Flask(__name__)
     production = os.environ.get('APP_ENV') == 'production'
@@ -139,6 +144,10 @@ def create_app(test_config=None):
             policy = policy.replace("connect-src 'self'", "connect-src 'self' https://mc.yandex.ru https://mc.yandex.com")
             policy = policy.replace("img-src 'self' data:", "img-src 'self' data: https://mc.yandex.ru https://mc.yandex.com")
             response.headers['Content-Security-Policy'] = policy
+        if request.endpoint == 'prorab':
+            # Журнал «Прораб+» читает и пишет папку объекта на Яндекс Диске владельца прямо из браузера
+            response.headers['Content-Security-Policy'] = response.headers['Content-Security-Policy'].replace(
+                "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT)
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot'))
@@ -632,6 +641,14 @@ def create_app(test_config=None):
     seo = SEOPanel(app, db, ROOT, catalog)
     seo.register(app, protected, render)
     catalog.register(protected, render)
+
+    @app.get('/admin/prorab')
+    @protected(admin=True)
+    def prorab():
+        # Журнал работ «Прораб+»: данные — в папке объекта на Яндекс Диске (те же, что в приложении
+        # на телефоне), сайт их не хранит. ClientID приложения Яндекс OAuth — для кнопки «Войти через Яндекс».
+        client_id = os.environ.get('YANDEX_CLIENT_ID') or (db().execute("SELECT value FROM settings WHERE key='prorab_client_id'").fetchone() or [''])[0]
+        return render_template('prorab.html', client_id=client_id, version=PRORAB_VERSION)
 
     return app
 
