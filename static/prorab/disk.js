@@ -109,6 +109,13 @@
       if (!r.ok && r.status !== 201 && r.status !== 202) throw new DiskError('Не удалось переименовать (' + r.status + ')', r.status);
     }
 
+    /** Копия файла на Диске (без скачивания в браузер). */
+    async copy(from, to) {
+      const r = await this.call('POST', '/resources/copy', { from: diskPath(from), path: diskPath(to), overwrite: 'false' });
+      if (r.status === 409) throw new DiskError('Имя уже занято', 409);
+      if (!r.ok && r.status !== 201 && r.status !== 202) throw new DiskError('Не удалось скопировать (' + r.status + ')', r.status);
+    }
+
     async mkdir(path) {
       const r = await this.call('PUT', '/resources', { path: diskPath(path) });
       if (!r.ok && r.status !== 409) throw new DiskError('Не удалось создать папку (' + r.status + ')', r.status);

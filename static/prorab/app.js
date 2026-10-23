@@ -439,6 +439,7 @@
     dirs: { title: 'Справочники', icon: '📇', view: (w, c) => dirsView(w, c) },
     drawings: { title: 'Чертежи', icon: '📐', view: (w, c) => drawingsView(w, c) },
     drawing: { title: 'Чертёж', icon: '📐', view: (w, c) => drawingView(w, c) },
+    fileview: { title: 'Просмотр', icon: '📐', view: (w) => fileView(w) },
     today: { title: 'Сегодня', icon: '☀️', view: (w, c) => todayView(w, c) },
     extras: { title: 'Доп. работы', icon: '➕', view: (w, c) => extrasView(w, c) },
     acceptance: { title: 'Журнал приёмки', icon: '✅', view: (w, c) => acceptanceView(w, c) },
@@ -478,6 +479,7 @@
       return where + (w.path ? ' › ' + w.path.split('/').join(' › ') : '');
     }
     if (w.kind === 'project') return projName(w.folder);
+    if (w.kind === 'fileview') return (w.title || lastName(w.path)) + ' · просмотр';
     if (w.kind === 'drawing') { const c = ctxs[w.folder]; const d = c && c.project && c.project.get('drawings', w.path); return projName(w.folder) + ' · ' + (d ? d.name : 'Чертёж'); }
     if (w.kind === 'picker') return w.mode === 'root' ? 'Папка рабочего стола' : w.mode === 'link' ? 'Ярлык на папку Диска' : APPS.picker.title;
     return projName(w.folder) + ' · ' + APPS[w.kind].title;
@@ -517,7 +519,7 @@
     if (w.folder && (!c || c.loading) && w.kind !== 'explorer') content = h('p', { class: 'pp-muted' }, 'Загружаю данные объекта…');
     else if (w.folder && c.error && w.kind !== 'explorer') content = h('div', null, h('p', { class: 'pp-error' }, c.error), button('Повторить', () => { delete ctxs[w.folder]; openCtx(w.folder); render(); }));
     else content = APPS[w.kind].view(w, c);
-    const body = h('div', { class: 'pp-winbody' + (w.kind === 'drawing' ? ' pp-winbody-plan' : '') }, content);
+    const body = h('div', { class: 'pp-winbody' + (w.kind === 'drawing' || w.kind === 'fileview' ? ' pp-winbody-plan' : '') }, content);
     if (!w.max) {
       let t = null;
       new ResizeObserver(() => {
@@ -556,7 +558,7 @@
           projectsError ? h('p', { class: 'pp-desk-note pp-error' }, projectsError) : null,
           icons.map((ic) => h('button', {
             type: 'button', class: 'pp-icon-btn' + (home.selected === ic.key ? ' pp-selected' : ''), title: ic.name,
-            onclick: () => { if (small() || home.selected === ic.key) ic.open(); else { home.selected = ic.key; render(); } },
+            onclick: () => { if (small()) ic.open(); else if (home.selected !== ic.key) { home.selected = ic.key; render(); } },
             ondblclick: ic.open,
             oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); ic.menu(e.clientX, e.clientY); },
           }, h('span', { class: 'pp-icon-img' + (ic.badge ? ' pp-shortcut' : '') }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
@@ -1151,12 +1153,12 @@
     const P = c.project;
     const list = P.drawings();
     const notes = P.rows('drawing_notes');
-    const pick = h('input', { type: 'file', accept: '.pdf,.dxf,.dwg,application/pdf', multiple: true, class: 'pp-hidden' });
+    const pick = h('input', { type: 'file', accept: '.pdf,.dxf,.dwg,application/pdf,image/vnd.dwg', multiple: true, class: 'pp-hidden' });
     pick.addEventListener('change', async () => { const files = Array.from(pick.files); pick.value = ''; for (const f of files) await addDrawing(c, f); });
     const problems = notes.filter((n) => n.status === 'PROBLEM');
     const names = Object.fromEntries(list.map((d) => [d.id, d.name]));
     return h('main', null,
-      h('div', { class: 'pp-row pp-between pp-wrap' }, h('p', { class: 'pp-muted' }, 'PDF и DXF открываются прямо здесь, с пометками. DWG добавляйте с телефона (он переводит DWG в DXF) или сохраните чертёж как PDF/DXF.'),
+      h('div', { class: 'pp-row pp-between pp-wrap' }, h('p', { class: 'pp-muted' }, 'PDF, DXF и DWG открываются прямо здесь, с пометками. DWG переводится в DXF, как в телефоне.'),
         button(w.busy ? 'Загружаю…' : '+ Добавить чертёж', () => { if (!w.busy) pick.click(); }, 'pp-primary'), pick),
       list.length ? h('section', { class: 'pp-card' }, list.map((d) => {
         const ns = notes.filter((n) => n.drawingId === d.id);
@@ -1203,24 +1205,62 @@
     return m.getDocument({ data: bytes, isEvalSupported: false }).promise;
   }
 
+  // LibreDWG (та же, что в телефоне) — переводит DWG в DXF прямо в браузере; загружается только для DWG
+  let dwgLib = null;
+  function loadDwg() {
+    if (!dwgLib) {
+      dwgLib = import(app.dataset.dwg || '/static/prorab/vendor/libredwg/libredwg-web.js').then((m) => m.default())
+        .catch((e) => { dwgLib = null; throw new Error('Не загрузился модуль перевода DWG: ' + e.message); });
+    }
+    return dwgLib;
+  }
+  /** DWG (байты) → DXF (байты). В приложении DWG тоже хранится как DXF. */
+  async function dwgToDxf(bytes) {
+    const m = await loadDwg();
+    await new Promise((r) => setTimeout(r, 30)); // дать браузеру показать «Перевожу…»
+    const inp = 'in' + Date.now() + '.dwg', out = inp.replace('.dwg', '.dxf');
+    const exists = (f) => { try { return m.FS.analyzePath(f, false).exists; } catch (e) { return false; } };
+    try {
+      m.FS.writeFile(inp, bytes);
+      const code = m.dwg_write_dxf(inp, out);
+      const dxf = exists(out) ? m.FS.readFile(out) : null;
+      if (!dxf || dxf.length < 100) throw new Error('Не получилось открыть DWG: файл повреждён или версия DWG не поддерживается' + (code ? ' (код ' + code + ')' : '') + '. Можно сохранить чертёж как DXF или PDF.');
+      return dxf;
+    } catch (e) {
+      if (e instanceof WebAssembly.RuntimeError) { dwgLib = null; throw new Error('Не получилось открыть DWG: конвертер не справился с этим файлом. Можно сохранить чертёж как DXF или PDF.'); }
+      throw e;
+    } finally {
+      [inp, out].forEach((f) => { if (exists(f)) { try { m.FS.unlink(f); } catch (e) { /* уже нет */ } } });
+    }
+  }
+  /** Байты чертежа → { kind: 'pdf'|'dxf', bytes, pages }; DWG переводится в DXF. Проверяет, что файл открывается. */
+  async function prepareDrawing(name, bytes) {
+    let kind = window.ProrabDxf.kindOf(name, bytes);
+    if (kind !== 'pdf' && kind !== 'dxf' && kind !== 'dwg') throw new Error('Не понял тип файла. Поддерживаются PDF, DXF и DWG.');
+    if (kind === 'dwg') {
+      setStatus('Перевожу DWG в DXF — ' + name + '…');
+      bytes = await dwgToDxf(bytes);
+      kind = 'dxf';
+    }
+    let pages = 1;
+    if (kind === 'pdf') { const doc = await openPdf(bytes.slice()); pages = doc.numPages; doc.destroy(); } else window.ProrabDxf.parse(bytes);
+    return { kind, bytes, pages };
+  }
+
   async function addDrawing(c, file) {
     const P = c.project;
     const w = wins.find((x) => x.kind === 'drawings' && x.folder === c.path);
     try {
       if (w) { w.busy = true; render(); }
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const kind = window.ProrabDxf.kindOf(file.name, bytes);
-      if (kind === 'dwg') throw new Error('DWG в браузере не открыть. Добавьте его с телефона (он переводит DWG в DXF) или сохраните чертёж как PDF или DXF.');
-      if (kind !== 'pdf' && kind !== 'dxf') throw new Error('Не понял тип файла. Поддерживаются PDF и DXF.');
-      let pages = 1;
       setStatus('Проверяю чертёж ' + file.name + '…');
-      if (kind === 'pdf') { const doc = await openPdf(bytes.slice()); pages = doc.numPages; doc.destroy(); } else window.ProrabDxf.parse(bytes);
+      const src = new Uint8Array(await file.arrayBuffer());
+      const { kind, bytes, pages } = await prepareDrawing(file.name, src);
       const id = S.newId(), name = file.name.replace(/\.[^.]+$/, '');
       const target = c.path + '/files/' + id + '.' + kind;
       setStatus('Загружаю ' + file.name + ' на Диск…');
       await disk.mkdir(c.path + '/files');
-      await disk.putBlob(target, file, false);
-      bytesCache[target] = Promise.resolve(bytes.buffer);
+      await disk.putBlob(target, bytes === src ? file : new Blob([bytes]), false);
+      bytesCache[target] = Promise.resolve(bytes.slice().buffer);
       P.addDrawing({ id, name, kind, file: id + '.' + kind, pages });
       changed(c);
       setStatus('Чертёж «' + name + '» добавлен — придёт на телефон при синхронизации');
@@ -1230,6 +1270,113 @@
   }
 
   const bytesCache = {};
+  const DRAWING_EXT = ['pdf', 'dxf', 'dwg'];
+  /** Объект, в папке которого лежит файл. */
+  const projectOfPath = (full) => (projects || []).find((p) => full.startsWith(p.path + '/')) || null;
+  /** Объект, загруженный полностью (для действий из проводника и с рабочего стола). */
+  const ctxReady = (path) => new Promise((resolve, reject) => {
+    const c = openCtx(path);
+    const t = setInterval(() => { if (!c.loading) { clearInterval(t); if (c.project) resolve(c); else reject(new Error(c.error || 'Объект не загрузился')); } }, 150);
+  });
+
+  /**
+   * Файл PDF/DXF из папки Диска — чертёж объекта: если его копия уже есть в объекте (тот же файл по md5) — она,
+   * иначе файл копируется в «<объект>/files/» (как у телефона) и добавляется в «Чертежи». Пометки — как у любого чертежа.
+   */
+  async function drawingFromFile(c, full, item) {
+    const P = c.project;
+    const list = P.drawings();
+    const own = list.find((d) => c.path + '/files/' + d.file === full);
+    if (own) return own.id;
+    const name = item.name.replace(/\.[^.]+$/, '');
+    // DWG хранится переведённым в DXF — его копию узнаём по названию
+    if (ext(item.name) === 'dwg') { const same = list.find((d) => d.kind === 'dxf' && d.name === name); if (same) return same.id; }
+    if (list.length) {
+      // Тот же файл уже добавлен: по контрольной сумме Диска, а без неё — по названию и размеру
+      const files = Object.fromEntries(((await disk.list(c.path + '/files')) || []).map((f) => [f.name, f]));
+      const same = list.find((d) => {
+        const f = files[d.file];
+        if (!f) return false;
+        if (item.md5 && f.md5) return f.md5 === item.md5;
+        return d.name === name && item.size !== undefined && f.size === item.size;
+      });
+      if (same) return same.id;
+    }
+    setStatus('Проверяю чертёж ' + item.name + '…');
+    const buf = await disk.getBytes(full);
+    if (!buf) throw new Error('Файл не найден на Диске');
+    const src = new Uint8Array(buf);
+    const { kind, bytes, pages } = await prepareDrawing(item.name, src);
+    const id = S.newId(), file = id + '.' + kind, target = c.path + '/files/' + file;
+    setStatus('Добавляю чертёж в объект…');
+    await disk.mkdir(c.path + '/files');
+    if (bytes === src) { try { await disk.copy(full, target); } catch (e) { await disk.putBlob(target, new Blob([bytes]), false); } }
+    else await disk.putBlob(target, new Blob([bytes]), false);
+    bytesCache[target] = Promise.resolve(bytes === src ? buf : bytes.slice().buffer);
+    P.addDrawing({ id, name, kind, file, pages });
+    changed(c);
+    setStatus('Чертёж «' + name + '» добавлен в объект «' + projName(c.path) + '» — придёт на телефон при синхронизации');
+    return id;
+  }
+
+  async function openDrawingFile(full, item, projPath) {
+    try {
+      const c = await ctxReady(projPath);
+      openDrawing(c, await drawingFromFile(c, full, item));
+    } catch (e) { alert(item.name + ': ' + e.message); setStatus(''); }
+  }
+
+  /** Чертёж не из папки объекта: в какой объект добавить (для пометок) или только посмотреть. */
+  function drawingFileDialog(full, item) {
+    const list = projects || [];
+    const sel = h('select', null, list.map((p) => h('option', { value: p.path }, p.name)));
+    const mine = projectOfPath(full);
+    if (mine) sel.value = mine.path;
+    const close = () => wrap.remove();
+    const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap) close(); } },
+      h('div', { class: 'pp-dialog' },
+        h('div', { class: 'pp-row pp-between' }, h('h2', null, '📐 ' + item.name), button('✕', close, 'pp-icon')),
+        list.length ? h('div', null, field('Объект', sel, 'Пометки на чертеже принадлежат объекту: файл скопируется в его «Чертежи» и придёт на телефон. Сам файл останется на месте.'),
+          button('Открыть с пометками', () => { close(); openDrawingFile(full, item, sel.value); }, 'pp-primary')) :
+          h('p', { class: 'pp-muted' }, 'Объектов нет — можно только посмотреть.'),
+        h('div', { class: 'pp-row pp-wrap' }, button('Только посмотреть', () => { close(); openWindow('fileview', null, { path: full, title: item.name }); }),
+          ext(item.name) === 'pdf' ? button('В Яндекс Документах', () => { close(); window.open(D.webEdit(full), '_blank', 'noopener'); }) : null)));
+    document.body.append(wrap);
+  }
+
+  /** Просмотр чертежа из папки Диска без пометок. */
+  function fileView(w) {
+    const kind = ext(w.path) === 'pdf' ? 'pdf' : 'dxf';
+    if (!w.load) {
+      w.load = { state: 'loading' };
+      (async () => {
+        try {
+          const buf = await fileBytes(w.path);
+          if (kind === 'pdf') w.pdf = await openPdf(new Uint8Array(buf).slice());
+          else { w.dxf = window.ProrabDxf.parse(ext(w.path) === 'dwg' ? await dwgToDxf(new Uint8Array(buf)) : new Uint8Array(buf)); setStatus(''); w.hidden = new Set(Object.values(w.dxf.layers).filter((l) => !l.visible).map((l) => l.name)); }
+          w.load = { state: 'ready' };
+        } catch (e) { w.load = { state: 'error', error: e.message }; }
+        if (!modalOpen()) render();
+      })();
+    }
+    if (w.load.state === 'loading') return h('p', { class: 'pp-muted' }, 'Загружаю чертёж с Диска…');
+    if (w.load.state === 'error') return h('div', null, h('p', { class: 'pp-error' }, w.load.error), button('Повторить', () => { w.load = null; render(); }));
+    if (!w.host) {
+      w.host = h('div', { class: 'pp-plan' });
+      w.viewer = window.ProrabViewer.create(w.host, { kind, dxf: w.dxf, pdf: w.pdf, hidden: w.hidden, notes: [],
+        onChange: () => { const el = document.querySelector('.pp-win[data-key="' + CSS.escape(w.key) + '"] .pp-plan-page'); if (el && w.viewer) el.textContent = (w.viewer.page + 1) + ' / ' + w.viewer.pageCount; } });
+    }
+    const item = { name: lastName(w.path), md5: null };
+    return h('div', { class: 'pp-planwrap' },
+      h('div', { class: 'pp-row pp-wrap pp-plan-bar' },
+        button('📍 Ставить пометки', () => drawingFileDialog(w.path, item), 'pp-primary', 'Добавить чертёж в объект — тогда на нём можно ставить пометки'),
+        button('⤢', () => w.viewer.fit(), 'pp-icon', 'Весь чертёж'), button('−', () => w.viewer.zoom(1 / 1.5), 'pp-icon', 'Дальше'), button('+', () => w.viewer.zoom(1.5), 'pp-icon', 'Ближе'),
+        w.pdf && w.pdf.numPages > 1 ? h('span', { class: 'pp-row' }, button('‹', () => w.viewer.setPage(w.viewer.page - 1), 'pp-icon', 'Предыдущий лист'),
+          h('span', { class: 'pp-plan-page' }, (w.viewer.page + 1) + ' / ' + w.pdf.numPages), button('›', () => w.viewer.setPage(w.viewer.page + 1), 'pp-icon', 'Следующий лист')) : null,
+        w.dxf ? button('Слои', () => layersDialog(w)) : null,
+        h('small', { class: 'pp-muted' }, 'Просмотр без пометок')),
+      h('div', { class: 'pp-plan-main' }, w.host));
+  }
   function fileBytes(path) {
     if (!bytesCache[path]) bytesCache[path] = disk.getBytes(path).then((b) => { if (!b) throw new Error('Файла чертежа ещё нет на Диске — синхронизируйте телефон, с которого его добавили.'); return b; }).catch((e) => { delete bytesCache[path]; throw e; });
     return bytesCache[path];
@@ -1948,7 +2095,13 @@
       } catch (e) { if (tab) tab.close(); alert(e.message); }
       return;
     }
-    if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'csv', 'txt', 'pdf'].includes(ext(it.name))) window.open(D.webEdit(full), '_blank', 'noopener');
+    if (DRAWING_EXT.includes(ext(it.name))) {
+      // Чертёж: в папке объекта — сразу его чертёж с пометками; иначе спросим, в какой объект
+      const pr = projectOfPath(full);
+      if (pr) openDrawingFile(full, it, pr.path); else drawingFileDialog(full, it);
+      return;
+    }
+    if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'csv', 'txt'].includes(ext(it.name))) window.open(D.webEdit(full), '_blank', 'noopener');
     else if (MEDIA.includes(ext(it.name))) window.open(D.webView(full), '_blank', 'noopener');
     else { try { window.open(await disk.downloadHref(full), '_blank', 'noopener'); } catch (e) { alert(e.message); } }
   }
@@ -1960,6 +2113,9 @@
     popup(x, y, [
       ['Открыть', () => openItem(w, it, base, rel)],
       ext(it.name) === 'url' ? ['Изменить адрес', () => createShortcut(base, rel, it)] : null,
+      DRAWING_EXT.includes(ext(it.name)) ? ['📍 Чертёж с пометками…', () => drawingFileDialog(full, it)] : null,
+      DRAWING_EXT.includes(ext(it.name)) ? ['Только посмотреть', () => openWindow('fileview', null, { path: full, title: it.name })] : null,
+      ext(it.name) === 'pdf' ? ['Открыть в Яндекс Документах', () => window.open(D.webEdit(full), '_blank', 'noopener')] : null,
       it.type === 'file' && ext(it.name) !== 'url' ? ['Открыть в Яндекс Диске', () => window.open(D.webView(full), '_blank', 'noopener')] : null,
       it.type === 'dir' ? ['Открыть на Диске', () => window.open(D.webFolder(full), '_blank', 'noopener')] : null,
       it.type === 'file' && ext(it.name) !== 'url' ? ['Скачать', async () => { try { window.open(await disk.downloadHref(full), '_blank', 'noopener'); } catch (e) { alert(e.message); } }] : null,

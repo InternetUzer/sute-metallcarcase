@@ -46,13 +46,13 @@ def test_disk_allowed_only_for_journal(app):
     login(client, 1)
     csp = client.get('/admin/prorab').headers['Content-Security-Policy']
     assert "connect-src 'self' https://cloud-api.yandex.net" in csp
-    assert "script-src 'self';" in csp
+    assert "script-src 'self' 'wasm-unsafe-eval';" in csp  # только WebAssembly для перевода DWG
     # Место объекта по адресу и «Где я сейчас» — только в журнале
     assert 'https://nominatim.openstreetmap.org' in csp and 'https://geocoding-api.open-meteo.com' in csp
     assert 'geolocation=(self)' in client.get('/admin/prorab').headers['Permissions-Policy']
     other = client.get('/admin').headers['Content-Security-Policy']
     assert 'yandex' not in other.split('connect-src')[1].split(';')[0]
-    assert 'openstreetmap' not in other
+    assert 'openstreetmap' not in other and 'wasm-unsafe-eval' not in other
     assert 'geolocation=()' in client.get('/admin').headers['Permissions-Policy']
     assert 'href="/admin/prorab"' in client.get('/admin').get_data(as_text=True)
 
@@ -120,7 +120,9 @@ def test_drawing_viewer_files_are_served(app):
         assert f'src="/static/prorab/{name}?v=' in html
         assert client.get(f'/static/prorab/{name}').status_code == 200
     assert 'data-pdfjs="/static/prorab/vendor/pdf.min.js?v=' in html
-    for name in ('pdf.min.js', 'pdf.worker.min.js'):
+    assert 'data-dwg="/static/prorab/vendor/libredwg/libredwg-web.js?v=' in html
+    assert client.get('/static/prorab/vendor/libredwg/libredwg-web.wasm').status_code == 200
+    for name in ('pdf.min.js', 'pdf.worker.min.js', 'libredwg/libredwg-web.js'):
         r = client.get(f'/static/prorab/vendor/{name}')
         assert r.status_code == 200 and 'javascript' in r.mimetype
         assert b'sourceMappingURL' not in r.data
