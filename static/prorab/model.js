@@ -255,6 +255,59 @@
       return this.put('crews', c.id || S.newId(), { projectId: this.projectId, name: c.name || '', archived: c.archived ? 1 : 0, deleted: 0 });
     }
 
+    /** Ведомость: позиции с планом, сделанным (сумма записей «Сделано»), процентом, остатком и сроком. */
+    boq() {
+      const names = this.names();
+      const done = {};
+      for (const v of this.rows('volumes')) if (v.itemId) done[v.itemId] = (done[v.itemId] || 0) + (Number(v.quantity) || 0);
+      return this.rows('boq_items').sort((a, b) => (a.position || 0) - (b.position || 0)).map((i) => {
+        const plan = i.planQty === null || i.planQty === undefined ? null : Number(i.planQty);
+        const fact = Math.round((done[i.id] || 0) * 1e6) / 1e6;
+        return {
+          id: i.id, name: this.itemName(i.id, names), work: names.work[i.workTypeId] || '', unit: names.units[i.unitId] || '',
+          plan, fact, percent: plan ? Math.round((fact / plan) * 1000) / 10 : null,
+          remaining: plan === null ? null : Math.round((plan - fact) * 1e6) / 1e6,
+          due: i.dueDate || null, finished: !!i.finishedDate, who: names.contractors[i.contractorId] || '',
+        };
+      });
+    }
+
+    /** Отчёт за день текстом (для мессенджера) — как «Отчёт за день» в приложении. */
+    dayReport(day, dayTitle, money) {
+      const d = this.days(day, day)[0] || { works: [], machines: [], people: [], tasks: [] };
+      const num = (q) => (q === null || q === undefined ? '' : Number(q).toLocaleString('ru-RU', { maximumFractionDigits: 6 }));
+      const out = ['Объект: ' + (this.project.name || ''), 'Отчёт за ' + dayTitle, ''];
+      out.push('Выполненные работы:');
+      if (!d.works.length) out.push('— не записаны');
+      d.works.forEach((w) => out.push('• ' + w.title + ': ' + num(w.qty) + (w.unit ? ' ' + w.unit : '') + (w.who ? ' (' + w.who + ')' : '') + (w.note ? ' — ' + w.note : '')));
+      out.push('', 'Техника:');
+      if (!d.machines.length) out.push('— не работала');
+      d.machines.forEach((m) => out.push('• ' + m.title + (m.minutes ? ': работала ' + hm(m.minutes) : '')));
+      const total = d.people.reduce((s, p) => s + (p.people || 0), 0);
+      out.push('', 'Люди на объекте: ' + (d.people.length ? total + ' чел.' : 'не отмечены'));
+      d.people.forEach((p) => out.push('• ' + p.name + ' — ' + p.people));
+      const plan = d.tasks.filter((t) => !t.done);
+      if (plan.length) { out.push('', 'В плане:'); plan.forEach((t) => out.push('• ' + t.title)); }
+      return out.join('\n');
+    }
+
+    /** Строки выгрузки журнала за период (Excel): по дням и итоги. */
+    exportRows(from, to) {
+      const days = this.days(from, to).sort((a, b) => a.day - b.day);
+      const byDay = [], totals = [];
+      for (const d of days) {
+        for (const w of d.works) byDay.push([d.day, 'Работы', w.title, w.qty, w.unit, w.who, w.note, null]);
+        for (const m of d.machines) byDay.push([d.day, 'Техника', m.title, m.minutes ? Math.round((m.minutes / 60) * 100) / 100 : null, m.minutes ? 'ч' : '', '', '', m.amountCents ? m.amountCents / 100 : null]);
+        for (const p of d.people) byDay.push([d.day, 'Люди', p.name, p.people, 'чел.', '', '', null]);
+        for (const t of d.tasks) byDay.push([d.day, 'Задачи', t.title, t.planQty, '', t.who, t.done ? 'выполнено' : 'не выполнено', null]);
+        for (const f of d.money) byDay.push([d.day, 'Финансы', f.title, null, '', '', f.type === 'INCOME' ? 'поступление' : 'расход', (f.type === 'INCOME' ? 1 : -1) * f.amountCents / 100]);
+        const exp = d.money.filter((f) => f.type !== 'INCOME').reduce((s, f) => s + f.amountCents, 0);
+        const inc = d.money.filter((f) => f.type === 'INCOME').reduce((s, f) => s + f.amountCents, 0);
+        totals.push([d.day, d.works.length, d.people.reduce((s, p) => s + (p.people || 0), 0), Math.round((d.machines.reduce((s, m) => s + (m.minutes || 0), 0) / 60) * 100) / 100, d.tasks.length, d.tasks.filter((t) => t.done).length, exp / 100, inc / 100]);
+      }
+      return { byDay, totals };
+    }
+
     /** Журнал по дням периода [from, to] (номера дней; null — без границы), новые сверху. */
     days(from, to) {
       const ok = (d) => (from === null || from === undefined || d >= from) && (to === null || to === undefined || d <= to);

@@ -112,3 +112,31 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
   .pp-taskbar .pp-status { display: none; }
   .pp-start { max-width: 140px; }
 }
+
+/* ───────── объекты, календарь, ведомость ───────── */
+.pp-desk-note { grid-column: 1 / -1; grid-row: auto; max-width: 420px; color: #fff; background: rgba(0,0,0,.35); padding: 10px 12px; border-radius: 10px; font-size: 14px; }
+.pp-icons > .pp-desk-note { position: absolute; right: 16px; top: 16px; }
+.pp-project h2 { font-size: 20px; }
+.pp-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 10px 0; }
+.pp-cal-head { text-align: center; font-size: 12px; color: var(--pp-muted); padding: 2px 0; }
+.pp-cal-day { min-height: 74px; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 4px 6px; border: 1px solid var(--pp-line); border-radius: 8px; background: var(--pp-card); color: var(--pp-text); font: inherit; text-align: left; cursor: pointer; }
+.pp-cal-day:hover { border-color: var(--pp-accent); }
+.pp-cal-day.pp-today .pp-cal-num { background: var(--pp-accent); color: #fff; border-radius: 10px; padding: 0 6px; }
+.pp-cal-day.pp-selected { outline: 2px solid var(--pp-accent); outline-offset: -1px; }
+.pp-cal-num { font-weight: 600; font-size: 13px; align-self: flex-start; }
+.pp-cal-marks { display: flex; flex-wrap: wrap; gap: 2px 4px; }
+.pp-mark { font-style: normal; font-size: 11.5px; line-height: 1.3; }
+.pp-mark.pp-done { color: var(--pp-plus); }
+.pp-mark.pp-plan { color: var(--pp-accent); }
+.pp-mark.pp-late { color: var(--pp-danger); }
+.pp-table-wrap { overflow-x: auto; }
+.pp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.pp-table th { text-align: left; font-size: 12px; color: var(--pp-muted); font-weight: 600; padding: 6px; border-bottom: 1px solid var(--pp-line); white-space: nowrap; }
+.pp-table td { padding: 7px 6px; border-bottom: 1px solid var(--pp-line); vertical-align: top; }
+.pp-table td small { display: block; color: var(--pp-muted); font-size: 12px; }
+.pp-table .pp-num { text-align: right; white-space: nowrap; }
+.pp-progress { display: inline-flex; align-items: center; gap: 6px; min-width: 110px; }
+.pp-progress > .pp-bar-fill { display: block; height: 6px; border-radius: 3px; background: var(--pp-accent); max-width: 70px; }
+.pp-progress > .pp-bar-fill.pp-full { background: var(--pp-plus); }
+.pp-dialog textarea[readonly] { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+@media (max-width: 720px) { .pp-cal-day { min-height: 56px; padding: 3px; } .pp-mark { font-size: 10px; } }

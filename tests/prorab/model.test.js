@@ -133,3 +133,32 @@ test('новые документы Word и Excel — zip Office Open XML', () =
   }
   assert.equal(O.crc32(Buffer.from('123456789')), 0xcbf43926);
 });
+
+test('ведомость, отчёт за день и выгрузка журнала — из тех же записей', () => {
+  const p = project();
+  p.put('boq_items', 'i', { planQty: 20 });
+  p.saveDone({ date: 20010, itemId: 'i', qty: 12.5, machines: [{ equipmentId: 'e', amountCents: 1500000, minutes: 450 }], people: { c: 6 } });
+  p.saveDone({ date: 20011, itemId: 'i', qty: 2.5 });
+  const b = p.boq().find((r) => r.id === 'i');
+  assert.equal(b.fact, 15); assert.equal(b.plan, 20); assert.equal(b.percent, 75); assert.equal(b.remaining, 5); assert.equal(b.unit, 'м³');
+  const text = p.dayReport(20010, 'Пт, 15 октября');
+  assert.match(text, /Объект: Ангар/);
+  assert.match(text, /• Бетонирование: 12,5 м³/);
+  assert.match(text, /• Экскаватор JCB: работала 7 ч 30 мин/);
+  assert.match(text, /Люди на объекте: 6 чел\./);
+  const { byDay, totals } = p.exportRows(20010, 20011);
+  assert.deepEqual(byDay.filter((r) => r[1] === 'Работы').map((r) => [r[0], r[3]]), [[20010, 12.5], [20011, 2.5]]);
+  assert.deepEqual(byDay.find((r) => r[1] === 'Техника').slice(3, 5), [7.5, 'ч']);
+  assert.equal(byDay.find((r) => r[1] === 'Финансы')[7], -15000);
+  assert.deepEqual(totals[0].slice(0, 4), [20010, 1, 6, 7.5]);
+  assert.equal(totals[0][6], 15000);
+});
+
+test('книга Excel: несколько листов, даты и стили', () => {
+  const O = require('../../static/prorab/office.js');
+  const bytes = O.book([{ name: 'По дням', header: true, widths: [12], rows: [['Дата'], [{ date: 20749 }]] }, { name: 'Итоги/2', rows: [[1]] }]);
+  const text = Buffer.from(bytes).toString('utf8');
+  assert.ok(text.includes('xl/styles.xml') && text.includes('xl/worksheets/sheet2.xml'));
+  assert.ok(text.includes('<v>' + (20749 + 25569) + '</v>')); // дата Excel
+  assert.ok(text.includes('name="Итоги 2"')); // недопустимый символ в имени листа заменён
+});

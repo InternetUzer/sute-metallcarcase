@@ -60,25 +60,40 @@
     ]);
   }
 
-  /** Таблица Excel: один лист; [rows] — строки текста/чисел (необязательно). */
-  function xlsx(rows, sheetName) {
+  /**
+   * Книга Excel: [{ name, rows, widths, header }]. Ячейка — число, текст, null или { date: номер дня }
+   * (дата Excel), { bold: текст }. header = true — первая строка жирная.
+   */
+  function book(sheets) {
     const col = (i) => { let s = ''; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
-    const cells = (rows || []).map((r, ri) => '<row r="' + (ri + 1) + '">' + r.map((v, ci) => {
-      const ref = col(ci) + (ri + 1);
-      if (typeof v === 'number' && Number.isFinite(v)) return '<c r="' + ref + '"><v>' + v + '</v></c>';
+    const cell = (v, ref, bold) => {
       if (v === null || v === undefined || v === '') return '';
-      return '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + esc(v) + '</t></is></c>';
-    }).join('') + '</row>').join('');
+      if (typeof v === 'object' && v.date !== undefined) return '<c r="' + ref + '" s="1"><v>' + (v.date + 25569) + '</v></c>';
+      if (typeof v === 'object' && v.bold !== undefined) return cell(v.bold, ref, true);
+      if (typeof v === 'number' && Number.isFinite(v)) return '<c r="' + ref + '"' + (bold ? ' s="2"' : '') + '><v>' + v + '</v></c>';
+      return '<c r="' + ref + '" t="inlineStr"' + (bold ? ' s="2"' : '') + '><is><t xml:space="preserve">' + esc(v) + '</t></is></c>';
+    };
+    const sheetXml = (sh) => {
+      const cols = (sh.widths || []).length ? '<cols>' + sh.widths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>' : '';
+      const rows = (sh.rows || []).map((r, ri) => '<row r="' + (ri + 1) + '">' + r.map((v, ci) => cell(v, col(ci) + (ri + 1), sh.header && ri === 0)).join('') + '</row>').join('');
+      const freeze = sh.header ? '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' : '';
+      return XML + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' + freeze + cols + '<sheetData>' + rows + '</sheetData></worksheet>';
+    };
+    const list = sheets.length ? sheets : [{ name: 'Лист1', rows: [] }];
     return zip([
-      { name: '[Content_Types].xml', text: XML + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>' },
+      { name: '[Content_Types].xml', text: XML + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + list.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '</Types>' },
       { name: '_rels/.rels', text: RELS.replace('%T', 'xl/workbook.xml') },
-      { name: 'xl/workbook.xml', text: XML + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + esc((sheetName || 'Лист1').slice(0, 31)) + '" sheetId="1" r:id="rId1"/></sheets></workbook>' },
-      { name: 'xl/_rels/workbook.xml.rels', text: XML + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>' },
-      { name: 'xl/worksheets/sheet1.xml', text: XML + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + cells + '</sheetData></worksheet>' },
+      { name: 'xl/workbook.xml', text: XML + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + list.map((sh, i) => '<sheet name="' + esc(String(sh.name || 'Лист' + (i + 1)).replace(/[\\/?*[\]:]/g, ' ').slice(0, 31)) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets></workbook>' },
+      { name: 'xl/_rels/workbook.xml.rels', text: XML + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + list.map((_, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('') + '<Relationship Id="rId' + (list.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { name: 'xl/styles.xml', text: XML + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>' },
+      ...list.map((sh, i) => ({ name: 'xl/worksheets/sheet' + (i + 1) + '.xml', text: sheetXml(sh) })),
     ]);
   }
 
-  const api = { zip, crc32, docx, xlsx };
+  /** Таблица Excel: один лист; [rows] — строки текста/чисел (необязательно). */
+  function xlsx(rows, sheetName) { return book([{ name: sheetName || 'Лист1', rows: rows || [] }]); }
+
+  const api = { zip, crc32, docx, xlsx, book };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabOffice = api;
 })(typeof window !== 'undefined' ? window : globalThis);
