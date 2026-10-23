@@ -47,8 +47,13 @@ def test_disk_allowed_only_for_journal(app):
     csp = client.get('/admin/prorab').headers['Content-Security-Policy']
     assert "connect-src 'self' https://cloud-api.yandex.net" in csp
     assert "script-src 'self';" in csp
+    # Место объекта по адресу и «Где я сейчас» — только в журнале
+    assert 'https://nominatim.openstreetmap.org' in csp and 'https://geocoding-api.open-meteo.com' in csp
+    assert 'geolocation=(self)' in client.get('/admin/prorab').headers['Permissions-Policy']
     other = client.get('/admin').headers['Content-Security-Policy']
     assert 'yandex' not in other.split('connect-src')[1].split(';')[0]
+    assert 'openstreetmap' not in other
+    assert 'geolocation=()' in client.get('/admin').headers['Permissions-Policy']
     assert 'href="/admin/prorab"' in client.get('/admin').get_data(as_text=True)
 
 
@@ -104,3 +109,18 @@ def test_owner_pins_desktop_folder_for_everyone(app):
     with other.session_transaction() as s:
         t2 = s.get('csrf', '')
     assert other.post('/admin/prorab/root', data={'csrf_token': t2, 'root': '/Чужое'}).status_code == 403
+
+
+def test_drawing_viewer_files_are_served(app):
+    """Чертежи: разбор DXF, просмотр и pdf.js (Mozilla) — свои файлы сайта, без сторонних адресов."""
+    client = app.test_client()
+    login(client, 1)
+    html = client.get('/admin/prorab').get_data(as_text=True)
+    for name in ('catalog.js', 'dxf.js', 'viewer.js'):
+        assert f'src="/static/prorab/{name}?v=' in html
+        assert client.get(f'/static/prorab/{name}').status_code == 200
+    assert 'data-pdfjs="/static/prorab/vendor/pdf.min.js?v=' in html
+    for name in ('pdf.min.js', 'pdf.worker.min.js'):
+        r = client.get(f'/static/prorab/vendor/{name}')
+        assert r.status_code == 200 and 'javascript' in r.mimetype
+        assert b'sourceMappingURL' not in r.data

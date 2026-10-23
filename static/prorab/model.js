@@ -15,6 +15,9 @@
     ['RENTAL', 'Аренда техники'], ['DELIVERY', 'Доставка / вывоз техники'], ['IDLE', 'Оплачиваемый простой техники'], ['OTHER', 'Иное'],
   ];
   const TYPES = [['EXPENSE', 'Расход'], ['TRANSFER', 'Перевод'], ['INCOME', 'Поступление']];
+  const CARD_FIELDS = ['name', 'address', 'customer', 'supervisor', 'contractor', 'startDate', 'deadline', 'lat', 'lon', 'place'];
+  /** Статусы пометок на чертеже: код, название, цвет (как в приложении). */
+  const NOTE_STATUS = [['NOTE', 'Замечание', '#ff9500'], ['PROBLEM', 'Проблема', '#ff3b30'], ['DONE', 'Сделано', '#34c759']];
   const AUTO = ['rw:', 'rx:', 'rf:'];
   const isAutoExpense = (id) => AUTO.some((p) => String(id).startsWith(p));
   const taskCallPrefix = (taskId) => 'task:' + taskId + ':';
@@ -309,6 +312,97 @@
     }
     deleteRemark(id) { this.del('remarks', id); }
 
+    // ───────── карточка объекта ─────────
+    /** Меняет только переданные и действительно изменённые поля (правки коллег в других полях не затираются). */
+    saveCard(changes) {
+      const cur = this.project;
+      const out = {};
+      for (const k of CARD_FIELDS) {
+        if (!(k in changes)) continue;
+        let v = changes[k];
+        if (typeof v === 'string') v = v.trim();
+        if (v === undefined) v = null;
+        const was = cur[k] === undefined ? null : cur[k];
+        if (v !== was) out[k] = v;
+      }
+      if (Object.keys(out).length) this.put('projects', this.projectId, out);
+      return out;
+    }
+    /** Свои поля карточки (для шаблонов документов): по порядку. */
+    fields() { return this.rows('project_fields').sort((a, b) => (a.position || 0) - (b.position || 0) || String(a.name).localeCompare(String(b.name), 'ru')); }
+    saveField(f) {
+      const id = f.id || S.newId();
+      const changes = { projectId: this.projectId, name: String(f.name || '').trim(), value: String(f.value || ''), deleted: 0 };
+      if (!f.id) changes.position = this.rows('project_fields', true).reduce((m, r) => Math.max(m, (r.position || 0) + 1), 0);
+      const old = f.id ? this.get('project_fields', id) : null;
+      if (old && old.name === changes.name && old.value === changes.value) return old;
+      return this.put('project_fields', id, changes);
+    }
+    deleteField(id) { this.del('project_fields', id); }
+
+    // ───────── справочники ─────────
+    contractors() { return this.rows('contractors').sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru', { sensitivity: 'base' })); }
+    saveContractor(c) {
+      const name = String(c.name || '').trim();
+      if (!name) throw new Error('Укажите имя или организацию');
+      return this.put('contractors', c.id || S.newId(), {
+        projectId: this.projectId, name, specialty: String(c.specialty || '').trim(), phone: String(c.phone || '').trim(),
+        email: String(c.email || '').trim(), note: String(c.note || '').trim(), deleted: 0,
+      });
+    }
+    deleteContractor(id) { this.del('contractors', id); }
+    named(table) { return this.rows(table).sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru', { sensitivity: 'base' })); }
+    renameNamed(table, id, name) {
+      const n = String(name || '').trim();
+      if (!n) throw new Error('Название не может быть пустым');
+      return this.put(table, id, { name: n });
+    }
+    deleteNamed(table, id) { this.del(table, id); }
+    /** Добавить из каталога то, чего ещё нет (без учёта регистра). Возвращает, сколько добавлено. */
+    addMany(table, names) {
+      let n = 0;
+      for (const name of names) {
+        const before = this.rows(table).length;
+        this.addNamed(table, name);
+        if (this.rows(table).length > before) n++;
+      }
+      return n;
+    }
+
+    // ───────── чертежи ─────────
+    drawings() { return this.rows('drawings').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }
+    /** Чертёж: файл уже лежит в «<объект>/files/<file>» (имя <id>.pdf или <id>.dxf — как у телефона). */
+    addDrawing(d) {
+      if (d.kind !== 'pdf' && d.kind !== 'dxf') throw new Error('Чертёж — PDF или DXF');
+      return this.put('drawings', d.id, { projectId: this.projectId, name: String(d.name || '').trim() || 'Чертёж', kind: d.kind, file: d.file, pages: Math.max(1, d.pages || 1), deleted: 0 });
+    }
+    renameDrawing(id, name) { return this.put('drawings', id, { name: String(name || '').trim() || 'Чертёж' }); }
+    deleteDrawing(id) { this.del('drawings', id); }
+    notesOf(drawingId) { return this.rows('drawing_notes').filter((n) => n.drawingId === drawingId).sort((a, b) => (a.number || 0) - (b.number || 0)); }
+    /** Пометка на чертеже. Новая — следующий номер на этом чертеже (с учётом удалённых, как в телефоне). */
+    saveNote(n) {
+      const status = NOTE_STATUS.some(([k]) => k === n.status) ? n.status : 'NOTE';
+      const changes = {
+        text: String(n.text || '').trim(), status, contractorId: n.contractorId || null, dueDate: n.dueDate || null,
+        doneDate: status === 'DONE' ? n.doneDate || null : null,
+      };
+      if (n.id && this.get('drawing_notes', n.id)) return this.put('drawing_notes', n.id, changes);
+      const number = this.rows('drawing_notes', true).filter((x) => x.drawingId === n.drawingId).reduce((m, x) => Math.max(m, x.number || 0), 0) + 1;
+      return this.put('drawing_notes', n.id || S.newId(), Object.assign(changes, {
+        projectId: this.projectId, drawingId: n.drawingId, page: n.page || 0, x: n.x, y: n.y, number, viewId: n.viewId || null, deleted: 0,
+      }));
+    }
+    deleteNote(id) { this.del('drawing_notes', id); }
+    viewsOf(drawingId) { return this.rows('drawing_views').filter((v) => v.drawingId === drawingId).sort((a, b) => (a.position || 0) - (b.position || 0) || (a.createdAt || 0) - (b.createdAt || 0)); }
+    /** Вид чертежа: лист PDF или набор скрытых слоёв DXF, плюс место (центр в настоящих координатах) и ширина. */
+    saveView(v) {
+      const changes = { name: String(v.name || '').trim() || 'Вид', page: v.page || 0, hiddenLayers: v.hiddenLayers === undefined ? null : v.hiddenLayers, cx: v.cx, cy: v.cy, span: v.span };
+      if (v.id && this.get('drawing_views', v.id)) return this.put('drawing_views', v.id, changes);
+      const position = this.rows('drawing_views').filter((x) => x.drawingId === v.drawingId).reduce((m, x) => Math.max(m, (x.position || 0) + 1), 0);
+      return this.put('drawing_views', v.id || S.newId(), Object.assign(changes, { projectId: this.projectId, drawingId: v.drawingId, position, rotation: 0, deleted: 0 }));
+    }
+    deleteView(id) { this.del('drawing_views', id); }
+
     /** Ведомость: позиции с планом, сделанным (сумма записей «Сделано»), процентом, остатком и сроком. */
     boq() {
       const names = this.names();
@@ -393,7 +487,7 @@
     }
   }
 
-  const api = { Project, CATEGORIES, TYPES, isAutoExpense, taskCallPrefix, crewDayId, hm, equipmentTitle, eveningBefore };
+  const api = { Project, CATEGORIES, TYPES, NOTE_STATUS, isAutoExpense, taskCallPrefix, crewDayId, hm, equipmentTitle, eveningBefore };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);

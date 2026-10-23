@@ -50,6 +50,17 @@
       return out;
     }
 
+    /** Файл целиком (ArrayBuffer) или null, если его нет. */
+    async getBytes(path) {
+      const r = await this.call('GET', '/resources/download', { path: diskPath(path) });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new DiskError('Не удалось скачать ' + path.split('/').pop() + ' (' + r.status + ')', r.status);
+      const { href } = await r.json();
+      const d = await fetch(href);
+      if (!d.ok) throw new DiskError('Не удалось скачать ' + path.split('/').pop() + ' (' + d.status + ')', d.status);
+      return d.arrayBuffer();
+    }
+
     async getText(path) {
       const r = await this.call('GET', '/resources/download', { path: diskPath(path) });
       if (r.status === 404) return null;
@@ -107,6 +118,11 @@
   /** Открыть на сайте Диска: папку — в списке, документ — в Яндекс Документах для правки. */
   const webFolder = (p) => 'https://disk.yandex.ru/client/disk' + normalize(p).split('/').map(encodeURIComponent).join('/');
   const webEdit = (p) => 'https://disk.yandex.ru/edit/disk/' + encodeURIComponent('disk' + normalize(p));
+  /** Файл в просмотрщике Яндекс Диска (фото листаются, видео играет): папка файла + окно просмотра. */
+  const webView = (p) => {
+    const full = normalize(p);
+    return webFolder(full.slice(0, full.lastIndexOf('/')) || '/') + '?idApp=client&dialog=slider&idDialog=' + encodeURIComponent('/disk' + full);
+  };
 
-  root.ProrabDisk = { Disk, DiskError, normalize, webFolder, webEdit };
+  root.ProrabDisk = { Disk, DiskError, normalize, webFolder, webEdit, webView };
 })(window);

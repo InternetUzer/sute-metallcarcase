@@ -171,3 +171,31 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 
 .pp-shortcut { position: relative; }
 .pp-shortcut::after { content: "↗"; position: absolute; right: -6px; bottom: -2px; font-size: 13px; background: #fff; color: #0a66d8; border-radius: 4px; padding: 0 2px; line-height: 1.1; }
+
+/* карточка, справочники, чертежи */
+.pp-hidden { display: none; }
+.pp-catalog { max-height: 55vh; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.pp-catalog h3 { margin: 12px 0 4px; }
+.pp-check { display: flex; align-items: center; gap: 6px; }
+.pp-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--pp-line); }
+.pp-line.pp-sub { padding-left: 28px; }
+.pp-line.pp-drawing > strong { align-self: center; }
+.pp-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: #ff9500; }
+.pp-dot-PROBLEM { background: #ff3b30; }
+.pp-dot-DONE { background: #34c759; }
+.pp-winbody.pp-winbody-plan { padding: 0; overflow: hidden; display: flex; }
+.pp-planwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; height: 100%; }
+.pp-plan-bar { padding: 6px 8px; border-bottom: 1px solid var(--pp-line); background: var(--pp-card); gap: 6px; align-items: center; }
+.pp-plan-bar select { width: auto; max-width: 220px; padding: 6px 8px; }
+.pp-plan-bar small { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-plan-main { flex: 1; display: flex; min-height: 0; }
+.pp-plan { flex: 1; position: relative; min-width: 0; overflow: hidden; touch-action: none; }
+.pp-plan-canvas { position: absolute; inset: 0; display: block; cursor: grab; }
+.pp-plan-side { width: 260px; flex: none; overflow: auto; padding: 8px 10px; border-left: 1px solid var(--pp-line); background: var(--pp-card); }
+.pp-plan-side h3 { margin: 4px 0 8px; }
+.pp-plan-page { min-width: 52px; text-align: center; }
+@media (max-width: 720px) {
+  .pp-plan-main { flex-direction: column; }
+  .pp-plan { min-height: 320px; }
+  .pp-plan-side { width: auto; max-height: 34vh; border-left: 0; border-top: 1px solid var(--pp-line); }
+}

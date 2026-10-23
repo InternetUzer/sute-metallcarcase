@@ -420,6 +420,7 @@
       projects = (projects || []).concat([{ path, name }]).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
       setStatus('Создан объект «' + name + '». В телефоне: «Открыть из облака» → папка ' + path);
       openWindow('project', path);
+      withCtx(path, (c) => cardForm(c, { title: 'Новый объект — карточка', note: 'Заполните, что знаете: адрес, участников, сроки. Остальное можно дописать позже. Чертежи — в окне объекта «Чертежи».' }));
     } catch (e) { alert(e.message); }
   }
 
@@ -432,10 +433,14 @@
     finance: { title: 'Финансы', icon: '💰', view: (w, c) => financeView(w, c) },
     machines: { title: 'Техника и бригады', icon: '🚜', view: (w, c) => machinesView(w, c) },
     explorer: { title: 'Документы', icon: '🗂️', view: (w) => explorerView(w) },
+    card: { title: 'Карточка объекта', icon: '🪪', view: (w, c) => cardView(w, c) },
+    dirs: { title: 'Справочники', icon: '📇', view: (w, c) => dirsView(w, c) },
+    drawings: { title: 'Чертежи', icon: '📐', view: (w, c) => drawingsView(w, c) },
+    drawing: { title: 'Чертёж', icon: '📐', view: (w, c) => drawingView(w, c) },
     project: { title: 'Объект', icon: '🏗️', view: (w, c) => projectView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['journal', 'calendar', 'boq', 'remarks', 'finance', 'machines', 'explorer'];
+  const PROJECT_APPS = ['card', 'journal', 'calendar', 'boq', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -461,13 +466,14 @@
     render();
     return w;
   }
-  const closeWindow = (w) => { wins = wins.filter((x) => x !== w); if (w.folder && ctxs[w.folder]) save(ctxs[w.folder]); render(); };
+  const closeWindow = (w) => { if (w.viewer) w.viewer.destroy(); wins = wins.filter((x) => x !== w); if (w.folder && ctxs[w.folder]) save(ctxs[w.folder]); render(); };
   function winTitle(w) {
     if (w.kind === 'explorer') {
       const where = w.folder ? projName(w.folder) + ' · ' + DOCS : w.base === HOME ? 'Рабочий стол (' + lastName(ROOT) + ')' : (w.title || lastName(w.base));
       return where + (w.path ? ' › ' + w.path.split('/').join(' › ') : '');
     }
     if (w.kind === 'project') return projName(w.folder);
+    if (w.kind === 'drawing') { const c = ctxs[w.folder]; const d = c && c.project && c.project.get('drawings', w.path); return projName(w.folder) + ' · ' + (d ? d.name : 'Чертёж'); }
     if (w.kind === 'picker') return w.mode === 'root' ? 'Папка рабочего стола' : w.mode === 'link' ? 'Ярлык на папку Диска' : APPS.picker.title;
     return projName(w.folder) + ' · ' + APPS[w.kind].title;
   }
@@ -506,7 +512,7 @@
     if (w.folder && (!c || c.loading) && w.kind !== 'explorer') content = h('p', { class: 'pp-muted' }, 'Загружаю данные объекта…');
     else if (w.folder && c.error && w.kind !== 'explorer') content = h('div', null, h('p', { class: 'pp-error' }, c.error), button('Повторить', () => { delete ctxs[w.folder]; openCtx(w.folder); render(); }));
     else content = APPS[w.kind].view(w, c);
-    const body = h('div', { class: 'pp-winbody' }, content);
+    const body = h('div', { class: 'pp-winbody' + (w.kind === 'drawing' ? ' pp-winbody-plan' : '') }, content);
     if (!w.max) {
       let t = null;
       new ResizeObserver(() => {
@@ -951,6 +957,408 @@
     }, r ? { text: 'Удалить', run: () => { if (!confirm('Удалить замечание №' + r.number + '?')) return false; P.deleteRemark(r.id); } } : null);
   }
 
+  // ───────── карточка объекта ─────────
+  function cardView(w, c) {
+    const P = c.project, p = P.project;
+    const row = (label, value) => h('div', { class: 'pp-line' }, h('span', null, label), h('strong', { class: value ? '' : 'pp-muted' }, value || '—'));
+    const fields = P.fields();
+    return h('main', null,
+      h('div', { class: 'pp-row pp-between pp-wrap' }, h('h2', null, p.name || 'Объект'), button('✎ Изменить карточку', () => cardForm(c), 'pp-primary')),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Объект'), row('Название', p.name), row('Адрес', p.address)),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Участники'), row('Заказчик', p.customer), row('Технадзор', p.supervisor), row('Исполнитель (генподрядчик)', p.contractor),
+        h('small', { class: 'pp-muted' }, 'Подставляются в документы как {ЗАКАЗЧИК}, {ТЕХНАДЗОР}, {ИСПОЛНИТЕЛЬ}.')),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Сроки'), row('Начало работ', p.startDate ? shortDate(p.startDate) : ''), row('Сдача объекта', p.deadline ? shortDate(p.deadline) : ''),
+        p.deadline ? h('small', { class: 'pp-muted' }, p.deadline >= today ? 'До сдачи дней: ' + (p.deadline - today) : 'Срок сдачи прошёл ' + (today - p.deadline) + ' дн. назад') : null),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Погода'), row('Место', p.place ? '📍 ' + p.place : ''),
+        h('small', { class: 'pp-muted' }, 'По месту телефон подставляет погоду в журнал.')),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Свои поля'), fields.length ? fields.map((f) => row(f.name || 'Без названия', f.value)) : h('p', { class: 'pp-muted' }, 'Нет. Например «Номер договора» — в шаблоне документа {НОМЕР ДОГОВОРА}.')),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Папка на Диске'), h('div', { class: 'pp-row pp-between pp-wrap' }, h('span', null, w.folder),
+        button('Открыть на Диске', () => window.open(D.webFolder(w.folder), '_blank', 'noopener')))));
+  }
+
+  /** Найти место по адресу: OpenStreetMap, затем город (Open-Meteo) — как в телефоне. */
+  async function geocode(address) {
+    const q = String(address || '').trim();
+    if (!q) return null;
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({ q, format: 'json', limit: '1', 'accept-language': 'ru' }));
+      const j = r.ok ? await r.json() : [];
+      if (j[0] && Number.isFinite(parseFloat(j[0].lat))) return { lat: parseFloat(j[0].lat), lon: parseFloat(j[0].lon), label: String(j[0].display_name || '').split(',').slice(0, 3).join(',').trim() };
+    } catch (e) { /* попробуем по городу */ }
+    const parts = q.split(/[,;]/).map((s) => s.trim().replace(/^(г\.?|город|пос\.?|пгт|с\.|д\.)\s*/i, '')).filter((s) => s.length >= 2 && !/\d/.test(s));
+    for (const part of parts) {
+      try {
+        const r = await fetch('https://geocoding-api.open-meteo.com/v1/search?' + new URLSearchParams({ name: part, count: '1', language: 'ru' }));
+        const o = r.ok ? ((await r.json()).results || [])[0] : null;
+        if (o) return { lat: o.latitude, lon: o.longitude, label: [o.name, o.admin1].filter(Boolean).join(', ') };
+      } catch (e) { /* следующая часть адреса */ }
+    }
+    return null;
+  }
+
+  function cardForm(c, opts) {
+    opts = opts || {};
+    const P = c.project, p = P.project;
+    const input = (v, ph) => h('input', { value: v || '', placeholder: ph || '' });
+    const name = input(p.name), address = h('textarea', { rows: 2 }, p.address || '');
+    const customer = input(p.customer), supervisor = input(p.supervisor), contractor = input(p.contractor);
+    const start = h('input', { type: 'date', value: p.startDate ? dayToInput(p.startDate) : '' });
+    const deadline = h('input', { type: 'date', value: p.deadline ? dayToInput(p.deadline) : '' });
+    let place = { lat: p.lat, lon: p.lon, label: p.place };
+    const placeText = h('strong', null);
+    const showPlace = (msg) => { placeText.textContent = msg || (place.label ? '📍 ' + place.label : 'Место не задано'); };
+    showPlace();
+    const byAddress = button('По адресу', async () => {
+      showPlace('Ищу место…');
+      const r = await geocode(address.value);
+      if (!r) { showPlace(); alert('Не нашёл это место. Проверьте адрес или нажмите «Где я сейчас».'); return; }
+      place = r; showPlace();
+    });
+    const here = button('Где я сейчас', () => {
+      if (!navigator.geolocation) return alert('Браузер не умеет определять место');
+      showPlace('Определяю место…');
+      navigator.geolocation.getCurrentPosition((pos) => {
+        place = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: 'Место ' + pos.coords.latitude.toFixed(4) + ', ' + pos.coords.longitude.toFixed(4) };
+        showPlace();
+      }, () => { showPlace(); alert('Браузер не дал определить место'); }, { timeout: 15000 });
+    });
+    // Свои поля: правка, добавление, удаление — применяются при «Сохранить»
+    const rows = P.fields().map((f) => ({ id: f.id, name: f.name, value: f.value, gone: false }));
+    const list = h('div', { class: 'pp-list' });
+    const drawFields = () => {
+      list.replaceChildren(...rows.filter((r) => !r.gone).map((r) => {
+        const n = h('input', { value: r.name, placeholder: 'Название поля' });
+        const v = h('input', { value: r.value, placeholder: 'Значение' });
+        n.addEventListener('input', () => { r.name = n.value; });
+        v.addEventListener('input', () => { r.value = v.value; });
+        return h('div', { class: 'pp-row' }, n, v, button('✕', () => { r.gone = true; drawFields(); }, 'pp-icon', 'Удалить поле'));
+      }));
+    };
+    drawFields();
+    modal(c, opts.title || 'Карточка объекта', h('div', null,
+      opts.note ? h('p', { class: 'pp-muted' }, opts.note) : null,
+      field('Название', name), field('Адрес', address),
+      h('h3', null, 'Участники'),
+      field('Заказчик', customer), field('Технадзор', supervisor), field('Исполнитель (генподрядчик)', contractor),
+      h('h3', null, 'Сроки'), h('div', { class: 'pp-row pp-wrap' }, field('Начало работ', start), field('Сдача объекта', deadline)),
+      h('h3', null, 'Погода'), h('div', { class: 'pp-row pp-wrap pp-between' }, placeText, h('div', { class: 'pp-row' }, byAddress, here)),
+      h('small', { class: 'pp-muted' }, 'Погода по дням подставляется в журнал на телефоне (сервис Open-Meteo). Место достаточно указать один раз.'),
+      h('h3', null, 'Свои поля'), list,
+      button('+ Добавить поле', () => { rows.push({ id: null, name: '', value: '', gone: false }); drawFields(); }),
+      h('small', { class: 'pp-muted' }, 'Например «Номер договора». В шаблоне документа метка — название поля в фигурных скобках: {НОМЕР ДОГОВОРА}.')), () => {
+      if (!name.value.trim()) bad('Укажите название объекта');
+      const s = start.value ? inputToDay(start.value) : null, dl = deadline.value ? inputToDay(deadline.value) : null;
+      if (s !== null && dl !== null && dl < s) bad('Сдача объекта раньше начала работ');
+      P.saveCard({
+        name: name.value, address: address.value, customer: customer.value, supervisor: supervisor.value, contractor: contractor.value,
+        startDate: s, deadline: dl, lat: place.lat === undefined ? null : place.lat, lon: place.lon === undefined ? null : place.lon, place: place.label || null,
+      });
+      rows.forEach((r) => {
+        if (r.gone) { if (r.id) P.deleteField(r.id); return; }
+        if (!r.id && !r.name.trim() && !r.value.trim()) return;
+        P.saveField(r);
+      });
+      const names = store.json('names', {}); names[c.path] = P.project.name; store.set('names', JSON.stringify(names));
+      if (projects) projects.forEach((x) => { if (x.path === c.path) x.name = P.project.name; });
+    });
+  }
+
+  // ───────── справочники ─────────
+  const CATALOG = window.PRORAB_CATALOG || { work: [], units: [] };
+  function dirsView(w, c) {
+    const P = c.project;
+    w.tab = w.tab || 'contractors';
+    const tabs = [['contractors', 'Исполнители'], ['work_types', 'Виды работ'], ['units', 'Единицы']];
+    let body;
+    if (w.tab === 'contractors') {
+      const list = P.contractors();
+      body = h('section', { class: 'pp-card' },
+        h('div', { class: 'pp-row pp-between' }, h('h3', null, 'Исполнители'), button('+ Исполнитель', () => contractorForm(c, null), 'pp-primary')),
+        list.length ? list.map((x) => h('button', { type: 'button', class: 'pp-line', onclick: () => contractorForm(c, x) },
+          h('span', null, x.name || 'Без имени'), h('small', null, [x.specialty, x.phone, x.email].filter(Boolean).join(' · ')))) : h('p', { class: 'pp-muted' }, 'Пока никого нет.'),
+        h('small', { class: 'pp-muted' }, 'Бригады, субподрядчики, поставщики. Нажмите, чтобы изменить.'));
+    } else {
+      const table = w.tab, isWork = table === 'work_types';
+      const list = P.named(table);
+      body = h('section', { class: 'pp-card' },
+        h('div', { class: 'pp-row pp-between pp-wrap' }, h('h3', null, isWork ? 'Виды работ' : 'Единицы измерения'),
+          h('div', { class: 'pp-row' }, button('Из каталога', () => catalogDialog(c, table)), button(isWork ? '+ Вид работ' : '+ Единица', () => namedForm(c, table, null), 'pp-primary'))),
+        list.length ? list.map((x) => h('button', { type: 'button', class: 'pp-line', onclick: () => namedForm(c, table, x) }, h('span', null, x.name))) : h('p', { class: 'pp-muted' }, 'Пусто.'),
+        isWork ? h('small', { class: 'pp-muted' }, 'Например «Монтаж бытовок», «Кладка стен 1 этажа». Используются в журнале и финансах.') : null);
+    }
+    return h('main', null, h('div', { class: 'pp-tabs' }, tabs.map(([k, t]) => h('button', { type: 'button', class: 'pp-tab' + (w.tab === k ? ' pp-active' : ''), onclick: () => { w.tab = k; render(); } }, t))), body);
+  }
+
+  function contractorForm(c, x) {
+    const P = c.project;
+    const inp = (v, attrs) => h('input', Object.assign({ value: v || '' }, attrs || {}));
+    const name = inp(x && x.name), spec = inp(x && x.specialty), phone = inp(x && x.phone, { type: 'tel' }), email = inp(x && x.email, { type: 'email' });
+    const note = h('textarea', { rows: 2 }, (x && x.note) || '');
+    modal(c, x ? 'Исполнитель' : 'Новый исполнитель', h('div', null,
+      field('Имя / организация', name), field('Специализация', spec), h('div', { class: 'pp-row pp-wrap' }, field('Телефон', phone), field('Почта', email)), field('Заметка', note)), () => {
+      P.saveContractor({ id: x ? x.id : null, name: name.value, specialty: spec.value, phone: phone.value, email: email.value, note: note.value });
+    }, x ? { text: 'Удалить', run: () => { if (!confirm('Удалить исполнителя? Старые записи журнала и финансов сохранятся, но без имени исполнителя.')) return false; P.deleteContractor(x.id); } } : null);
+  }
+
+  function namedForm(c, table, x) {
+    const P = c.project;
+    const name = h('input', { value: x ? x.name : '' });
+    const what = table === 'units' ? 'Единица измерения' : 'Вид работ';
+    modal(c, x ? what : (table === 'units' ? 'Новая единица' : 'Новый вид работ'), field('Название', name), () => {
+      if (x) P.renameNamed(table, x.id, name.value);
+      else if (!P.addNamed(table, name.value)) bad('Укажите название');
+    }, x ? { text: 'Удалить', run: () => { if (!confirm('Удалить «' + x.name + '»?')) return false; P.deleteNamed(table, x.id); } } : null);
+  }
+
+  function catalogDialog(c, table) {
+    const P = c.project;
+    const have = new Set(P.rows(table).map((r) => String(r.name || '').trim().toLowerCase()));
+    const groups = table === 'units' ? [[null, CATALOG.units]] : CATALOG.work;
+    const boxes = [];
+    const body = h('div', { class: 'pp-catalog' }, groups.map(([g, names]) => h('div', null, g ? h('h3', null, g) : null,
+      names.map((n) => {
+        const b = h('input', { type: 'checkbox' });
+        if (have.has(n.toLowerCase())) { b.checked = true; b.disabled = true; } else boxes.push([b, n]);
+        return h('label', { class: 'pp-check' }, b, ' ' + n + (b.disabled ? ' — уже есть' : ''));
+      }))));
+    modal(c, table === 'units' ? 'Единицы из каталога' : 'Виды работ из каталога', body, () => {
+      const pick = boxes.filter(([b]) => b.checked).map(([, n]) => n);
+      if (!pick.length) bad('Отметьте, что добавить');
+      setStatus('Добавлено: ' + P.addMany(table, pick));
+    });
+  }
+
+  // ───────── чертежи ─────────
+  const NOTE_NAMES = Object.fromEntries(M.NOTE_STATUS.map(([k, t]) => [k, t]));
+  function drawingsView(w, c) {
+    const P = c.project;
+    const list = P.drawings();
+    const notes = P.rows('drawing_notes');
+    const pick = h('input', { type: 'file', accept: '.pdf,.dxf,.dwg,application/pdf', multiple: true, class: 'pp-hidden' });
+    pick.addEventListener('change', async () => { const files = Array.from(pick.files); pick.value = ''; for (const f of files) await addDrawing(c, f); });
+    const problems = notes.filter((n) => n.status === 'PROBLEM');
+    const names = Object.fromEntries(list.map((d) => [d.id, d.name]));
+    return h('main', null,
+      h('div', { class: 'pp-row pp-between pp-wrap' }, h('p', { class: 'pp-muted' }, 'PDF и DXF открываются прямо здесь, с пометками. DWG добавляйте с телефона (он переводит DWG в DXF) или сохраните чертёж как PDF/DXF.'),
+        button(w.busy ? 'Загружаю…' : '+ Добавить чертёж', () => { if (!w.busy) pick.click(); }, 'pp-primary'), pick),
+      list.length ? h('section', { class: 'pp-card' }, list.map((d) => {
+        const ns = notes.filter((n) => n.drawingId === d.id);
+        const views = P.viewsOf(d.id);
+        return h('div', null,
+          h('div', { class: 'pp-line pp-drawing' },
+            h('span', null, h('button', { type: 'button', class: 'pp-link', onclick: () => openDrawing(c, d.id) }, (d.kind === 'pdf' ? '📕 ' : '📐 ') + (d.name || 'Чертёж'))),
+            h('small', null, [d.kind === 'pdf' ? 'PDF' + (d.pages > 1 ? ', листов: ' + d.pages : '') : 'DXF', ns.length ? 'пометок: ' + ns.length : '',
+              ns.filter((n) => n.status === 'PROBLEM').length ? 'проблем: ' + ns.filter((n) => n.status === 'PROBLEM').length : '',
+              ns.filter((n) => n.status === 'NOTE').length ? 'замечаний: ' + ns.filter((n) => n.status === 'NOTE').length : ''].filter(Boolean).join(' · ')),
+            h('strong', null, h('span', { class: 'pp-row' }, button('Открыть', () => openDrawing(c, d.id)), button('⋯', (e) => drawingMenu(e.clientX, e.clientY, c, d), 'pp-icon', 'Ещё')))),
+          views.map((v) => h('button', { type: 'button', class: 'pp-line pp-sub', onclick: () => openDrawing(c, d.id, { viewId: v.id }) },
+            h('span', null, '📍 ' + (v.name || 'Вид')), h('small', null, d.kind === 'pdf' ? 'лист ' + ((v.page || 0) + 1) : 'свои слои'))));
+      })) : h('p', { class: 'pp-card pp-muted' }, 'Чертежей пока нет. Нажмите «+ Добавить чертёж».'),
+      problems.length ? h('section', { class: 'pp-card' }, h('h3', null, 'Проблемы (' + problems.length + ')'),
+        problems.slice(0, 50).map((n) => h('button', { type: 'button', class: 'pp-line', onclick: () => openDrawing(c, n.drawingId, { noteId: n.id }) },
+          h('span', null, '№' + n.number + '. ' + (n.text || 'Без текста')), h('small', null, names[n.drawingId] || '')))) : null);
+  }
+
+  function drawingMenu(x, y, c, d) {
+    const P = c.project;
+    popup(x, y, [
+      ['Открыть', () => openDrawing(c, d.id)],
+      ['Переименовать', () => { const n = (prompt('Название чертежа', d.name) || '').trim(); if (n) { P.renameDrawing(d.id, n); changed(c); } }],
+      ['Скачать файл', async () => { try { window.open(await disk.downloadHref(c.path + '/files/' + d.file), '_blank', 'noopener'); } catch (e) { alert(e.message); } }],
+      ['-'],
+      ['Удалить чертёж', () => { if (!confirm('Удалить чертёж «' + d.name + '» из объекта?')) return; P.deleteDrawing(d.id); changed(c); }],
+    ]);
+  }
+
+  // pdf.js (Mozilla) — загружается только при открытии PDF
+  let pdfjs = null;
+  function loadPdfJs() {
+    if (!pdfjs) {
+      pdfjs = import(app.dataset.pdfjs || '/static/prorab/vendor/pdf.min.js').then((m) => {
+        m.GlobalWorkerOptions.workerSrc = app.dataset.pdfjsWorker || '/static/prorab/vendor/pdf.worker.min.js';
+        return m;
+      }, (e) => { pdfjs = null; throw new Error('Не загрузился модуль просмотра PDF: ' + e.message); });
+    }
+    return pdfjs;
+  }
+  async function openPdf(bytes) {
+    const m = await loadPdfJs();
+    return m.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  }
+
+  async function addDrawing(c, file) {
+    const P = c.project;
+    const w = wins.find((x) => x.kind === 'drawings' && x.folder === c.path);
+    try {
+      if (w) { w.busy = true; render(); }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const kind = window.ProrabDxf.kindOf(file.name, bytes);
+      if (kind === 'dwg') throw new Error('DWG в браузере не открыть. Добавьте его с телефона (он переводит DWG в DXF) или сохраните чертёж как PDF или DXF.');
+      if (kind !== 'pdf' && kind !== 'dxf') throw new Error('Не понял тип файла. Поддерживаются PDF и DXF.');
+      let pages = 1;
+      setStatus('Проверяю чертёж ' + file.name + '…');
+      if (kind === 'pdf') { const doc = await openPdf(bytes.slice()); pages = doc.numPages; doc.destroy(); } else window.ProrabDxf.parse(bytes);
+      const id = S.newId(), name = file.name.replace(/\.[^.]+$/, '');
+      const target = c.path + '/files/' + id + '.' + kind;
+      setStatus('Загружаю ' + file.name + ' на Диск…');
+      await disk.mkdir(c.path + '/files');
+      await disk.putBlob(target, file, false);
+      bytesCache[target] = Promise.resolve(bytes.buffer);
+      P.addDrawing({ id, name, kind, file: id + '.' + kind, pages });
+      changed(c);
+      setStatus('Чертёж «' + name + '» добавлен — придёт на телефон при синхронизации');
+      openDrawing(c, id);
+    } catch (e) { alert(file.name + ': ' + e.message); setStatus(''); }
+    finally { if (w) { w.busy = false; render(); } }
+  }
+
+  const bytesCache = {};
+  function fileBytes(path) {
+    if (!bytesCache[path]) bytesCache[path] = disk.getBytes(path).then((b) => { if (!b) throw new Error('Файла чертежа ещё нет на Диске — синхронизируйте телефон, с которого его добавили.'); return b; }).catch((e) => { delete bytesCache[path]; throw e; });
+    return bytesCache[path];
+  }
+
+  function openDrawing(c, id, opts) {
+    const w = openWindow('drawing', c.path, { path: id });
+    opts = opts || {};
+    if (opts.noteId) { w.focusNote = opts.noteId; if (w.viewer) { const n = c.project.get('drawing_notes', opts.noteId); if (n) w.viewer.focus(n); } }
+    if (opts.viewId) { w.pendingView = opts.viewId; if (w.viewer) applyPlanView(w, c, opts.viewId); }
+    return w;
+  }
+
+  function applyPlanView(w, c, viewId) {
+    const v = viewId ? c.project.get('drawing_views', viewId) : null;
+    w.viewId = v ? v.id : null;
+    if (w.dxf) {
+      w.hidden = new Set(v && v.hiddenLayers !== null && v.hiddenLayers !== undefined ? String(v.hiddenLayers).split('\n').filter(Boolean) : Object.values(w.dxf.layers).filter((l) => !l.visible).map((l) => l.name));
+      w.viewer.setHidden(w.hidden);
+    }
+    w.viewer.applyView(v || { page: w.viewer.page }).then(() => render());
+  }
+
+  async function loadDrawing(w, c) {
+    const d = c.project.get('drawings', w.path);
+    w.load = { state: 'loading' };
+    try {
+      const buf = await fileBytes(c.path + '/files/' + d.file);
+      if (d.kind === 'pdf') w.pdf = await openPdf(new Uint8Array(buf).slice());
+      else {
+        w.dxf = window.ProrabDxf.parse(new Uint8Array(buf));
+        w.hidden = new Set(Object.values(w.dxf.layers).filter((l) => !l.visible).map((l) => l.name));
+      }
+      w.load = { state: 'ready' };
+    } catch (e) { w.load = { state: 'error', error: e.message }; }
+    if (!modalOpen()) render();
+  }
+
+  function drawingView(w, c) {
+    const P = c.project;
+    const d = P.get('drawings', w.path);
+    if (!d || Number(d.deleted)) return h('p', { class: 'pp-muted' }, 'Чертёж удалён.');
+    if (!w.load) loadDrawing(w, c);
+    if (w.load.state === 'loading') return h('p', { class: 'pp-muted' }, 'Загружаю чертёж с Диска…');
+    if (w.load.state === 'error') return h('div', null, h('p', { class: 'pp-error' }, w.load.error), button('Повторить', () => { w.load = null; render(); }));
+    const notes = P.notesOf(d.id);
+    if (!w.host) {
+      w.host = h('div', { class: 'pp-plan' });
+      w.viewer = window.ProrabViewer.create(w.host, {
+        kind: d.kind, dxf: w.dxf, pdf: w.pdf, hidden: w.hidden, notes,
+        onNote: (id) => noteForm(c, w, { id }),
+        onPlace: (x, y, page) => { w.placing = false; w.viewer.setMode('view'); render(); noteForm(c, w, { x, y, page }); },
+        onError: (e) => { w.load = { state: 'error', error: e.message }; w.viewer.destroy(); w.host = null; w.viewer = null; render(); },
+        onChange: () => { const el = document.querySelector('.pp-win[data-key="' + CSS.escape(w.key) + '"] .pp-plan-page'); if (el && w.viewer) el.textContent = (w.viewer.page + 1) + ' / ' + w.viewer.pageCount; },
+      });
+      if (w.pendingView) { const v = w.pendingView; w.pendingView = null; setTimeout(() => applyPlanView(w, c, v), 0); }
+      if (w.focusNote) { const n = P.get('drawing_notes', w.focusNote); w.focusNote = null; if (n) setTimeout(() => w.viewer.focus(n), 0); }
+    } else w.viewer.setNotes(notes);
+    const views = P.viewsOf(d.id);
+    const viewSel = h('select', { title: 'Сохранённые виды' }, h('option', { value: '' }, 'Весь чертёж'), views.map((v) => h('option', { value: v.id }, v.name || 'Вид')));
+    viewSel.value = w.viewId || '';
+    viewSel.addEventListener('change', () => applyPlanView(w, c, viewSel.value || null));
+    const isPdf = d.kind === 'pdf';
+    const pageBar = isPdf && w.pdf && w.pdf.numPages > 1 ? h('span', { class: 'pp-row' },
+      button('‹', () => w.viewer.setPage(w.viewer.page - 1), 'pp-icon', 'Предыдущий лист'),
+      h('span', { class: 'pp-plan-page' }, (w.viewer.page + 1) + ' / ' + w.pdf.numPages),
+      button('›', () => w.viewer.setPage(w.viewer.page + 1), 'pp-icon', 'Следующий лист')) : null;
+    const side = h('aside', { class: 'pp-plan-side' },
+      h('h3', null, 'Пометки (' + notes.length + ')'),
+      notes.length ? notes.map((n) => h('button', { type: 'button', class: 'pp-line', onclick: () => w.viewer.focus(n), ondblclick: () => noteForm(c, w, { id: n.id }) },
+        h('span', null, h('i', { class: 'pp-dot pp-dot-' + n.status }), '№' + n.number + '. ' + (n.text || 'без текста')),
+        h('small', null, [NOTE_NAMES[n.status], isPdf ? 'лист ' + ((n.page || 0) + 1) : '', n.dueDate ? 'срок ' + shortDate(n.dueDate) : ''].filter(Boolean).join(' · ')))) :
+        h('p', { class: 'pp-muted' }, 'Нажмите «+ Пометка» и щёлкните по месту на чертеже.'),
+      h('small', { class: 'pp-muted' }, 'Щелчок — показать, двойной — изменить.'));
+    return h('div', { class: 'pp-planwrap' },
+      h('div', { class: 'pp-row pp-wrap pp-plan-bar' },
+        button(w.placing ? 'Щёлкните по месту… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
+        button('⤢', () => w.viewer.fit(), 'pp-icon', 'Весь чертёж'), button('−', () => w.viewer.zoom(1 / 1.5), 'pp-icon', 'Дальше'), button('+', () => w.viewer.zoom(1.5), 'pp-icon', 'Ближе'),
+        pageBar, w.dxf ? button('Слои', () => layersDialog(w)) : null,
+        viewSel, button('Сохранить вид', () => saveViewDialog(w, c, d)),
+        w.dxf && w.dxf.warnings.length ? h('small', { class: 'pp-muted', title: w.dxf.warnings.join('\n') }, 'ⓘ ' + w.dxf.warnings[0]) : null),
+      h('div', { class: 'pp-plan-main' }, w.host, side));
+  }
+
+  function layersDialog(w) {
+    const list = Object.values(w.dxf.layers).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    const boxes = list.map((l) => { const b = h('input', { type: 'checkbox' }); b.checked = !w.hidden.has(l.name); return [l, b]; });
+    const apply = () => { w.hidden = new Set(boxes.filter(([, b]) => !b.checked).map(([l]) => l.name)); w.viewer.setHidden(w.hidden); };
+    boxes.forEach(([, b]) => b.addEventListener('change', apply));
+    const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap) wrap.remove(); } },
+      h('div', { class: 'pp-dialog' },
+        h('div', { class: 'pp-row pp-between' }, h('h2', null, 'Слои'), button('✕', () => wrap.remove(), 'pp-icon')),
+        h('div', { class: 'pp-row' }, button('Все', () => { boxes.forEach(([, b]) => { b.checked = true; }); apply(); }), button('Ни одного', () => { boxes.forEach(([, b]) => { b.checked = false; }); apply(); })),
+        h('div', { class: 'pp-catalog' }, boxes.map(([l, b]) => { const sw = h('i', { class: 'pp-swatch' }); sw.style.background = l.color; return h('label', { class: 'pp-check' }, b, sw, ' ' + l.name); })),
+        h('div', { class: 'pp-row pp-between' }, h('small', { class: 'pp-muted' }, 'Набор слоёв можно сохранить: «Сохранить вид».'), button('Готово', () => wrap.remove(), 'pp-primary'))));
+    document.body.append(wrap);
+  }
+
+  function saveViewDialog(w, c, d) {
+    const P = c.project;
+    const cur = w.viewId ? P.get('drawing_views', w.viewId) : null;
+    const name = h('input', { value: cur ? cur.name : '', placeholder: '3 этаж, Кладка…' });
+    const over = h('input', { type: 'checkbox' }); over.checked = !!cur;
+    modal(c, 'Сохранить вид', h('div', null, field('Название', name),
+      cur ? h('label', { class: 'pp-check' }, over, ' Заменить вид «' + cur.name + '» (иначе — новый)') : null,
+      h('p', { class: 'pp-muted' }, 'Запоминается ' + (d.kind === 'pdf' ? 'лист' : 'набор слоёв') + ' и видимая часть. Вид появится в списке чертежей и в телефоне.')), () => {
+      if (!name.value.trim()) bad('Укажите название вида');
+      const v = w.viewer.view();
+      const saved = P.saveView({ id: cur && over.checked ? cur.id : null, drawingId: d.id, name: name.value, page: v.page, cx: v.cx, cy: v.cy, span: v.span,
+        hiddenLayers: w.dxf ? Array.from(w.hidden).join('\n') : null });
+      w.viewId = saved.id;
+    }, cur ? { text: 'Удалить вид', run: () => { if (!confirm('Удалить вид «' + cur.name + '»?')) return false; P.deleteView(cur.id); w.viewId = null; } } : null);
+  }
+
+  function noteForm(c, w, { id, x, y, page }) {
+    const P = c.project;
+    const n = id ? P.get('drawing_notes', id) : null;
+    const noteId = n ? n.id : S.newId();
+    const status = h('select', null, M.NOTE_STATUS.map(([k, t]) => h('option', { value: k }, t)));
+    status.value = n ? n.status : 'NOTE';
+    const text = h('textarea', { rows: 4, placeholder: 'Что не так / что сделать' }, n ? n.text : '');
+    const who = selectAdd(P.contractors().map((r) => ({ id: r.id, name: r.name })), n && n.contractorId, 'Не указан', 'Новый исполнитель', (nm) => P.addNamed('contractors', nm));
+    const due = h('input', { type: 'date', value: n && n.dueDate ? dayToInput(n.dueDate) : '' });
+    const doneDate = h('input', { type: 'date', value: dayToInput(n && n.doneDate ? n.doneDate : today) });
+    const photos = photoBox(c, n ? n.id : null, 'Фото и видео');
+    const after = photoBox(c, n ? n.id + ':done' : null, 'Фото после устранения');
+    const doneBox = h('div', null, field('Дата устранения', doneDate), after.el);
+    const sync = () => { doneBox.style.display = status.value === 'DONE' ? '' : 'none'; };
+    status.addEventListener('change', sync); sync();
+    modal(c, n ? 'Пометка №' + n.number : 'Новая пометка', h('div', null,
+      field('Статус', status), field('Текст', text), h('div', { class: 'pp-row pp-wrap' }, field('Кто устраняет', who), field('Срок устранения', due, 'необязательно')),
+      photos.el, doneBox,
+      n ? h('small', { class: 'pp-muted' }, 'Создана ' + shortDate(Math.floor(((n.createdAt || 0) - new Date().getTimezoneOffset() * 60000) / 86400000))) : null), () => {
+      if (photos.busy() || after.busy()) bad('Подождите — фото ещё загружаются');
+      const st = status.value;
+      const saved = P.saveNote({
+        id: noteId, drawingId: w.path, page, x, y, viewId: w.viewId, text: text.value, status: st,
+        contractorId: who.value && who.value !== '__add' ? who.value : null, dueDate: due.value ? inputToDay(due.value) : null,
+        doneDate: st === 'DONE' ? inputToDay(doneDate.value) || today : null,
+      });
+      photos.commit(saved.id);
+      after.commit(saved.id + ':done');
+      if (w.viewer) w.viewer.setNotes(P.notesOf(w.path));
+    }, n ? { text: 'Удалить', run: () => { if (!confirm('Удалить пометку №' + n.number + '?')) return false; P.deleteNote(n.id); } } : null);
+  }
+
   // ───────── позиция ведомости ─────────
   function boqForm(c, id) {
     const P = c.project;
@@ -1010,7 +1418,8 @@
       const img = h('img', { alt: '', loading: 'lazy' });
       const el = h('div', { class: 'pp-photo' }, kind === 'video' ? h('span', { class: 'pp-photo-video' }, '🎬') : img,
         h('button', { type: 'button', class: 'pp-photo-x', title: 'Убрать', onclick: () => { el.remove(); onRemove(); } }, '✕'));
-      el.addEventListener('dblclick', async () => { try { window.open(await fileHref(c, file), '_blank', 'noopener'); } catch (e) { alert(e.message); } });
+      // Просмотр в Яндекс Диске: фото листаются, видео играет
+      el.addEventListener('dblclick', () => window.open(D.webView(c.path + '/files/' + file), '_blank', 'noopener'));
       if (kind !== 'video') fileHref(c, file).then((u) => { img.src = u; }, () => { img.replaceWith(h('span', { class: 'pp-photo-video', title: 'Файл ещё не загружен с телефона' }, '⏳')); });
       return el;
     };
@@ -1105,7 +1514,9 @@
   }
 
   // ───────── документы: папки и файлы на Диске (Word, Excel, ярлыки, свои файлы) ─────────
-  const EXT_ICON = { url: '🔗', docx: '📝', doc: '📝', xlsx: '📊', xls: '📊', csv: '📊', pdf: '📕', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', webp: '🖼️', dwg: '📐', dxf: '📐', zip: '🗜️', txt: '📄', pptx: '📽️' };
+  const EXT_ICON = { url: '🔗', docx: '📝', doc: '📝', xlsx: '📊', xls: '📊', csv: '📊', pdf: '📕', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', webp: '🖼️', dwg: '📐', dxf: '📐', zip: '🗜️', txt: '📄', pptx: '📽️', gif: '🖼️', heic: '🖼️', bmp: '🖼️', mp4: '🎬', mov: '🎬', avi: '🎬', mkv: '🎬', webm: '🎬', '3gp': '🎬', m4v: '🎬', wmv: '🎬', mp3: '🎵', m4a: '🎵', wav: '🎵', ogg: '🎵' };
+  /** Фото и видео открываются в просмотрщике Яндекс Диска. */
+  const MEDIA = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'm4v', 'wmv', 'mp3', 'm4a', 'wav', 'ogg'];
   const ext = (n) => (n.includes('.') ? n.split('.').pop().toLowerCase() : '');
   const fileIcon = (it) => (it.type === 'dir' ? '📁' : EXT_ICON[ext(it.name)] || '📄');
   /** Как в Windows: у ярлыка «.url» не показывается. */
@@ -1234,6 +1645,7 @@
       return;
     }
     if (['docx', 'xlsx', 'pptx', 'doc', 'xls', 'csv', 'txt', 'pdf'].includes(ext(it.name))) window.open(D.webEdit(full), '_blank', 'noopener');
+    else if (MEDIA.includes(ext(it.name))) window.open(D.webView(full), '_blank', 'noopener');
     else { try { window.open(await disk.downloadHref(full), '_blank', 'noopener'); } catch (e) { alert(e.message); } }
   }
 
@@ -1244,6 +1656,8 @@
     popup(x, y, [
       ['Открыть', () => openItem(w, it, base, rel)],
       ext(it.name) === 'url' ? ['Изменить адрес', () => createShortcut(base, rel, it)] : null,
+      it.type === 'file' && ext(it.name) !== 'url' ? ['Открыть в Яндекс Диске', () => window.open(D.webView(full), '_blank', 'noopener')] : null,
+      it.type === 'dir' ? ['Открыть на Диске', () => window.open(D.webFolder(full), '_blank', 'noopener')] : null,
       it.type === 'file' && ext(it.name) !== 'url' ? ['Скачать', async () => { try { window.open(await disk.downloadHref(full), '_blank', 'noopener'); } catch (e) { alert(e.message); } }] : null,
       ['Переименовать', async () => {
         const isUrl = ext(it.name) === 'url';
