@@ -165,3 +165,6 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-photo-video { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 30px; }
 .pp-photo-x { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 13px; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; }
 .pp-link { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--pp-accent); cursor: pointer; text-align: left; }
+
+.pp-desk-note p { margin: 4px 0; }
+.pp-found { border-top: 1px solid rgba(255,255,255,.25); padding-top: 6px; margin-top: 6px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }

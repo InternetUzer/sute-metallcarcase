@@ -115,6 +115,7 @@
   const today = S.today();
   let projects = null; // [{ path, name }]
   let projectsError = null;
+  let found = null; // объекты в других папках Диска (если в папке рабочего стола их нет): [{ parent, names }]
   const ctxs = {}; // папка объекта → { path, project, loading, error, saving, saveTimer, status }
   let wins = [];
   let zTop = 10;
@@ -221,14 +222,15 @@
       const root = (await disk.list(ROOT)) || [];
       const paths = root.filter((i) => i.type === 'dir' && !i.name.startsWith('.')).map((i) => ROOT + '/' + i.name);
       for (const p of extraProjects()) if (!paths.includes(p)) paths.push(p);
-      const found = [];
+      const list = [];
       for (let i = 0; i < paths.length; i += 6) {
         const part = paths.slice(i, i + 6);
         const ok = await Promise.all(part.map((p) => hasData(p).catch(() => false)));
-        part.forEach((p, k) => { if (ok[k]) found.push({ path: p, name: projName(p) }); });
+        part.forEach((p, k) => { if (ok[k]) list.push({ path: p, name: projName(p) }); });
       }
-      projects = found.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-      const isProject = new Set(found.map((p) => p.path));
+      projects = list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      if (!projects.length && found === null) discover();
+      const isProject = new Set(list.map((p) => p.path));
       home.items = sortItems(root.filter((i) => !isProject.has(ROOT + '/' + i.name)));
     } catch (e) {
       home.items = home.items || [];
@@ -237,6 +239,31 @@
       if (e.status === 401) return fail(e);
     }
     render();
+  }
+
+  /**
+   * В папке рабочего стола объектов нет — поискать их на Диске (корень и папки первого уровня): телефон
+   * мог подключить объекты к другой папке. Найденное предлагается сделать рабочим столом.
+   */
+  async function discover() {
+    found = [];
+    try {
+      const root = ((await disk.list('/')) || []).filter((i) => i.type === 'dir' && !i.name.startsWith('.')).slice(0, 40);
+      const groups = new Map();
+      const add = (parent, name) => { if (!groups.has(parent)) groups.set(parent, []); groups.get(parent).push(name); };
+      for (let i = 0; i < root.length; i += 6) {
+        await Promise.all(root.slice(i, i + 6).map(async (d) => {
+          const path = '/' + d.name;
+          const items = (await disk.list(path).catch(() => null)) || [];
+          if (items.some((x) => x.type === 'dir' && x.name === 'data')) { add('/', d.name); return; }
+          const sub = items.filter((x) => x.type === 'dir' && !x.name.startsWith('.')).slice(0, 30);
+          const ok = await Promise.all(sub.map((x) => hasData(path + '/' + x.name).catch(() => false)));
+          sub.forEach((x, k) => { if (ok[k]) add(path, x.name); });
+        }));
+      }
+      found = Array.from(groups.entries()).map(([parent, names]) => ({ parent, names: names.sort((a, b) => a.localeCompare(b, 'ru')) })).sort((a, b) => b.names.length - a.names.length);
+    } catch (e) { found = []; }
+    if (!modalOpen()) render();
   }
 
   async function readFiles(path) {
@@ -378,13 +405,13 @@
   function openWindow(kind, folder, opts) {
     opts = opts || {};
     const base = kind === 'explorer' ? opts.base || (folder ? folder + '/' + DOCS : HOME) : null;
-    const key = [kind, folder || '', base || '', opts.path || ''].join('|');
+    const key = [kind, folder || '', base || '', opts.path || '', opts.mode || ''].join('|');
     let w = wins.find((x) => x.key === key);
     if (!w) {
       const lay = store.json('layout', {})[kind] || {};
       const n = wins.length % 8;
       w = {
-        id: S.newId(), key, kind, folder: folder || null, base, path: opts.path || '', items: null,
+        id: S.newId(), key, kind, folder: folder || null, base, path: opts.path || '', items: null, mode: opts.mode || null,
         x: lay.x !== undefined ? lay.x + n * 24 : 140 + n * 28, y: lay.y !== undefined ? lay.y + n * 20 : 24 + n * 24,
         w: lay.w || Math.min(kind === 'project' ? 620 : 980, window.innerWidth - 180), h: lay.h || Math.min(kind === 'project' ? 420 : 640, window.innerHeight - 120),
         min: false, max: small(), period: { from: today - 30, to: today }, month: null, selected: today,
@@ -471,7 +498,14 @@
       wallEl(h('div', { class: 'pp-desktop', oncontextmenu: (e) => { if (e.target.classList.contains('pp-desktop') || e.target.classList.contains('pp-icons')) { e.preventDefault(); homeMenu(e.clientX, e.clientY); } } },
         h('div', { class: 'pp-icons', onclick: (e) => { if (e.target.classList.contains('pp-icons')) { home.selected = null; render(); } } },
           projects === null ? h('p', { class: 'pp-desk-note' }, 'Ищу объекты на Диске…') : null,
-          projects && !projects.length ? h('p', { class: 'pp-desk-note' }, 'Рабочий стол — папка «' + lastName(ROOT) + '» на вашем Яндекс Диске. Объектов в ней пока нет: правый щелчок → «Новый объект» или «Добавить объект из папки».') : null,
+          projects && !projects.length ? h('div', { class: 'pp-desk-note' },
+            h('p', null, 'Рабочий стол — папка «' + lastName(ROOT) + '» на вашем Яндекс Диске. Объектов в ней пока нет.'),
+            found === null ? h('p', null, 'Ищу объекты в других папках Диска…') :
+              found.length ? h('div', null, found.map((g) => h('div', { class: 'pp-found' },
+                h('p', null, 'Найдены объекты в папке «' + (g.parent === '/' ? 'корень Диска' : g.parent) + '»: ' + g.names.join(', ')),
+                g.parent !== '/' ? button('Сделать «' + lastName(g.parent) + '» рабочим столом', () => { store.set('root', g.parent); location.reload(); }, 'pp-primary') : null,
+                button('Показать эти объекты здесь', () => { setExtra(extraProjects().concat(g.names.map((n) => (g.parent === '/' ? '' : g.parent) + '/' + n))); loadProjects(); })))) :
+                h('p', null, 'Объектов на Диске не нашлось. Подключите объект к облаку в телефоне (папка «' + lastName(ROOT) + '») или создайте его здесь: правый щелчок → «Новый объект».')) : null,
           projectsError ? h('p', { class: 'pp-desk-note pp-error' }, projectsError) : null,
           icons.map((ic) => h('button', {
             type: 'button', class: 'pp-icon-btn' + (home.selected === ic.key ? ' pp-selected' : ''), title: ic.name,
@@ -511,7 +545,7 @@
       ['-'], ['🗂️ Рабочий стол в проводнике', () => openWindow('explorer', null, { base: HOME })],
       open.length ? ['💾 Сохранить всё сейчас', () => open.forEach((p) => save(ctxs[p]))] : null,
       ['🎨 Фон рабочего стола…', wallDialog],
-      ['📂 Папка рабочего стола…', () => { const w = openWindow('picker', null); w.mode = 'root'; render(); }],
+      ['📂 Папка рабочего стола…', () => openWindow('picker', null, { mode: 'root' })],
       ['-'], ['Выйти', logout],
     ]);
   }
