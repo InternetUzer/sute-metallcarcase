@@ -455,6 +455,7 @@
 
   // ───────── окна ─────────
   const APPS = {
+    gallery: { title: 'Галерея', icon: '📷', view: (w, c) => galleryView(w, c) },
     journal: { title: 'Журнал работ', icon: '📒', view: (w, c) => journalView(w, c) },
     calendar: { title: 'Календарь', icon: '📅', view: (w, c) => calendarView(w, c) },
     boq: { title: 'Ведомость', icon: '📋', view: (w, c) => boqView(w, c) },
@@ -473,7 +474,7 @@
     project: { title: 'Объект', icon: '🏗️', view: (w, c) => projectView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
+  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'remarks', 'drawings', 'gallery', 'finance', 'machines', 'dirs', 'explorer'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -1872,6 +1873,107 @@
     }, it && !history ? { text: 'Удалить позицию', run: () => { if (!confirm('Удалить позицию?')) return false; P.deleteBoqItem(it.id); } } : null);
   }
 
+  // Read-only aggregate: adding/removing media remains in the source record.
+  function galleryView(w, c) {
+    const all = window.ProrabGallery.collect(c.project);
+    const query = h('input', { type: 'search', placeholder: 'Работа, замечание или дата', value: w.galleryQuery || '', 'aria-label': 'Поиск в галерее' });
+    const kind = select([{ id: 'all', name: 'Все файлы' }, { id: 'photo', name: 'Фото' }, { id: 'video', name: 'Видео' }], w.galleryKind || 'all', false);
+    const category = select([{ id: '', name: 'Все источники' }, ...Array.from(new Set(all.map((e) => e.category))).sort().map((x) => ({ id: x, name: x }))], w.galleryCategory || '', false);
+    const grid = h('div', { class: 'pp-gallery-grid' });
+    const count = h('p', { class: 'pp-muted', 'aria-live': 'polite' });
+    const pages = h('div', { class: 'pp-row pp-between' });
+    const draw = () => {
+      w.galleryQuery = query.value; w.galleryKind = kind.value; w.galleryCategory = category.value;
+      const q = query.value.trim().toLocaleLowerCase('ru');
+      const entries = all.filter((e) => (kind.value === 'all' || e.video === (kind.value === 'video')) && (!category.value || category.value === e.category) && (e.caption + ' ' + (e.date == null ? '' : shortDate(e.date))).toLocaleLowerCase('ru').includes(q));
+      const last = Math.max(0, Math.ceil(entries.length / 24) - 1);
+      w.galleryPage = Math.min(w.galleryPage || 0, last);
+      count.textContent = 'Файлов: ' + entries.length;
+      grid.replaceChildren();
+      entries.slice(w.galleryPage * 24, (w.galleryPage + 1) * 24).forEach((e, n) => {
+        const media = h('span', { class: 'pp-gallery-thumb' }, e.video ? '▶ Видео' : 'Загрузка…');
+        const tile = h('button', { type: 'button', class: 'pp-gallery-tile', onclick: () => galleryViewer(c, entries, w.galleryPage * 24 + n) }, media, h('span', { class: 'pp-gallery-caption' }, e.caption), e.date == null ? null : h('small', null, shortDate(e.date)));
+        grid.append(tile);
+        if (!e.video) fileHref(c, e.file).then((url) => {
+          const img = h('img', { src: url, alt: '', loading: 'lazy', onerror: () => { media.textContent = 'Файл недоступен'; } });
+          media.replaceChildren(img);
+        }, () => { media.textContent = 'Файл ещё не загружен с телефона'; });
+      });
+      if (!entries.length) grid.append(h('p', { class: 'pp-muted' }, 'Нет файлов. Добавляйте фото и видео в записи журнала, замечания и другие записи объекта.'));
+      const prev = button('Предыдущая страница', () => { w.galleryPage--; draw(); }); prev.disabled = w.galleryPage === 0;
+      const next = button('Следующая страница', () => { w.galleryPage++; draw(); }); next.disabled = w.galleryPage === last;
+      pages.replaceChildren(prev, h('span', null, (w.galleryPage + 1) + ' / ' + (last + 1)), next);
+    };
+    [query, kind, category].forEach((el) => el.addEventListener(el === query ? 'input' : 'change', () => { w.galleryPage = 0; draw(); }));
+    draw();
+    return h('section', null, h('div', { class: 'pp-row pp-wrap' }, query, kind, category), count, grid, pages);
+  }
+
+  function galleryViewer(c, entries, initial) {
+    if (!entries.length) return;
+    const focusBefore = document.activeElement;
+    let index = initial, generation = 0, scale = 1, x = 0, y = 0, image = null;
+    const pointers = new Map();
+    const stage = h('div', { class: 'pp-gallery-stage' });
+    const caption = h('p', { class: 'pp-gallery-caption' });
+    const counter = h('span');
+    const dialog = h('dialog', { class: 'pp-gallery-dialog', 'aria-label': 'Просмотр фото и видео' });
+    const pauseVideo = () => stage.querySelectorAll('video').forEach((v) => { v.pause(); v.removeAttribute('src'); v.load(); });
+    const close = () => { generation++; pauseVideo(); dialog.close(); dialog.remove(); if (focusBefore?.isConnected) focusBefore.focus(); };
+    const transform = () => {
+      const boundsX = stage.clientWidth * (scale - 1) / 2, boundsY = stage.clientHeight * (scale - 1) / 2;
+      x = Math.max(-boundsX, Math.min(boundsX, x)); y = Math.max(-boundsY, Math.min(boundsY, y));
+      if (image) image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    };
+    const zoom = (factor) => { scale = Math.max(1, Math.min(5, scale * factor)); transform(); };
+    const reset = () => { scale = 1; x = y = 0; transform(); };
+    const controls = h('div', { class: 'pp-row' }, button('−', () => zoom(1 / 1.5), '', 'Уменьшить'), button('+', () => zoom(1.5), '', 'Увеличить'), button('Сбросить', reset));
+    const prev = button('Предыдущее', () => show(index - 1));
+    const next = button('Следующее', () => show(index + 1));
+    const drawError = (e) => stage.replaceChildren(h('p', null, e.video ? 'Видео недоступно или формат не поддерживается браузером.' : 'Фото недоступно. Проверьте, завершилась ли синхронизация с телефона.'), h('a', { href: D.webView(c.path + '/files/' + e.file), target: '_blank', rel: 'noopener' }, 'Открыть на Яндекс Диске'));
+    async function show(i) {
+      if (i < 0 || i >= entries.length) return;
+      index = i; const token = ++generation;
+      pauseVideo(); image = null; pointers.clear(); reset(); stage.replaceChildren(h('p', null, 'Загрузка…'));
+      const e = entries[index];
+      controls.hidden = e.video; stage.classList.toggle('pp-gallery-photo-stage', !e.video);
+      caption.textContent = e.caption + (e.date == null ? '' : ' · ' + shortDate(e.date));
+      counter.textContent = (index + 1) + ' / ' + entries.length;
+      prev.disabled = index === 0; next.disabled = index === entries.length - 1;
+      try {
+        const url = await fileHref(c, e.file);
+        if (token !== generation || !dialog.isConnected) return;
+        const media = e.video ? h('video', { src: url, controls: true, playsinline: true, preload: 'metadata' }) : h('img', { src: url, alt: e.caption, draggable: 'false' });
+        media.addEventListener('error', () => { if (token === generation) drawError(e); });
+        if (!e.video) image = media;
+        stage.replaceChildren(media);
+      } catch (_) { if (token === generation && dialog.isConnected) drawError(e); }
+    }
+    stage.addEventListener('wheel', (e) => { if (!image) return; e.preventDefault(); zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
+    stage.addEventListener('dblclick', () => { if (image) { if (scale > 1) reset(); else zoom(3); } });
+    stage.addEventListener('pointerdown', (e) => { if (!image) return; pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); stage.setPointerCapture(e.pointerId); });
+    stage.addEventListener('pointermove', (e) => {
+      const old = pointers.get(e.pointerId); if (!old || !image) return;
+      const before = Array.from(pointers.values());
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const after = Array.from(pointers.values());
+      if (before.length === 2) {
+        const distance = (a) => Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+        const d = distance(before); if (d > 0) zoom(distance(after) / d);
+      } else if (scale > 1) { x += e.clientX - old.x; y += e.clientY - old.y; transform(); }
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => stage.addEventListener(type, (e) => pointers.delete(e.pointerId)));
+    dialog.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dialog.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'VIDEO') return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); show(index - 1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); show(index + 1); }
+    });
+    dialog.append(h('div', { class: 'pp-row pp-between' }, counter, controls, button('Закрыть', close)), stage, caption, h('div', { class: 'pp-row pp-between' }, prev, next));
+    document.body.append(dialog); dialog.showModal(); show(index);
+  }
+
+
   // ───────── фото ─────────
   const hrefCache = {};
   async function fileHref(c, file) {
@@ -1902,34 +2004,35 @@
       return el;
     };
     existing.forEach((a) => grid.append(tile(a.file, a.kind, () => removed.add(a.id))));
-    const pick = h('input', { type: 'file', accept: 'image/*', multiple: true });
+    const pick = h('input', { type: 'file', accept: 'image/*,video/*', multiple: true });
     pick.addEventListener('change', async () => {
       for (const f of Array.from(pick.files)) {
-        uploading++; note.textContent = 'Загружаю фото…';
+        uploading++; note.textContent = 'Загружаю фото и видео…';
         try {
-          const data = await shrink(f);
-          const file = S.newId() + '.jpg';
+          const mediaKind = window.ProrabGallery.uploadKind(f);
+          const data = mediaKind.video ? null : await shrink(f);
+          const file = S.newId() + '.' + mediaKind.extension;
           await disk.mkdir(c.path + '/files');
-          await disk.putBlob(c.path + '/files/' + file, dataToBlob(data), false);
-          hrefCache[c.path + '/files/' + file] = Promise.resolve(data);
-          const item = { file };
+          await disk.putBlob(c.path + '/files/' + file, mediaKind.video ? f : dataToBlob(data), false);
+          if (!mediaKind.video) hrefCache[c.path + '/files/' + file] = Promise.resolve(data);
+          const item = { file, kind: mediaKind.video ? 'video' : 'photo' };
           added.push(item);
-          grid.append(tile(file, 'photo', () => added.splice(added.indexOf(item), 1)));
+          grid.append(tile(file, item.kind, () => added.splice(added.indexOf(item), 1)));
         } catch (e) { alert(f.name + ': ' + e.message); }
         uploading--;
       }
-      note.textContent = uploading ? 'Загружаю фото…' : '';
+      note.textContent = uploading ? 'Загружаю фото и видео…' : '';
       pick.value = '';
     });
     const el = h('div', { class: 'pp-photobox' }, h('h3', null, title || 'Фото'), grid,
-      h('div', { class: 'pp-row' }, button('📷 Добавить фото', () => pick.click()), note),
-      h('small', { class: 'pp-muted' }, 'Фото хранятся в папке объекта на Диске и придут на телефон при синхронизации. Двойной щелчок — открыть.'));
+      h('div', { class: 'pp-row' }, button('📷 Добавить фото / видео', () => pick.click()), note),
+      h('small', { class: 'pp-muted' }, 'Фото и видео хранятся на Диске и придут на телефон после синхронизации. Двойной щелчок — открыть на Диске. Все файлы с подписями — в разделе «Галерея».'));
     return {
       el,
       busy: () => uploading > 0,
       commit(owner) {
         removed.forEach((id) => P.removeAttachment(id));
-        added.forEach((a) => P.addAttachment(owner, a.file, 'photo'));
+        added.forEach((a) => P.addAttachment(owner, a.file, a.kind));
       },
     };
   }
