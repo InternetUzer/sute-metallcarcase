@@ -79,3 +79,28 @@ def test_shared_page_for_invited_people(app):
     assert r.headers['X-Robots-Tag'] == 'noindex, nofollow'
     assert "connect-src 'self' https://cloud-api.yandex.net" in r.headers['Content-Security-Policy']
     assert 'Disallow: /prorab' in client.get('/robots.txt').get_data(as_text=True)
+
+
+def test_owner_pins_desktop_folder_for_everyone(app):
+    """Папка рабочего стола закрепляется владельцем на сайте и подставляется всем (и приглашённым на /prorab)."""
+    client = app.test_client()
+    assert 'data-root="/Прораб+"' in client.get('/prorab').get_data(as_text=True)
+    assert 'data-root-save' not in client.get('/prorab').get_data(as_text=True)
+    login(client, 2)
+    assert client.post('/admin/prorab/root', data={'root': '/x'}).status_code == 400  # без формы CSRF
+    login(client, 1)
+    html = client.get('/admin/prorab').get_data(as_text=True)
+    assert 'data-root-save="/admin/prorab/root"' in html
+    with client.session_transaction() as s:
+        token = s['csrf']
+    assert client.post('/admin/prorab/root', data={'csrf_token': token, 'root': '../x'}).status_code == 400
+    assert client.post('/admin/prorab/root', data={'csrf_token': token, 'root': '/'}).status_code == 400
+    r = client.post('/admin/prorab/root', data={'csrf_token': token, 'root': ' /Технадзор/ '})
+    assert r.status_code == 200 and r.get_json() == {'ok': True, 'root': '/Технадзор'}
+    other = app.test_client()
+    assert 'data-root="/Технадзор"' in other.get('/prorab').get_data(as_text=True)
+    login(other, 2)  # клиент сайта не может менять папку
+    other.get('/request')  # страница с формой — в сессии появится CSRF
+    with other.session_transaction() as s:
+        t2 = s.get('csrf', '')
+    assert other.post('/admin/prorab/root', data={'csrf_token': t2, 'root': '/Чужое'}).status_code == 403

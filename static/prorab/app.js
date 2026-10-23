@@ -23,7 +23,10 @@
   };
   // Рабочий стол — сама папка «Прораб+» (у приглашённого в общую папку она может называться иначе —
   // выбирается в меню «Папка рабочего стола»): объекты (папки с data) и всё, что создано на рабочем столе
+  // Порядок: своя папка этого браузера (у приглашённого общая папка может называться иначе) → папка,
+  // закреплённая владельцем на сайте (data-root) → «Прораб+»
   const ROOT = D.normalize(store.get('root') || app.dataset.root || '/Прораб+');
+  const ROOT_SAVE = app.dataset.rootSave || '';
   const HOME = ROOT;
 
   function deviceId() {
@@ -266,6 +269,29 @@
     if (!modalOpen()) render();
   }
 
+  /**
+   * Сделать папку рабочим столом. Владелец на сайте — закрепляется для всех устройств и всех людей
+   * (настройка сайта); иначе — только для этого браузера.
+   */
+  async function chooseRoot(path) {
+    const p = D.normalize(path);
+    if (ROOT_SAVE) {
+      try {
+        const body = new URLSearchParams({ csrf_token: app.dataset.csrf || '', root: p });
+        const r = await fetch(ROOT_SAVE, { method: 'POST', body, credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || 'Сайт ответил ' + r.status);
+        store.set('root', null);
+        location.reload();
+        return;
+      } catch (e) {
+        if (!confirm('Не получилось закрепить папку на сайте для всех (' + e.message + '). Сделать её рабочим столом только в этом браузере?')) return;
+      }
+    }
+    store.set('root', p === D.normalize(app.dataset.root || '/Прораб+') ? null : p);
+    location.reload();
+  }
+
   async function readFiles(path) {
     const items = (await disk.list(path + '/data')) || [];
     const out = [];
@@ -503,7 +529,7 @@
             found === null ? h('p', null, 'Ищу объекты в других папках Диска…') :
               found.length ? h('div', null, found.map((g) => h('div', { class: 'pp-found' },
                 h('p', null, 'Найдены объекты в папке «' + (g.parent === '/' ? 'корень Диска' : g.parent) + '»: ' + g.names.join(', ')),
-                g.parent !== '/' ? button('Сделать «' + lastName(g.parent) + '» рабочим столом', () => { store.set('root', g.parent); location.reload(); }, 'pp-primary') : null,
+                g.parent !== '/' ? button('Сделать «' + lastName(g.parent) + '» рабочим столом' + (ROOT_SAVE ? ' для всех' : ''), () => chooseRoot(g.parent), 'pp-primary') : null,
                 button('Показать эти объекты здесь', () => { setExtra(extraProjects().concat(g.names.map((n) => (g.parent === '/' ? '' : g.parent) + '/' + n))); loadProjects(); })))) :
                 h('p', null, 'Объектов на Диске не нашлось. Подключите объект к облаку в телефоне (папка «' + lastName(ROOT) + '») или создайте его здесь: правый щелчок → «Новый объект».')) : null,
           projectsError ? h('p', { class: 'pp-desk-note pp-error' }, projectsError) : null,
@@ -1245,10 +1271,11 @@
       const up0 = path === '/' ? null : path.split('/').slice(0, -1).join('/') || '/';
       const go0 = (p) => { w.path = p; loadFolder(w); render(); };
       return h('div', null,
-        h('p', { class: 'pp-muted' }, 'Сейчас рабочий стол — папка «' + ROOT + '». Если вас пригласили в общую папку и она называется иначе, выберите её здесь.'),
+        h('p', { class: 'pp-muted' }, 'Сейчас рабочий стол — папка «' + ROOT + '»' + (store.get('root') ? ' (выбрана в этом браузере)' : app.dataset.root ? ' (закреплена владельцем на сайте)' : '') + '. ' +
+          (ROOT_SAVE ? 'Выбранная здесь папка закрепится для всех ваших устройств и всех, с кем вы поделились папкой.' : 'Если вас пригласили в общую папку и она у вас называется иначе, выберите её здесь — только для этого браузера.')),
         h('div', { class: 'pp-row pp-wrap pp-toolbar' }, button('←', () => { if (up0) go0(up0); }, 'pp-icon'), h('span', { class: 'pp-crumbs' }, path),
-          path !== '/' ? button('Сделать рабочим столом', () => { store.set('root', path); location.reload(); }, 'pp-primary') : null,
-          store.get('root') ? button('Вернуть «Прораб+»', () => { store.set('root', null); location.reload(); }) : null),
+          path !== '/' ? button(ROOT_SAVE ? 'Сделать рабочим столом для всех' : 'Сделать рабочим столом', () => chooseRoot(path), 'pp-primary') : null,
+          store.get('root') ? button('Вернуть общую папку «' + lastName(D.normalize(app.dataset.root || '/Прораб+')) + '»', () => { store.set('root', null); location.reload(); }) : null),
         w.items === null ? h('p', { class: 'pp-muted' }, 'Загружаю…') : h('div', { class: 'pp-list' },
           w.items.filter((i) => i.type === 'dir').map((d) => h('button', { type: 'button', class: 'pp-item', onclick: () => go0(path.replace(/\/$/, '') + '/' + d.name) }, '📁 ' + d.name))));
     }
