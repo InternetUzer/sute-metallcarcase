@@ -1475,6 +1475,28 @@ window.PRORAB_SCHEMA = {
     "type": "text",
     "null": true,
     "def": null
+   },
+   "id": {
+    "type": "text",
+    "null": false,
+    "def": null
+   },
+   "projectId": {
+    "type": "text",
+    "null": false,
+    "def": ""
+   },
+   "updatedAt": {
+    "type": "int",
+    "null": false,
+    "def": {
+     "fn": "now"
+    }
+   },
+   "deleted": {
+    "type": "bool",
+    "null": false,
+    "def": 0
    }
   }
  },
