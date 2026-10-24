@@ -7,6 +7,8 @@ class Node {
   append(...children) { this.children.push(...children); }
   addEventListener(type, fn) { this.events[type] = fn; }
   setAttribute(k, v) { this[k] = v; }
+  click() { this.clicked = true; }
+  remove() { this.removed = true; }
   get textContent() { return this.children.map((c) => c.nodeType ? c.textContent : c).join(''); }
   set textContent(text) { this.children = [text]; }
   querySelector() { return null; }
@@ -33,21 +35,21 @@ function setup() {
   vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
-  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => {}; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
+  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => {}; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, makeOjr, repForm, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
   vm.runInNewContext(source, ctx);
   const p = new M.Project({}, window.PRORAB_SCHEMA, 'p', 'web-test', new S.Clock());
   p.put('projects', 'p', { name: 'Учебный объект' });
   p.put('boq_items', 'a', { projectId: 'p', name: 'Монтаж', priceCents: 10000 });
   p.put('volumes', 'v', { projectId: 'p', itemId: 'a', date: S.today(), quantity: 1 });
   const files = new Map();
-  const disk = { mkdir: async () => {}, list: async (path) => [...new Map([...files.keys()].filter((x) => x.startsWith(path + '/')).map((x) => { const rest = x.slice(path.length + 1), name = rest.split('/')[0]; return [name, { name, type: rest.includes('/') ? 'dir' : 'file' }]; })).values()],
+  const disk = { mkdir: async () => { if (options.failFolder) throw new Error('Яндекс Диск заблокировал запись (423)'); }, list: async (path) => [...new Map([...files.keys()].filter((x) => x.startsWith(path + '/')).map((x) => { const rest = x.slice(path.length + 1), name = rest.split('/')[0]; return [name, { name, type: rest.includes('/') ? 'dir' : 'file' }]; })).values()],
     getText: async (path) => files.has(path) ? typeof files.get(path) === 'string' ? files.get(path) : new TextDecoder().decode(files.get(path)) : null, putText: async (path, text) => files.set(path, text),
     putBlob: async (path, blob, overwrite) => { assert.equal(overwrite, false); if (files.has(path)) throw new Error('exists'); files.set(path, new Uint8Array(await blob.arrayBuffer())); }, getBytes: async (path) => files.get(path) };
   window.review.setSession(disk);
   const c = { path: '/Прораб+/Учебный объект', project: p };
   c.id = { loading: false, participants: I.emptyParticipants(), acts: [], certificates: [], templates: [], storage: new DS.Store(disk, c.path + '/Исполнительная документация'), root: '/Прораб+' };
   I.setDefaults(c.id.participants, { ks: { contractNo: 'Д-1', vatRate: null } });
-  return { api: window.review, c, files, opened, alerts, options };
+  return { api: window.review, c, files, opened, alerts, options, body };
 }
 const nodes = (n) => [n, ...n.children.filter((c) => c.nodeType).flatMap(nodes)];
 test('все вкладки документов открываются; файлы открываются в папке выбранного объекта', () => {
@@ -89,4 +91,54 @@ test('кнопки фиксации и проверки: снимок и кви�
   await nodes(api.fixationView(w, c)).find((n) => n.tag === 'button' && n.textContent.includes('Проверить целостность')).events.click();
   assert.equal(w.fixReport.incomplete, true);
   assert.ok(api.fixationView(w, c).textContent.includes('Проверка не завершена'));
+});
+
+
+test('общий журнал при 423 доступен для скачивания; повтор после восстановления сохраняет Word', async () => {
+  const { api, c, files, opened, alerts, options, body } = setup();
+  const w = { tab: 'ojr', ojr: { from: null, to: S.today() } };
+  options.failFolder = true;
+  await api.makeOjr(c, w);
+  assert.equal(files.size, 0); assert.equal(opened.length, 0);
+  assert.equal(c.id.generating, false); assert.equal(c.id.storage.busy, false);
+  assert.ok(alerts.at(-1).includes('423'));
+  assert.ok(w.ojrDownload.bytes.length > 1000);
+  const tree = api.idView(w, c);
+  assert.ok(tree.textContent.includes('Сохранение на Диске не подтверждено'));
+  const download = nodes(tree).find((n) => n.tag === 'button' && n.textContent.includes('Скачать сформированный журнал'));
+  assert.ok(download); download.events.click();
+  const a = body.children.at(-1);
+  assert.equal(a.download, w.ojrDownload.name); assert.equal(a.clicked, true);
+  const bytes = new Uint8Array(await (await fetch(a.href)).arrayBuffer());
+  assert.deepEqual(bytes, w.ojrDownload.bytes);
+  URL.revokeObjectURL(a.href);
+  options.failFolder = false;
+  await api.makeOjr(c, w);
+  assert.equal(w.ojrDownload, null);
+  assert.equal(files.size, 1); assert.equal(opened.length, 1);
+  assert.ok([...files.keys()][0].includes('/Исполнительная документация/Общий журнал/'));
+});
+
+
+test('423 при редактировании участника сохраняет прежний файл и открытую форму; повтор сохраняет правку', async () => {
+  const { api, c, files, options, body } = setup();
+  I.saveRep(c.id.participants, { id: 'person-1', role: 'builder', fio: 'Иванов И. И.', position: 'Прораб' });
+  c.id.participants = await c.id.storage.participants(c.id.participants);
+  const path = c.path + '/Исполнительная документация/участники.json';
+  const original = files.get(path);
+  api.repForm(c, I.reps(c.id.participants)[0]);
+  const modal = body.children.at(-1), form = nodes(modal).find((n) => n.tag === 'form');
+  const fio = nodes(form).find((n) => n.tag === 'input' && n.value === 'Иванов И. И.');
+  assert.ok(fio); fio.value = 'Петров П. П.';
+  options.failFolder = true;
+  await form.events.submit({ preventDefault() {} });
+  assert.equal(files.get(path), original);
+  assert.equal(I.reps(c.id.participants)[0].fio, 'Иванов И. И.');
+  assert.ok(modal.textContent.includes('423'));
+  assert.equal(modal.removed, undefined); assert.equal(fio.value, 'Петров П. П.');
+  options.failFolder = false;
+  await form.events.submit({ preventDefault() {} });
+  assert.equal(modal.removed, true);
+  assert.equal(I.reps(c.id.participants)[0].fio, 'Петров П. П.');
+  assert.equal(I.reps(JSON.parse(files.get(path)))[0].fio, 'Петров П. П.');
 });

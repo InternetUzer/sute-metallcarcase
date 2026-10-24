@@ -35,10 +35,10 @@ from prorab_anchor import APP_PATHS as ANCHOR_APP_PATHS, register_anchor
 ROOT = Path(__file__).resolve().parent
 
 # Журнал «Прораб+» (/admin/prorab): адреса Яндекс Диска, к которым обращается браузер владельца
-PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net'
+PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net https://*.dst.yandex.net'
 # Место объекта для погоды по адресу — те же сервисы, что в приложении (OpenStreetMap и Open-Meteo)
 PRORAB_GEO = 'https://nominatim.openstreetmap.org https://geocoding-api.open-meteo.com'
-PRORAB_VERSION = '14'
+PRORAB_VERSION = '17'
 PRORAB_DEFAULT_ROOT = '/Прораб+'
 # Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
 # он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.

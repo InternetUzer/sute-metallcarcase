@@ -140,6 +140,10 @@ assert 'wasm-unsafe-eval' not in client.get('/',base_url=base).headers['Content-
 assert b'messenger-links' in client.get('/',base_url=base).data
 with client.session_transaction(base_url=base) as session:
     csrf=session['csrf']
+assert b'data-upload-url="/prorab/upload"' in journal.data
+import io
+rejected=client.post('/prorab/upload',base_url=base,data=dict(csrf_token=csrf,href='http://127.0.0.1',file=(io.BytesIO(b'test'),'test.docx')))
+assert rejected.status_code==400 and rejected.is_json
 fields=dict(csrf_token=csrf,project='a'*64,chain='b'*64,seq='1',prev='',hash='c'*64)
 r=client.post('/prorab/anchor',base_url=base,data=fields)
 assert r.status_code==200, r.status_code

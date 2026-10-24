@@ -153,3 +153,34 @@ test('снимок телефона 1.0.122 (v1, имя файла без пап
   files.set(args.path + '/' + F.DIR + '/phone-1/000001.json', JSON.stringify(bad));
   await assert.rejects(j.report(null), /Недопустимый путь/);
 });
+
+test('переход v1 → v2 проверяет последнюю версию файла, не изменяя снимки и их отпечатки', async () => {
+  const { journal: j, files, args } = setup();
+  const oldBytes = new Uint8Array([1, 2]), newBytes = new Uint8Array([3, 4]);
+  const old = await F.makeSeal(null, null, state(1), { project: 'p', device: 'phone-1', now, files: [] });
+  const first = { ...old.seal, version: 1, files: [{ name: 'photo.jpg', sha256: await F.sha256(oldBytes) }] };
+  delete first.hash; first.hash = await F.sealHash(first);
+  const next = await F.makeSeal(first, old.leaves, state(1), { project: 'p', device: 'phone-1', now: now + 1000,
+    files: [{ name: 'files/photo.jpg', sha256: await F.sha256(newBytes) }] });
+  const dir = args.path + '/' + F.DIR + '/phone-1/';
+  const before = [JSON.stringify(first), JSON.stringify(next.seal)];
+  files.set(dir + F.name(1), before[0]); files.set(dir + F.name(2), before[1]);
+  files.set(args.path + '/files/photo.jpg', newBytes);
+  const report = await j.report(null);
+  assert.equal(report.problems, false); assert.equal(report.fileCount, 1); assert.equal(report.verifiedFiles, 1);
+  assert.equal(files.get(dir + F.name(1)), before[0]); assert.equal(files.get(dir + F.name(2)), before[1]);
+  assert.equal(report.raw[0].seals[0].hash, first.hash);
+  assert.equal(report.raw[0].seals[0].files[0].name, 'photo.jpg');
+});
+
+test('совместимость v1 не разрешает обход папки и не принимает короткое имя в v2', async () => {
+  for (const [version, name] of [[1, '../photo.jpg'], [1, '/photo.jpg'], [1, '..\\photo.jpg'],
+    [1, '.'], [1, '..'], [1, 'bad\u0000.jpg'], [2, 'photo.jpg']]) {
+    const { journal: j, files, args } = setup();
+    const row = await F.makeSeal(null, null, state(1), { project: 'p', device: 'phone-1', now, files: [] });
+    const seal = { ...row.seal, version, files: [{ name, sha256: 'a'.repeat(64) }] };
+    delete seal.hash; seal.hash = await F.sealHash(seal);
+    files.set(args.path + '/' + F.DIR + '/phone-1/' + F.name(1), JSON.stringify(seal));
+    await assert.rejects(j.report(null), /Недопустимый путь/);
+  }
+});
