@@ -1,11 +1,11 @@
 {
-  "base_commit": "b276fe4b84bedf6a044b19ff6948c30fa97bb300",
-  "reviewed_pr_head": "5ad6f1a3388c0ef85423856c653f53c2d14faa27",
+  "base_commit": "c72fbd8f4b279c69a3e14fa125ea6be90757116c",
+  "reviewed_pr_head": "1256c28447c68356e8acd054d039452732320535",
   "files": [
     {
       "path": "app.py",
-      "sha256": "db1f4b85c5c56a27c0dcbe78e6642ab6d286f2acddfd43d52af282a769304433",
-      "base_sha256": "2db47f31207ba4ee1d0c201b1332e31d1798afce10b7dd208a5ca2d906d3530f"
+      "sha256": "e1c72309921f31c272e9055b79a2b020237d95acff85b4f45dcf42a35ce322b0",
+      "base_sha256": "db1f4b85c5c56a27c0dcbe78e6642ab6d286f2acddfd43d52af282a769304433"
     },
     {
       "path": "prorab_anchor.py",
@@ -24,8 +24,8 @@
     },
     {
       "path": "static/prorab/app.js",
-      "sha256": "0144b090dc88a1bdab74a9c2b6c6b61d3043a402b91ca0c87224e06200c75e94",
-      "base_sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd"
+      "sha256": "d2959197c464d5ca4dcbae60cb7a8f099b8e3cc21a613352917d802b0200ba64",
+      "base_sha256": "0144b090dc88a1bdab74a9c2b6c6b61d3043a402b91ca0c87224e06200c75e94"
     },
     {
       "path": "static/prorab/catalog.js",
@@ -40,7 +40,7 @@
     {
       "path": "static/prorab/document-store.js",
       "sha256": "f19f309bcaea3920bee203b622903a50423238f38e8e496470b9eb359b9415f8",
-      "base_sha256": "9dbe8f47d3079b49c721dd5366d6c811d45820cd1849736b9d67de911561ed8f"
+      "base_sha256": "f19f309bcaea3920bee203b622903a50423238f38e8e496470b9eb359b9415f8"
     },
     {
       "path": "static/prorab/dxf.js",
@@ -70,11 +70,11 @@
     {
       "path": "static/prorab/id.js",
       "sha256": "7a4cc07284f12558f1bf6f3877a3360fca61d98acc7e60f8dce5fb200b1c895a",
-      "base_sha256": "552cd59e035424fae1599bc2d9864b72a0515e5d2a27dd9cb0bdf8bb28b5768a"
+      "base_sha256": "7a4cc07284f12558f1bf6f3877a3360fca61d98acc7e60f8dce5fb200b1c895a"
     },
     {
       "path": "static/prorab/model.js",
-      "sha256": "0b777a485b3137346d908c5a18d8c53178bd97480b1412517c79ac71974b1d15",
+      "sha256": "68048620b53478f93d12a13bdd6d51c847551cf651f07d0d344944985ce2684a",
       "base_sha256": "0b777a485b3137346d908c5a18d8c53178bd97480b1412517c79ac71974b1d15"
     },
     {
@@ -89,12 +89,12 @@
     },
     {
       "path": "static/prorab/prorab.css",
-      "sha256": "029df5a545b13979afdad3e80a551c23caec68ca5ecc051a874d6d8bc110fc5a",
-      "base_sha256": "c189b6def72349c1e32b3a935282fb78699c27ef85528f13bf1b599f3868cc7d"
+      "sha256": "5d9d4033eaefe89f3a7aa7c25621e29efbcb989de2ebf62ed0a40a34103e0dea",
+      "base_sha256": "029df5a545b13979afdad3e80a551c23caec68ca5ecc051a874d6d8bc110fc5a"
     },
     {
       "path": "static/prorab/schema.js",
-      "sha256": "93244dd6e09332fbc690443fa3680e237776098d99c79545f8b3bb9f7f1cbc29",
+      "sha256": "c268c1b5f38361282ab2064740e9c1123943b911df3b4af034fc4c0aec63f82d",
       "base_sha256": "93244dd6e09332fbc690443fa3680e237776098d99c79545f8b3bb9f7f1cbc29"
     },
     {
@@ -149,7 +149,7 @@
     },
     {
       "path": "static/prorab/viewer.js",
-      "sha256": "cbdb215d2f2d9240f07b0c54ad85a9bdaeb0a17aa4e8e303ea91eff3c207c3e0",
+      "sha256": "48f1b6a9f2fe9ff143d2ecb8517b36d7556790a1a67b166db244a8b83ffd49f5",
       "base_sha256": "cbdb215d2f2d9240f07b0c54ad85a9bdaeb0a17aa4e8e303ea91eff3c207c3e0"
     },
     {
@@ -159,8 +159,13 @@
     },
     {
       "path": "templates/prorab.html",
-      "sha256": "e0ebd996919afe53052cae187699a608634e20ccc817cbc27cbcfe84a112cc7b",
+      "sha256": "1960b3cf8dd818b1faa5f4fffadd93db653a0bdc28a7006927d046f462e7b007",
       "base_sha256": "e0ebd996919afe53052cae187699a608634e20ccc817cbc27cbcfe84a112cc7b"
+    },
+    {
+      "path": "static/prorab/shapes.js",
+      "sha256": "1d651cba1f889b3b2ca6aca955c7debda3f58e0a621433d7c470c2a9fa155d6b",
+      "base_sha256": null
     }
   ]
 }

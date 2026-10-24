@@ -235,7 +235,7 @@
       let [lx, ly] = toContent(sx, sy), snapped = false;
       // Alt — без привязки к узлам
       if (!free && !isPdf && root.ProrabDxf) { const sn = root.ProrabDxf.snap(d, lx, ly, (PIN_R * 1.2) / cam.s, hidden); if (sn) { [lx, ly] = sn; snapped = true; } }
-      if (isPdf && pageSize && (lx < 0 || ly < 0 || lx > pageSize[0] || ly > pageSize[1])) return null;
+      if (isPdf && (!pageSize || lx < 0 || ly < 0 || lx > pageSize[0] || ly > pageSize[1])) return null;
       let p = [lx, ly];
       if (drawCfg && drawCfg.ortho && dpts.length) p = SH.ortho(dpts[dpts.length - 1], p);
       p.snapped = snapped;
@@ -320,7 +320,11 @@
 
     // ───── PDF: лист целиком и чёткая дорисовка видимой части ─────
     async function loadPage(n) {
-      page = Math.max(0, Math.min(opts.pdf.numPages - 1, n));
+      const next = Math.max(0, Math.min(opts.pdf.numPages - 1, n));
+      if (next !== page) { dpts = []; hover = null; selShape = null; }
+      page = next;
+      pageSize = null;
+      if (drawCfg) drawChanged();
       if (baseTask) { try { baseTask.cancel(); } catch (e) { /* уже закончено */ } }
       sharp = null; base = null;
       pdfPage = await opts.pdf.getPage(page + 1);
@@ -458,7 +462,12 @@
       undoPoint() { dpts.pop(); drawChanged(); },
       get selectedShape() { return selShape; },
       setHidden(set) { hidden = set; paths = null; changed(); },
-      setMode(m) { mode = m; canvas.style.cursor = m === 'place' ? 'crosshair' : 'grab'; },
+      setMode(m) {
+        mode = m;
+        if (m === 'place') { drawCfg = null; dpts = []; hover = null; }
+        canvas.style.cursor = m === 'place' || drawCfg ? 'crosshair' : 'grab';
+        changed();
+      },
       setPage(n) { if (isPdf && n !== page) return loadPage(n); return Promise.resolve(); },
       fit() { cam.fitted = false; fit(); changed(); },
       zoom(k) { zoomAt(w / 2, hgt / 2, k); },

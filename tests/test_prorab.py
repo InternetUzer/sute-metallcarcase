@@ -9,6 +9,20 @@ from app import create_app
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_deployment_manifest_contains_current_browser_assets():
+    import hashlib
+    import json
+
+    manifest = json.loads((ROOT / 'docs/prorab-manifest.json').read_text())
+    files = {entry['path']: entry for entry in manifest['files']}
+    assets = {path.relative_to(ROOT).as_posix()
+              for path in (ROOT / 'static/prorab').rglob('*')
+              if path.is_file() and path.suffix in {'.js', '.css', '.wasm'}}
+    assert assets <= files.keys(), 'Browser module missing from hosting installation'
+    for path, entry in files.items():
+        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == entry['sha256'], path
+
+
 @pytest.fixture
 def app(tmp_path):
     app = create_app({'TESTING': True, 'SECRET_KEY': 'test-secret-not-for-production', 'DATA_DIR': str(tmp_path), 'SITE_URL': 'https://example.com'})

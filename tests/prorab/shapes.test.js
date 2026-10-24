@@ -86,3 +86,24 @@ test('модель: линии с телефона видны, свои — за
   assert.equal(rows.length, 2);
   for (const r of rows) for (const col of Object.keys(SCHEMA.drawing_shapes.cols)) assert.ok(col in r, col + ' в ' + r.id);
 });
+
+test('состав объекта и привязки приложения сохраняются при добавлении линии и обратной синхронизации', () => {
+  const vm = require('node:vm'), fs = require('node:fs');
+  const SY = require('../../static/prorab/sync.js'), M = require('../../static/prorab/model.js');
+  const ctx = { window: {} };
+  vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
+  const node = { id: 'node-1', projectId: 'p1', label: 'Фундамент', updatedAt: 1, deleted: 0 };
+  const binding = { id: 'work-1', itemId: 'work-1', projectId: 'p1', nodeId: node.id, templateKey: 'foundation', templateRevision: 1,
+    templateSnapshotJson: '{"label":"Фундамент"}', segmentKey: 'whole', alternativeGroup: null, variantMode: null, updatedAt: 1, deleted: 0 };
+  const phone = { device: 'phone', projectId: 'p1', tables: { project_nodes: [node], work_bindings: [binding] } };
+  const P = new M.Project(SY.mergeFiles([phone], 'p1', new SY.Clock()), ctx.window.PRORAB_SCHEMA, 'p1', 'web', new SY.Clock());
+  for (const name of ['id', 'projectId', 'updatedAt', 'deleted']) assert.ok(name in ctx.window.PRORAB_SCHEMA.work_bindings.cols);
+  P.addShape({ drawingId: 'd1', kind: 'line', points: [[0, 0], [100, 100]] });
+  const saved = SY.toFile(P.state, 'p1', 'Объект', 'web', 5);
+  const merged = SY.mergeFiles([phone, saved], 'p1', new SY.Clock());
+  assert.deepEqual(merged.project_nodes[node.id].values, node);
+  assert.deepEqual(merged.work_bindings[binding.id].values, binding);
+  assert.equal(Object.keys(merged.drawing_shapes).length, 1);
+  const deletion = { device: 'phone', projectId: 'p1', tables: { work_bindings: [{ ...binding, deleted: 1, updatedAt: 10 }] } };
+  assert.equal(SY.mergeFiles([saved, deletion], 'p1', new SY.Clock()).work_bindings[binding.id].values.deleted, 1);
+});

@@ -1449,7 +1449,7 @@
     if (opts.viewId) { w.pendingView = opts.viewId; if (w.viewer) applyPlanView(w, c, opts.viewId); }
     if (opts.place) {
       // Постановка замечания или доп. работы: следующий щелчок по чертежу ставит точку
-      w.placeFor = opts.place; w.placing = true;
+      w.placeFor = opts.place; w.placing = true; w.drawCfg = null; w.drawInfo = null;
       if (w.viewer) w.viewer.setMode('place');
       setStatus('Щёлкните по месту на чертеже: ' + opts.place.title);
       render();
@@ -1548,14 +1548,14 @@
       h('small', { class: 'pp-muted' }, 'Щелчок — показать, двойной — изменить.'));
     return h('div', { class: 'pp-planwrap' },
       h('div', { class: 'pp-row pp-wrap pp-plan-bar' },
-        button(w.placing ? 'Щёлкните по месту' + (w.placeFor ? ' для «' + w.placeFor.title + '»' : '') + '… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; if (!w.placing) w.placeFor = null; w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
+        button(w.placing ? 'Щёлкните по месту' + (w.placeFor ? ' для «' + w.placeFor.title + '»' : '') + '… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; if (!w.placing) w.placeFor = null; else { w.drawCfg = null; w.drawInfo = null; } w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
         button('⤢', () => w.viewer.fit(), 'pp-icon', 'Весь чертёж'), button('−', () => w.viewer.zoom(1 / 1.5), 'pp-icon', 'Дальше'), button('+', () => w.viewer.zoom(1.5), 'pp-icon', 'Ближе'),
         pageBar, w.dxf ? button('Слои', () => layersDialog(w)) : null,
         viewSel, button('Сохранить вид', () => saveViewDialog(w, c, d)),
         // Подписи кнопок постоянные: панель не переносится и чертёж не сдвигается
         button('✏️ Чертить', () => {
           w.drawCfg = w.drawCfg ? null : { kind: 'line', color: '#FF3B30', ortho: false };
-          if (w.drawCfg) { w.placing = false; w.viewer.setMode('view'); w.shapeSel = null; w.showShapes = true; w.viewer.setShapesVisible(true); }
+          if (w.drawCfg) { w.placing = false; w.placeFor = null; w.viewer.setMode('view'); w.shapeSel = null; w.showShapes = true; w.viewer.setShapesVisible(true); }
           w.viewer.setDraw(w.drawCfg); render();
         }, w.drawCfg ? 'pp-primary' : '', w.drawCfg ? 'Закончить черчение' : 'Свои линии поверх чертежа: линия, ломаная, прямоугольник, размер, текст, площадь'),
         button('🖊 Линии', () => { w.showShapes = w.showShapes === false; if (!w.showShapes) w.shapeSel = null; w.viewer.setShapesVisible(w.showShapes); render(); }, w.showShapes === false ? '' : 'pp-on', w.showShapes === false ? 'Свои линии скрыты — показать' : 'Свои линии показаны — скрыть'),
