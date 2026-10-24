@@ -512,13 +512,13 @@
   }
 
   /** Ближайший узел видимых слоёв в радиусе (координаты со сдвигом) — для привязки пометки. */
-  function snap(d, x, y, radius, hidden) {
+  function snap(d, x, y, radius, hidden, accept) {
     let best = radius * radius, bx = 0, by = 0, found = false;
     for (const pl of d.lines) {
       if (hidden && hidden.has(pl.layer)) continue;
       for (let k = 0; k < pl.pts.length; k += 2) {
         const dx = pl.pts[k] - x, dy = pl.pts[k + 1] - y, dd = dx * dx + dy * dy;
-        if (dd < best) { best = dd; bx = pl.pts[k]; by = pl.pts[k + 1]; found = true; }
+        if (dd < best && (!accept || accept(pl.pts[k], pl.pts[k + 1]))) { best = dd; bx = pl.pts[k]; by = pl.pts[k + 1]; found = true; }
       }
     }
     return found ? [bx, by] : null;

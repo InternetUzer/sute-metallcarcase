@@ -107,3 +107,35 @@ test('состав объекта и привязки приложения со�
   const deletion = { device: 'phone', projectId: 'p1', tables: { work_bindings: [{ ...binding, deleted: 1, updatedAt: 10 }] } };
   assert.equal(SY.mergeFiles([saved, deletion], 'p1', new SY.Clock()).work_bindings[binding.id].values.deleted, 1);
 });
+
+test('углы 15/30/45/90: направления во всех квадрантах и сохранение прежнего Орто', () => {
+  const start = [123456, -789012];
+  for (const step of S.ANGLE_STEPS) for (let deg = -179; deg < 180; deg += 7) {
+    const a = deg * Math.PI / 180, end = [start[0] + 100 * Math.cos(a), start[1] + 100 * Math.sin(a)];
+    const p = S.constrainAngle(start, end, step), dx = p[0] - start[0], dy = p[1] - start[1];
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI / step;
+    assert.ok(Math.abs(angle - Math.round(angle)) < 1e-7, step + '/' + deg);
+    assert.ok(S.onAngle(start, p, step));
+    if (step === 90) assert.deepEqual(p, S.ortho(start, end));
+  }
+  assert.deepEqual(S.constrainAngle([0, 0], [10, 3], 0), [10, 3]);
+  assert.equal(S.onAngle([0, 0], [10, 11], 45), false);
+  assert.equal(S.angleStep({ kind: 'line', ortho: true }), 90);
+  assert.equal(S.angleStep({ kind: 'area', angleStep: 45 }), 45);
+  assert.equal(S.angleStep({ kind: 'rect', angleStep: 90 }), 0);
+  assert.equal(S.angleStep({ kind: 'text', angleStep: 30 }), 0);
+});
+
+test('замер угла: острый, прямой, тупой и развёрнутый углы; нулевая сторона отклоняется', () => {
+  for (const deg of [0, 30, 45, 90, 135, 180]) {
+    const points = [[10, 0], [0, 0], [10 * Math.cos(deg * Math.PI / 180), 10 * Math.sin(deg * Math.PI / 180)]];
+    assert.ok(Math.abs(S.measureAngle(points) - deg) < 1e-10);
+    assert.ok(Math.abs(S.measureAngle(points.slice().reverse()) - deg) < 1e-10);
+    assert.ok(S.angleLabelPoint(points).every(Number.isFinite));
+  }
+  assert.equal(S.measureAngle([[0, 0], [0, 0], [1, 1]]), null);
+  assert.equal(S.measureAngle([[0, 0], [1, 1]]), null);
+  assert.equal(S.formatAngle(89.99999999), '90°');
+  assert.equal(S.formatAngle(30.125), '30,13°');
+  assert.equal(S.angleStep({ kind: 'angle', angleStep: 90 }), 0);
+});

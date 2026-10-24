@@ -1217,7 +1217,7 @@
     const names = Object.fromEntries(list.map((d) => [d.id, d.name]));
     return h('main', null,
       h('div', { class: 'pp-row pp-between pp-wrap' }, h('p', { class: 'pp-muted' }, 'PDF, DXF и DWG открываются прямо здесь, с пометками. DWG переводится в DXF, как в телефоне.'),
-        button(w.busy ? 'Загружаю…' : '+ Добавить чертёж', () => { if (!w.busy) pick.click(); }, 'pp-primary'), pick),
+        h('div', { class: 'pp-row pp-wrap' }, button('＋ Новый чертёж', () => gridDrawingForm(c)), button(w.busy ? 'Загружаю…' : '+ Добавить чертёж', () => { if (!w.busy) pick.click(); }, 'pp-primary')), pick),
       list.length ? h('section', { class: 'pp-card' }, list.map((d) => {
         const ns = notes.filter((n) => n.drawingId === d.id);
         const views = P.viewsOf(d.id);
@@ -1230,10 +1230,73 @@
             h('strong', null, h('span', { class: 'pp-row' }, button('Открыть', () => openDrawing(c, d.id)), button('⋯', (e) => drawingMenu(e.clientX, e.clientY, c, d), 'pp-icon', 'Ещё')))),
           views.map((v) => h('button', { type: 'button', class: 'pp-line pp-sub', onclick: () => openDrawing(c, d.id, { viewId: v.id }) },
             h('span', null, '📍 ' + (v.name || 'Вид')), h('small', null, d.kind === 'pdf' ? 'лист ' + ((v.page || 0) + 1) : 'свои слои'))));
-      })) : h('p', { class: 'pp-card pp-muted' }, 'Чертежей пока нет. Нажмите «+ Добавить чертёж».'),
+      })) : h('p', { class: 'pp-card pp-muted' }, 'Создайте новый чертёж с осями или добавьте готовый файл.'),
       problems.length ? h('section', { class: 'pp-card' }, h('h3', null, 'Проблемы (' + problems.length + ')'),
         problems.slice(0, 50).map((n) => h('button', { type: 'button', class: 'pp-line', onclick: () => openDrawing(c, n.drawingId, { noteId: n.id }) },
           h('span', null, '№' + n.number + '. ' + (n.text || 'Без текста')), h('small', null, names[n.drawingId] || '')))) : null);
+  }
+
+  /** Immutable DXF revisions: the drawing ID and its annotations remain unchanged. */
+  async function saveGridDrawing(c, original, id, name, values) {
+    if (c.gridSaving) throw new Error('Дождитесь сохранения чертежа.');
+    c.gridSaving = true;
+    const P = c.project, targetDisk = disk;
+    const checkCurrent = () => {
+      if (disk !== targetDisk || c.project !== P) throw new Error('Сеанс изменился. Откройте объект снова.');
+      const current = P.get('drawings', id);
+      if (original ? !current || Number(current.deleted) || current.file !== original.file || current.updatedAt !== original.updatedAt : !!current)
+        throw new Error('Чертёж изменился. Закройте форму и откройте её снова.');
+    };
+    try {
+      checkCurrent();
+      const bytes = new TextEncoder().encode(window.ProrabGrid.dxf(values));
+      window.ProrabDxf.parse(bytes);
+      const file = id + '-' + S.newId() + '.dxf', path = c.path + '/files';
+      const storage = new DS.Store(targetDisk, path);
+      await storage.run(async () => { await targetDisk.mkdir(path); await storage.file(path + '/' + file, bytes); });
+      checkCurrent();
+      await fixFile(c, file, bytes);
+      checkCurrent();
+      bytesCache[path + '/' + file] = Promise.resolve(bytes.slice().buffer);
+      P.addDrawing({ id, name, kind: 'dxf', file, pages: 1 });
+      changed(c);
+      return id;
+    } finally { c.gridSaving = false; }
+  }
+
+  function gridDrawingForm(c, drawing, initial) {
+    const G = window.ProrabGrid, original = drawing ? Object.assign({}, drawing) : null;
+    const id = original ? original.id : S.newId(), defaults = G.settings(initial);
+    const name = h('input', { value: original ? original.name : 'Схема объекта', maxlength: 160 });
+    const input = (value) => h('input', { value: String(value), inputmode: 'decimal' });
+    const length = input(defaults.length), width = input(defaults.width), xCount = input(defaults.xCount), yCount = input(defaults.yCount);
+    const axes = h('input', { type: 'checkbox' }); axes.checked = defaults.axes;
+    const summary = h('p', { class: 'pp-muted', role: 'status' });
+    const values = () => G.settings({ length: length.value, width: width.value, xCount: xCount.value, yCount: yCount.value, axes: axes.checked });
+    const preview = () => {
+      xCount.disabled = yCount.disabled = !axes.checked;
+      try {
+        const p = values();
+        summary.className = 'pp-muted';
+        summary.textContent = p.axes ? 'Оси распределены равномерно. Шаг по длине: ' + num(p.length / (p.xCount - 1)) + ' м; по ширине: ' + num(p.width / (p.yCount - 1)) + ' м.' : 'Чистый чертёж без видимых осей. Оси можно добавить позже.';
+      } catch (e) { summary.className = 'pp-error'; summary.textContent = e.message; }
+    };
+    [length, width, xCount, yCount].forEach((el) => el.addEventListener('input', preview));
+    axes.addEventListener('change', preview); preview();
+    asyncDialog(original ? 'Оси и размеры чертежа' : 'Новый чертёж', h('div', null,
+      field('Название', name), h('div', { class: 'pp-row pp-wrap' }, field('Длина по X, м', length), field('Ширина по Y, м', width)),
+      h('label', { class: 'pp-check' }, axes, ' Создать оси'),
+      h('div', { class: 'pp-row pp-wrap' }, field('Осей по длине (1, 2, 3…)', xCount), field('Осей по ширине (А, Б, В…)', yCount)), summary,
+      h('p', { class: 'pp-muted' }, 'DXF, единицы файла — миллиметры. Начало координат — пересечение 1/А. Размеры можно изменить кнопкой «Оси и размеры».'),
+      original ? h('p', { class: 'pp-muted' }, 'Меняются только оси и границы рабочего поля. Ваши линии и пометки остаются на своих координатах. Предыдущий DXF сохраняется на Диске.') : null), async () => {
+      if (!name.value.trim()) bad('Укажите название чертежа.');
+      await saveGridDrawing(c, original, id, name.value.trim(), values());
+      await save(c);
+      const pending = c.project.dirty;
+      const message = pending ? 'DXF сохранён на Диске, но запись объекта ещё не отправлена. Не закрывайте страницу до синхронизации.' : 'Чертёж сохранён на Диске. Телефон получит его при синхронизации.';
+      setStatus(message, pending); notify(message, pending);
+      if (!original) openDrawing(c, id); else render();
+    }, { busyText: 'Сохраняю чертёж на Диск…', onClose: () => render() });
   }
 
   function drawingMenu(x, y, c, d) {
@@ -1469,16 +1532,24 @@
 
   async function loadDrawing(w, c) {
     const d = c.project.get('drawings', w.path);
-    w.load = { state: 'loading' };
+    const loading = w.load = { state: 'loading' }, file = d.file;
+    w.loadedFile = d.file;
+    const current = () => w.load === loading && c.project.get('drawings', w.path)?.file === file;
     try {
       const buf = await fileBytes(c.path + '/files/' + d.file);
-      if (d.kind === 'pdf') w.pdf = await openPdf(new Uint8Array(buf).slice());
+      if (!current()) return;
+      if (d.kind === 'pdf') {
+        const pdf = await openPdf(new Uint8Array(buf).slice());
+        if (!current()) { if (pdf.destroy) await pdf.destroy(); return; }
+        w.pdf = pdf;
+      }
       else {
+        w.grid = window.ProrabGrid.read(buf);
         w.dxf = window.ProrabDxf.parse(new Uint8Array(buf));
         w.hidden = new Set(Object.values(w.dxf.layers).filter((l) => !l.visible).map((l) => l.name));
       }
       w.load = { state: 'ready' };
-    } catch (e) { w.load = { state: 'error', error: e.message }; }
+    } catch (e) { if (!current()) return; w.load = { state: 'error', error: e.message }; }
     if (!modalOpen()) render();
   }
 
@@ -1486,6 +1557,10 @@
     const P = c.project;
     const d = P.get('drawings', w.path);
     if (!d || Number(d.deleted)) return h('p', { class: 'pp-muted' }, 'Чертёж удалён.');
+    if (w.loadedFile && w.loadedFile !== d.file) {
+      if (w.viewer) w.viewer.destroy();
+      w.viewer = null; w.host = null; w.load = null; w.grid = null; w.drawCfg = null; w.drawInfo = null; w.angleMeasure = null;
+    }
     if (!w.load) loadDrawing(w, c);
     if (w.load.state === 'loading') return h('p', { class: 'pp-muted' }, 'Загружаю чертёж с Диска…');
     if (w.load.state === 'error') return h('div', null, h('p', { class: 'pp-error' }, w.load.error), button('Повторить', () => { w.load = null; render(); }));
@@ -1500,6 +1575,7 @@
           catch (e) { alert(e.message); }
         },
         onShapeText: (x, y, page, size) => shapeTextForm(c, w, d, { x, y, page, size }),
+        onMeasure: (value) => { const had = w.angleMeasure; w.angleMeasure = value; if (value || had) render(); },
         onShapePick: (id) => { w.shapeSel = id; render(); },
         onDrawChange: (info) => {
           w.drawInfo = info;
@@ -1552,9 +1628,10 @@
         button('⤢', () => w.viewer.fit(), 'pp-icon', 'Весь чертёж'), button('−', () => w.viewer.zoom(1 / 1.5), 'pp-icon', 'Дальше'), button('+', () => w.viewer.zoom(1.5), 'pp-icon', 'Ближе'),
         pageBar, w.dxf ? button('Слои', () => layersDialog(w)) : null,
         viewSel, button('Сохранить вид', () => saveViewDialog(w, c, d)),
+        w.grid ? button('Оси и размеры', () => gridDrawingForm(c, d, w.grid)) : null,
         // Подписи кнопок постоянные: панель не переносится и чертёж не сдвигается
         button('✏️ Чертить', () => {
-          w.drawCfg = w.drawCfg ? null : { kind: 'line', color: '#FF3B30', ortho: false };
+          w.drawCfg = w.drawCfg ? null : { kind: 'line', color: '#FF3B30', angleStep: 0 };
           if (w.drawCfg) { w.placing = false; w.placeFor = null; w.viewer.setMode('view'); w.shapeSel = null; w.showShapes = true; w.viewer.setShapesVisible(true); }
           w.viewer.setDraw(w.drawCfg); render();
         }, w.drawCfg ? 'pp-primary' : '', w.drawCfg ? 'Закончить черчение' : 'Свои линии поверх чертежа: линия, ломаная, прямоугольник, размер, текст, площадь'),
@@ -1573,15 +1650,21 @@
   function shapeScale(w, d) { return d.kind === 'pdf' ? SHP.metersPerUnit(true, 0, pdfScaleN(d)) : SHP.metersPerUnit(false, w.dxf ? w.dxf.units : 0, null); }
   function drawHint(w, info) {
     const kind = w.drawCfg ? w.drawCfg.kind : 'line', n = info ? info.count : 0;
-    const tip = n === 0 ? (kind === 'text' ? 'Щёлкните, где будет надпись' : 'Щёлкните начало') :
+    const tip = kind === 'angle' ? (n === 0 ? 'Точка на первой стороне' : n === 1 ? 'Вершина угла' : 'Точка на второй стороне') : n === 0 ? (kind === 'text' ? 'Щёлкните, где будет надпись' : 'Щёлкните начало') :
       kind === 'rect' ? 'Щёлкните противоположный угол' : (kind === 'line' || kind === 'dim') ? 'Щёлкните конец' :
         kind === 'area' && n < 3 ? 'Углы контура по порядку (хотя бы 3)' : 'Следующая точка; двойной щелчок или Enter — готово';
-    return (info && info.live ? info.live + ' · ' : '') + tip + ' · Esc — заново, Backspace — убрать точку' + (w.dxf ? ', Alt — без привязки к узлам' : '');
+    const step = SHP.angleStep(w.drawCfg);
+    return (info && info.live ? info.live + ' · ' : '') + tip + (step ? ' · шаг ' + step + '° от осей чертежа' : '') + ' · Esc — заново, Backspace — убрать точку' + (w.dxf ? ', Alt — без привязки к узлам' : '');
   }
   function drawBar(w, c, d, shapes) {
     const cfg = w.drawCfg;
     const set = (ch) => { Object.assign(cfg, ch); w.viewer.setDraw(cfg); render(); };
     const isPdf = d.kind === 'pdf';
+    const angles = h('select', { 'aria-label': 'Шаг угла', title: 'Направления от осей чертежа. 45°: 0°, 45°, 90°, 135° и далее. Вершины вне выбранных направлений пропускаются.' },
+      h('option', { value: '0' }, 'Свободно'), SHP.ANGLE_STEPS.map((step) => h('option', { value: String(step) }, step === 90 ? '90° (Орто)' : step + '°')));
+    angles.value = String(cfg.angleStep || (cfg.ortho ? 90 : 0));
+    angles.disabled = cfg.kind === 'text' || cfg.kind === 'rect' || cfg.kind === 'angle';
+    angles.addEventListener('change', () => set({ angleStep: Number(angles.value), ortho: false }));
     const scaleIn = isPdf ? h('input', { class: 'pp-num', size: 5, value: pdfScaleN(d) || '', placeholder: '100', title: 'Масштаб листа 1:N (если PDF не уменьшали при печати)' }) : null;
     if (scaleIn) scaleIn.addEventListener('change', () => {
       const n = Number(String(scaleIn.value).replace(',', '.'));
@@ -1589,9 +1672,11 @@
       w.viewer.setScale(SHP.metersPerUnit(true, 0, n > 0 ? n : null)); render();
     });
     return h('div', { class: 'pp-row pp-wrap pp-draw-bar' },
-      SHP.KINDS.map((k) => button(k.title, () => set({ kind: k.code }), cfg.kind === k.code ? 'pp-primary' : '')),
+      SHP.TOOLS.map((k) => button(k.title, () => set({ kind: k.code }), cfg.kind === k.code ? 'pp-primary' : '')),
       h('span', { class: 'pp-row' }, SHP.COLORS.map((col) => { const b = h('button', { type: 'button', class: 'pp-swatch-btn' + (cfg.color === col.hex ? ' pp-on' : ''), title: col.title, onclick: () => set({ color: col.hex }) }); b.style.background = col.hex; return b; })),
-      (() => { const b = h('input', { type: 'checkbox' }); b.checked = !!cfg.ortho; b.addEventListener('change', () => set({ ortho: b.checked })); return h('label', { class: 'pp-check', title: 'Только по горизонтали и вертикали' }, b, ' Орто'); })(),
+      h('label', { class: 'pp-row' }, 'Шаг угла:', angles),
+      cfg.kind === 'angle' && w.angleMeasure ? h('span', { class: 'pp-row' }, h('strong', { role: 'status' }, SHP.formatAngle(w.angleMeasure.value)), button('Сохранить замер', () => saveAngleMeasurement(c, w, d), 'pp-primary', 'Сохранить стороны угла и подпись в градусах')) : null,
+      cfg.kind === 'angle' ? h('small', { class: 'pp-muted' }, 'Меньший угол 0–180°. Шаг угла при измерении отключён.') : null,
       cfg.kind === 'polyline' || cfg.kind === 'area' ? button('Готово', () => w.viewer.finishDraw(), 'pp-primary') : null,
       button('↶ Точку', () => w.viewer.undoPoint(), '', 'Убрать последнюю точку'),
       isPdf ? h('label', { class: 'pp-row', title: 'Для размеров и площади на PDF' }, 'Масштаб 1:', scaleIn) : null,
@@ -1600,6 +1685,18 @@
       button('✕', () => { w.drawCfg = null; w.viewer.setDraw(null); render(); }, 'pp-icon', 'Закончить черчение'),
       isPdf && !pdfScaleN(d) && (cfg.kind === 'dim' || cfg.kind === 'area') ? h('small', { class: 'pp-error' }, 'Масштаб PDF не задан — размер будет без значения') : null);
   }
+  function saveAngleMeasurement(c, w, d) {
+    const m = w.angleMeasure;
+    if (!m || SHP.measureAngle(m.points) === null) return;
+    const common = { drawingId: d.id, viewId: w.viewId, page: m.page, color: m.color };
+    c.project.addShape(Object.assign({}, common, { kind: 'polyline', points: m.points }));
+    const text = c.project.addShape(Object.assign({}, common, { kind: 'text', points: [SHP.angleLabelPoint(m.points)], text: SHP.formatAngle(m.value), size: m.size }));
+    w.shapeSel = text.id; w.angleMeasure = null; w.viewer.clearMeasurement();
+    changed(c);
+    setStatus('Замер добавлен: ' + SHP.formatAngle(m.value) + '. Отправляю на Диск…');
+    notify('Замер ' + SHP.formatAngle(m.value) + ' добавлен линиями и подписью. Отправляю на Диск…');
+  }
+
   function shapeSide(w, c, d, shapes) {
     const P = c.project;
     const sel = w.shapeSel ? shapes.find((x) => x.id === w.shapeSel) : null;
