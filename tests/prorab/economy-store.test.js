@@ -108,6 +108,22 @@ test('upload accepted but not visible never clears local draft or reports succes
   await assert.rejects(s.sync(), /не подтвердил/); assert.ok(s.pending());
 });
 
+test('autosave and another code change cannot overwrite an in-flight password change', async () => {
+  const { d, s } = await fixture();
+  let release, entered;
+  const gate = new Promise((r) => { entered = r; });
+  const put = d.putText.bind(d);
+  d.putText = async (path, text) => { entered(); await new Promise((r) => { release = r; }); await put(path, text); };
+  const changing = s.changeCode('new-password-confirmed'); await gate;
+  await assert.rejects(s.sync(), /смены кода/);
+  await assert.rejects(s.changeCode('third-code'), /смены кода/);
+  await assert.rejects(s.edit((data) => E.setFields(data, 'p', { note: 'during change' })), /смены кода/);
+  release(); await changing;
+  assert.equal(s.pending(), null);
+  assert.ok(await V.unlock(JSON.parse(d.file), 'new-password-confirmed'));
+  await assert.rejects(V.unlock(JSON.parse(d.file), CODE), /Неверный код/);
+});
+
 test('corrupt cloud payload cannot become an empty economy or overwrite a valid file', async () => {
   const { d, store, s } = await fixture();
   await s.edit((data) => E.setFields(data, 'p', { note: 'keep' }));

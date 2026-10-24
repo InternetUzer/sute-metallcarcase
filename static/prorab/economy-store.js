@@ -82,6 +82,7 @@
       if (await this.disk.getText(this.path) !== text) throw new Error('Диск пока не подтвердил запись. Зашифрованный черновик сохранён в этом браузере.');
     }
     sync() {
+      if (this.changingCode) return Promise.reject(new Error('Дождитесь завершения смены кода.'));
       if (this.saving) return this.saving;
       const work = this.syncNow();
       this.saving = work;
@@ -128,9 +129,12 @@
     }
     async changeCode(code) {
       this.active();
+      if (this.changingCode) throw new Error('Дождитесь завершения смены кода.');
       await this.sync();
       await this.queue;
-      this.active(); this.changingCode = true;
+      this.active();
+      if (this.changingCode) throw new Error('Дождитесь завершения смены кода.');
+      this.changingCode = true;
       try {
         // Keep a recoverable copy under the old code until the new header is
         // confirmed on Disk. A failed operation never announces a new code.

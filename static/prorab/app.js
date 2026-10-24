@@ -1998,6 +1998,7 @@
       if (code.value !== again.value) bad('Коды не совпадают');
       if (!econ.vault) bad('Экономика закрыта. Войдите снова.');
       const session = econ.session;
+      clearTimeout(econ.timer); econ.timer = null;
       econ.operation = session.changeCode(code.value);
       try { await econ.operation; } finally { econ.operation = null; }
       code.value = ''; again.value = '';
@@ -2018,7 +2019,7 @@
 
   async function saveEcon() {
     clearTimeout(econ.timer); econ.timer = null;
-    if (!econ.vault) return;
+    if (!econ.vault || econ.operation) return;
     const session = econ.session;
     try {
       await session.sync();
