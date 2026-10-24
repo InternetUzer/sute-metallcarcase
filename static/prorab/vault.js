@@ -2,8 +2,8 @@
  * «Прораб+» — зашифрованная экономика собственника (сумма договора, бюджет, маржа, поступления).
  * Данные шифруются в браузере (AES-256-GCM) случайным ключом данных. Этот ключ хранится в файле дважды:
  * зашифрованным ключом из кода собственника и ключом из кода восстановления (PBKDF2-SHA-256).
- * Код никуда не отправляется; на Диске и на сервере сайта — только шифр. Без кода и кода восстановления
- * данные не прочитать никому, в том числе нам.
+ * Код никуда не отправляется; на Диске и на сервере сайта — только шифр.
+ * Защита от перебора зависит и от сложности кода; короткий PIN не подходит.
  * Без DOM — проверяется тестами в Node (crypto.subtle).
  */
 (function (root) {
@@ -47,7 +47,7 @@
   const dataKey = (raw) => subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 
   function checkCode(code) {
-    if (String(code || '').length < MIN_CODE) throw new VaultError('Код — не короче ' + MIN_CODE + ' знаков.');
+    if (typeof code !== 'string' || code.trim().length < MIN_CODE) throw new VaultError('Код — не короче ' + MIN_CODE + ' знаков.');
   }
 
   /** Новое хранилище: { vault, recovery } — код восстановления показать один раз. */
@@ -63,7 +63,16 @@
   }
 
   function validHeader(file) {
-    return file && file.format === FORMAT && file.version === 1 && file.kdf && file.slots && file.slots.code && file.slots.recovery;
+    try {
+      if (!file || file.format !== FORMAT || file.version !== 1 || !file.kdf || file.kdf.name !== 'PBKDF2-SHA-256' ||
+        !Number.isInteger(file.kdf.iterations) || file.kdf.iterations < 1000 || file.kdf.iterations > 2000000 || !file.slots) return false;
+      return ['code', 'recovery'].every((name) => {
+        const s = file.slots[name];
+        return s && typeof s.salt === 'string' && s.salt.length <= 24 && unb64(s.salt).length === 16 &&
+          typeof s.iv === 'string' && s.iv.length <= 16 && unb64(s.iv).length === 12 &&
+          typeof s.key === 'string' && s.key.length <= 64 && unb64(s.key).length === 48;
+      });
+    } catch (_) { return false; }
   }
 
   /** Открыть кодом (или кодом восстановления, byRecovery = true). Неверный код — VaultError. */
@@ -98,10 +107,11 @@
     return Object.assign({}, vault.header, { rev: rev || 1, savedAt: Date.now(), payload: { iv: b64(iv), data: b64(ct) } });
   }
 
-  /** Файл → данные (null, если данных ещё нет). Подмена шифра — VaultError. */
+  /** Файл → данные. Пропавший или изменённый шифр — ошибка, никогда не пустая экономика. */
   async function open(vault, file) {
-    if (!file.payload) return null;
     try {
+      if (!file.payload || typeof file.payload.data !== 'string' || file.payload.data.length > 16 * 1024 * 1024 ||
+        typeof file.payload.iv !== 'string' || file.payload.iv.length > 16 || unb64(file.payload.iv).length !== 12) throw new Error('payload');
       const pt = await subtle.decrypt({ name: 'AES-GCM', iv: unb64(file.payload.iv), additionalData: AAD }, vault.key, unb64(file.payload.data));
       return JSON.parse(dec.decode(pt));
     } catch (e) { throw new VaultError('Данные экономики повреждены или изменены без кода.'); }

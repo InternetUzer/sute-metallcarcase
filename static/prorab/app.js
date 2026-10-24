@@ -108,6 +108,7 @@
   let disk = null;
   let status = { text: '', error: false };
   let me = '', writerLease = null, starting = false, leaving = false;
+  let accountId = '';
   const clock = new S.Clock();
   const today = S.today();
   let projects = null; // [{ path, name }]
@@ -387,7 +388,11 @@
 
   async function refreshAll() {
     const open = new Set(wins.map((w) => w.folder).filter(Boolean));
+    if (econ.vault && wins.some((w) => w.kind === 'economy')) for (const p of projects || []) open.add(p.path);
     for (const path of open) if (ctxs[path]) await refreshCtx(ctxs[path]);
+    if (econ.session && econ.vault && !modalOpen() && !econ.operation) {
+      try { await econ.session.refresh(); } catch (e) { setStatus('Экономика: ' + e.message, true); }
+    }
     if (!modalOpen()) render();
   }
 
@@ -1836,19 +1841,23 @@
   // ───────── экономика собственника (зашифрована кодом) ─────────
   // Папка — рядом с рабочим столом, а не внутри: «Прораб+» открыта прорабам, экономика — нет.
   // На Диске и на сервере сайта — только шифр; код и расшифрованные данные — в памяти этой вкладки.
-  const V = window.ProrabVault, E = window.ProrabEconomy;
-  const econ = { exists: null, vault: null, data: null, rev: 0, saving: false, timer: null, lockTimer: null, again: false };
+  const V = window.ProrabVault, E = window.ProrabEconomy, ES = window.ProrabEconomyStore;
+  const econ = { exists: null, session: null, release: null, opening: false, closing: false, operation: null, timer: null, lockTimer: null };
+  Object.defineProperties(econ, {
+    vault: { get: () => !econ.closing && econ.session ? econ.session.vault : null },
+    data: { get: () => econ.session ? econ.session.data : null },
+  });
   const ECON_LOCK_MS = 15 * 60 * 1000;
   const parentOf = (p) => { const s = D.normalize(p); return s.slice(0, s.lastIndexOf('/')) || '/'; };
-  const econDir = () => (parentOf(ROOT) === '/' ? '' : parentOf(ROOT)) + '/' + lastName(ROOT) + ' Экономика';
+  // Always outside any shared ancestor of the workspace, directly in Disk root.
+  const econDir = () => '/' + lastName(ROOT) + ' Экономика';
   const econFile = () => econDir() + '/economy.prorab.json';
   const econVisible = () => !!ROOT_SAVE || econ.exists === true;
 
   async function checkEcon() {
     try {
-      const items = (await disk.list(parentOf(ROOT))) || [];
-      econ.exists = items.some((i) => i.type === 'dir' && i.name === lastName(econDir()));
-    } catch (e) { econ.exists = false; }
+      econ.exists = !!new ES.Session(disk, store, econFile()).pending() || await disk.getText(econFile()) !== null;
+    } catch (e) { econ.exists = null; setStatus('Не удалось проверить экономику: ' + e.message, true); }
     if (!modalOpen()) render();
   }
 
@@ -1857,18 +1866,19 @@
     opts = opts || {};
     const err = h('p', { class: 'pp-error' });
     const ok = h('button', { type: 'submit', class: 'pp-btn pp-primary' }, opts.okText || 'Сохранить');
-    const close = () => wrap.remove();
+    let working = false;
+    const close = (saved) => { if (working && !saved) return; wrap.remove(); if (opts.onClose) opts.onClose(); };
     const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap && !opts.sticky) close(); } },
       h('form', { class: 'pp-dialog', onsubmit: async (e) => {
         e.preventDefault();
         if (ok.disabled) return;
-        ok.disabled = true; err.textContent = opts.busyText || '';
-        try { if ((await onSave()) !== false) close(); else err.textContent = ''; } catch (x) { err.textContent = x.message; }
-        ok.disabled = false;
+        working = true; ok.disabled = true; err.textContent = opts.busyText || '';
+        try { if ((await onSave()) !== false) close(true); else err.textContent = ''; } catch (x) { err.textContent = x.message; }
+        working = false; ok.disabled = false;
       } },
-        h('div', { class: 'pp-row pp-between' }, h('h2', null, title), opts.sticky ? h('span') : button('✕', close, 'pp-icon')),
+        h('div', { class: 'pp-row pp-between' }, h('h2', null, title), opts.sticky ? h('span') : button('✕', () => close(false), 'pp-icon')),
         body, err,
-        h('div', { class: 'pp-row pp-between' }, opts.extra || h('span'), h('div', { class: 'pp-row' }, opts.sticky ? null : button('Отмена', close), ok))));
+        h('div', { class: 'pp-row pp-between' }, opts.extra || h('span'), h('div', { class: 'pp-row' }, opts.sticky ? null : button('Отмена', () => close(false)), ok))));
     document.body.append(wrap);
     const first = wrap.querySelector('input, select, textarea');
     if (first) first.focus();
@@ -1883,42 +1893,62 @@
   window.addEventListener('pointerdown', econActivity, true);
   window.addEventListener('keydown', econActivity, true);
 
-  function lockEcon(message) {
+  async function lockEcon(message) {
+    if (econ.closing) return;
+    econ.closing = true;
     clearTimeout(econ.lockTimer); clearTimeout(econ.timer);
-    const pending = econ.timer !== null && econ.vault;
-    if (pending) saveEcon(); // дописать последнюю правку до закрытия
-    econ.vault = null; econ.data = null;
+    econ.timer = null;
     wins = wins.filter((w) => w.kind !== 'economy' && w.kind !== 'econ');
     document.querySelectorAll('.pp-modal[data-econ]').forEach((m) => m.remove());
-    if (message) setStatus(message);
+    render();
+    if (econ.operation) await econ.operation.catch(() => {});
+    const session = econ.session;
+    if (session) await session.close();
+    econ.session = null;
+    releaseEcon(); econ.closing = false;
+    if (message) setStatus(message + (session && session.pending() ? ' Несинхронизированные правки сохранены зашифрованными в этом браузере. После входа повторю отправку.' : ''));
     render();
   }
 
-  function openEconomy(folder) {
-    const go = () => (folder ? openWindow('econ', folder) : openWindow('economy', null));
+  function releaseEcon() {
+    if (econ.release) econ.release();
+    econ.release = null; econ.opening = false;
+  }
+  function cancelEconOpen() { if (!econ.session) releaseEcon(); }
+
+  async function openEconomy(folder) {
+    if (econ.closing || econ.opening) return;
+    const go = () => { if (econ.vault) folder ? openWindow('econ', folder) : openWindow('economy', null); };
     if (econ.vault) return go();
-    if (econ.exists === false) return setupEcon(go);
-    unlockEcon(go);
+    econ.opening = true;
+    try {
+      econ.release = await ES.acquire(navigator.locks, PREFIX + accountId + ':' + econFile());
+      await checkEcon();
+      if (econ.exists === false) setupEcon(go); else unlockEcon(go);
+    } catch (e) { releaseEcon(); setStatus(e.message, true); }
   }
 
   function setupEcon(then) {
     const code = h('input', { type: 'password', autocomplete: 'new-password' });
     const again = h('input', { type: 'password', autocomplete: 'new-password' });
     const d = asyncDialog('💼 Экономика: новый код', h('div', null,
-      h('p', null, 'Экономика (суммы договоров, бюджет, маржа, поступления) будет лежать в отдельной папке «' + econDir() + '» — рядом с рабочим столом, не внутри: прорабы её не видят.'),
-      h('p', null, 'Данные шифруются этим кодом прямо в браузере. Код никуда не отправляется; без него файл не прочитать никому — даже тому, кто зайдёт в ваш Яндекс Диск.'),
+      h('p', null, 'Экономика будет лежать в отдельной папке «' + econDir() + '» в корне вашего Диска. Не открывайте к ней общий доступ. Зашифрованный черновик также хранится на этом компьютере до отправки.'),
+      h('p', null, 'Данные шифруются в браузере, код никуда не отправляется. Используйте длинный уникальный код — лучше случайный пароль от 12 знаков или несколько случайных слов. Простой цифровой код можно подобрать.'),
       field('Код (не короче ' + V.MIN_CODE + ' знаков)', code), field('Код ещё раз', again),
       h('p', { class: 'pp-muted' }, 'Не используйте пароль от Яндекса. Код лучше хранить там же, где пароли.')), async () => {
       if (code.value !== again.value) bad('Коды не совпадают');
       const { vault, recovery } = await V.create(code.value);
       await disk.mkdir(econDir());
       if (await disk.getText(econFile()) !== null) bad('Экономика уже создана на другом компьютере — обновите страницу и войдите кодом.');
-      const data = E.empty();
-      await disk.putText(econFile(), JSON.stringify(await V.seal(vault, data, 1)));
-      Object.assign(econ, { vault, data, rev: 1, exists: true });
+      const session = new ES.Session(disk, store, econFile());
+      if (session.pending()) bad('В этом браузере уже есть черновик экономики. Закройте окно и войдите своим кодом.');
+      await session.initialize(vault);
+      econ.session = session; econ.exists = true; econ.opening = false;
+      code.value = ''; again.value = '';
+      saveEcon();
       econActivity();
       showRecovery(recovery, then);
-    }, { okText: 'Создать', busyText: 'Шифрую…' });
+    }, { okText: 'Создать', busyText: 'Шифрую…', onClose: cancelEconOpen });
     d.dataset.econ = '1';
   }
 
@@ -1942,22 +1972,20 @@
     const label = h('span', null, 'Код экономики');
     const toggle = h('button', { type: 'button', class: 'pp-link', onclick: () => {
       recovery = !recovery; label.textContent = recovery ? 'Код восстановления (XXXX-XXXX-…)' : 'Код экономики';
-      code.type = recovery ? 'text' : 'password'; toggle.textContent = recovery ? 'Ввести обычный код' : 'Забыли код? Ввести код восстановления';
+      code.type = 'password'; toggle.textContent = recovery ? 'Ввести обычный код' : 'Забыли код? Ввести код восстановления';
       code.value = ''; code.focus();
     } }, 'Забыли код? Ввести код восстановления');
     const d = asyncDialog('💼 Экономика', h('div', null,
       h('p', { class: 'pp-muted' }, 'Суммы договоров, бюджет, маржа и поступления — только для собственника.'),
       h('label', { class: 'pp-field' }, label, code), toggle), async () => {
-      const text = await disk.getText(econFile());
-      if (text === null) { econ.exists = false; bad('Экономика ещё не создана. Закройте окно и откройте «Экономику» снова.'); }
-      let file;
-      try { file = JSON.parse(text); } catch (e) { bad('Файл экономики повреждён.'); }
-      const vault = await V.unlock(file, code.value, recovery);
-      const data = (await V.open(vault, file)) || E.empty();
-      Object.assign(econ, { vault, data, rev: file.rev || 1, exists: true });
+      const session = new ES.Session(disk, store, econFile());
+      if (!await session.unlock(code.value, recovery)) { econ.exists = false; bad('Экономика ещё не создана. Закройте окно и откройте «Экономику» снова.'); }
+      econ.session = session; econ.exists = true; econ.opening = false;
+      code.value = '';
       econActivity();
+      if (session.pending()) saveEcon();
       if (recovery) newEconCode(then, 'Вход по коду восстановления. Задайте новый код.'); else then();
-    }, { okText: 'Открыть', busyText: 'Проверяю код…' });
+    }, { okText: 'Открыть', busyText: 'Проверяю код…', onClose: cancelEconOpen });
     d.dataset.econ = '1';
   }
 
@@ -1968,8 +1996,11 @@
       field('Новый код (не короче ' + V.MIN_CODE + ' знаков)', code), field('Ещё раз', again),
       h('p', { class: 'pp-muted' }, 'Код восстановления остаётся прежним.')), async () => {
       if (code.value !== again.value) bad('Коды не совпадают');
-      await V.changeCode(econ.vault, code.value);
-      await saveEcon(true);
+      if (!econ.vault) bad('Экономика закрыта. Войдите снова.');
+      const session = econ.session;
+      econ.operation = session.changeCode(code.value);
+      try { await econ.operation; } finally { econ.operation = null; }
+      code.value = ''; again.value = '';
       setStatus('Код экономики изменён');
       if (then) then();
     }, { busyText: 'Шифрую…' });
@@ -1977,45 +2008,34 @@
   }
 
   /** Правка экономики → через полсекунды на Диск (с объединением, если файл менялся на другом компьютере). */
-  function changedEcon() { clearTimeout(econ.timer); econ.timer = setTimeout(() => saveEcon(), 500); render(); }
+  async function changedEcon(change) {
+    if (!econ.vault) bad('Экономика закрыта. Войдите снова.');
+    await econ.session.edit(change);
+    clearTimeout(econ.timer); econ.timer = setTimeout(() => saveEcon(), 500);
+    setStatus('Правка сохранена зашифрованной на этом компьютере. Отправляю на Диск…');
+    render();
+  }
 
-  async function saveEcon(force) {
+  async function saveEcon() {
     clearTimeout(econ.timer); econ.timer = null;
     if (!econ.vault) return;
-    if (econ.saving) { econ.again = true; return; }
-    econ.saving = true;
-    // Свои копии: экономику могут закрыть, пока идёт запись
-    const vault = econ.vault;
-    let data = econ.data;
+    const session = econ.session;
     try {
-      const text = await disk.getText(econFile());
-      if (text !== null) {
-        const latest = JSON.parse(text);
-        if ((latest.rev || 1) !== econ.rev) {
-          const theirs = await V.open(vault, latest);
-          if (theirs) { data = E.merge(theirs, data); if (econ.vault === vault) econ.data = data; }
-          econ.rev = Math.max(econ.rev, latest.rev || 1);
-          // Код могли сменить на другом компьютере — ключ данных тот же, берём их заголовок, если свой не меняли
-          if (!force) vault.header = { format: latest.format, version: latest.version, kdf: latest.kdf, slots: latest.slots };
-        }
-      }
-      const rev = econ.rev + 1;
-      await disk.putText(econFile(), JSON.stringify(await V.seal(vault, data, rev)));
-      econ.rev = rev;
-      setStatus('Экономика сохранена в ' + time());
+      await session.sync();
+      if (econ.session === session && !econ.closing) setStatus('Экономика сохранена на Диске в ' + time());
     } catch (e) {
-      setStatus('Экономика не сохранилась: ' + e.message + '. Повторю через минуту — не закрывайте страницу.', true);
-      if (econ.vault === vault) econ.timer = setTimeout(() => saveEcon(), 60000);
+      if (econ.session === session && !econ.closing) {
+        setStatus('Не отправлено на Диск: ' + e.message + ' Зашифрованный черновик сохранён на этом компьютере. Повторю через минуту.', true);
+        econ.timer = setTimeout(() => saveEcon(), 60000);
+      }
     } finally {
-      econ.saving = false;
-      if (econ.again) { econ.again = false; saveEcon(); }
       if (!modalOpen()) render();
     }
   }
 
   const pct = (v) => (v === null || v === undefined ? '—' : Math.round(v * 100) + '%');
   const moneyOr = (v) => (v === null || v === undefined ? '—' : money(v));
-  const econLocked = () => h('div', { class: 'pp-card' }, h('p', null, '🔒 Экономика закрыта.'), button('Открыть по коду', () => unlockEcon(() => render()), 'pp-primary'));
+  const econLocked = () => h('div', { class: 'pp-card' }, h('p', null, '🔒 Экономика закрыта.'), button('Открыть по коду', () => openEconomy(), 'pp-primary'));
 
   function econSummaries() {
     const out = [];
@@ -2043,10 +2063,10 @@
         h('div', null, h('small', null, 'Договоры'), h('strong', null, moneyOr(t.contract))),
         h('div', null, h('small', null, 'Потрачено'), h('strong', null, moneyOr(t.spent))),
         h('div', null, h('small', null, 'Получено'), h('strong', { class: 'pp-plus' }, moneyOr(t.received))),
-        h('div', null, h('small', null, 'Должны заказчики'), h('strong', null, moneyOr(t.customerDebt))),
+        h('div', null, h('small', null, 'Просрочка по графику оплат'), h('strong', null, moneyOr(t.customerDebt))),
         h('div', null, h('small', null, 'Маржа (прогноз)'), h('strong', { class: t.marginForecast < 0 ? 'pp-error' : '' }, moneyOr(t.marginForecast)))),
       list.length ? h('div', { class: 'pp-table-wrap' }, h('table', { class: 'pp-table' },
-        h('thead', null, h('tr', null, ['Объект', 'Готовность', 'Срок', 'Договор', 'Потрачено / бюджет', 'Получено', 'Долг заказчика', 'Маржа (прогноз)', 'Внимание'].map((x) => h('th', null, x)))),
+        h('thead', null, h('tr', null, ['Объект', 'Готовность', 'Срок', 'Договор', 'Потрачено / бюджет', 'Получено', 'Просрочка по графику', 'Маржа (прогноз)', 'Внимание'].map((x) => h('th', null, x)))),
         h('tbody', null, list.map(({ path, s }) => h('tr', { class: 'pp-click', onclick: () => openWindow('econ', path) },
           h('td', null, h('button', { type: 'button', class: 'pp-link' }, s.name)),
           h('td', null, pct(s.progress) + (s.timeShare !== null ? ' из ' + pct(s.timeShare) + ' срока' : '')),
@@ -2058,7 +2078,7 @@
           h('td', { class: cls(s.marginForecast) }, moneyOr(s.marginForecast)),
           h('td', null, s.alerts.length ? h('small', { class: 'pp-error' }, s.alerts.slice(0, 3).join(' · ')) : h('small', { class: 'pp-plus' }, 'в порядке'))))))) :
         h('p', { class: 'pp-card pp-muted' }, loading ? 'Загружаю объекты…' : 'Объектов нет.'),
-      h('small', { class: 'pp-muted' }, 'Готовность — по ценам и объёмам ведомости; прогноз затрат — по темпу расходов (потрачено ÷ готовность), пока готовность меньше 10% — по бюджету. Расходы — из «Финансов» объекта.'));
+      h('small', { class: 'pp-muted' }, 'Готовность — по плановым позициям ведомости, с весом по цене; если цены заполнены не везде — позиции имеют равный вес. Дополнительные объёмы не повышают готовность других работ. Прогноз затрат — ориентир по текущему темпу расходов; до 10% готовности — по бюджету. Сравнение со сроком предполагает равномерное выполнение. Просрочка считается только по введённому графику оплат.'));
   }
 
   function econView(w, c) {
@@ -2080,9 +2100,10 @@
         card('Маржа (прогноз)', moneyOr(s.marginForecast), s.marginForecast < 0 ? 'pp-error' : 'pp-plus')),
       h('section', { class: 'pp-card pp-row pp-wrap pp-totals' },
         card('Выполнено (по ценам ведомости)', s.earned ? money(s.earned) : '—', '', 'готовность ' + pct(s.progress) + (s.timeShare !== null ? ', прошло ' + pct(s.timeShare) + ' срока' : '')),
-        card('Сдано по актам приёмки', s.handedOver ? money(s.handedOver) : '—'),
+        card('Принято по журналу', s.handedOver ? money(s.handedOver) : '—', '', 'оценка по ценам ведомости; не сумма подписанных КС-2'),
         card('Получено от заказчика', money(s.received), 'pp-plus', s.incomePrivate ? 'в т. ч. видно только вам: ' + money(s.incomePrivate) : null),
-        card('Долг заказчика', moneyOr(s.customerDebt), s.customerDebt ? 'pp-error' : '', 'выполнено минус получено'),
+        card('Просрочка по графику', moneyOr(s.customerDebt), s.customerDebt ? 'pp-error' : '', 'этапы с прошедшим сроком минус поступления'),
+        card('Выполнено сверх оплаты', money(s.workUnpaid), '', 'оценка по ведомости; срок оплаты определяется договором'),
         s.contractLeft !== null && s.contractLeft < 0 ? card('Получено сверх договора', money(-s.contractLeft), '', 'проверьте сумму договора или доп. соглашения') : card('Осталось получить по договору', moneyOr(s.contractLeft)),
         card('Деньги сейчас', money(s.cash), s.cash < 0 ? 'pp-error' : '', 'получено минус потрачено')),
       cats.length ? h('section', { class: 'pp-card' }, h('h3', null, 'Бюджет по статьям'), h('div', { class: 'pp-table-wrap' }, h('table', { class: 'pp-table' },
@@ -2119,14 +2140,14 @@
       if (Number.isNaN(cc)) bad('Сумма договора — число, например 1500000 или 1500000,50');
       const map = {};
       for (const b of budget) { const v = parseMoney(b.el.value); if (Number.isNaN(v)) bad('Бюджет «' + b.t + '» — число'); if (v) map[b.k] = v; }
-      E.setFields(econ.data, pid, { name: P.project.name, contractCents: cc, contractNo: no.value.trim(), contractDate: date.value ? inputToDay(date.value) : null, note: note.value.trim(), budget: map });
-      changedEcon();
+      await changedEcon((data) => E.setFields(data, pid, { name: P.project.name, contractCents: cc, contractNo: no.value.trim(), contractDate: date.value ? inputToDay(date.value) : null, note: note.value.trim(), budget: map }));
     });
     d.dataset.econ = '1';
   }
 
   function econItemForm(c, list, x) {
     const pid = c.project.projectId;
+    const itemId = x ? x.id : S.newId();
     const date = h('input', { type: 'date', value: dayToInput(x ? x.date : today) });
     const amount = h('input', { inputmode: 'decimal', value: x ? String(x.amountCents / 100).replace('.', ',') : '' });
     const title = h('input', { value: x ? x.title : '', placeholder: list === 'stages' ? 'Аванс 30%' : 'Платёжное поручение №' });
@@ -2135,20 +2156,23 @@
       const day = inputToDay(date.value), cents = parseMoney(amount.value);
       if (day === null) bad('Укажите дату');
       if (!cents || Number.isNaN(cents)) bad('Сумма — число больше нуля');
-      E.saveItem(econ.data, pid, list, { id: x ? x.id : null, date: day, amountCents: cents, title: title.value });
-      changedEcon();
-    }, { extra: x ? button('Удалить', () => { if (!confirm('Удалить?')) return; E.deleteItem(econ.data, pid, list, x.id); changedEcon(); d.remove(); }, 'pp-danger') : null });
+      await changedEcon((data) => E.saveItem(data, pid, list, { id: itemId, date: day, amountCents: cents, title: title.value }));
+    }, { extra: x ? button('Удалить', async () => {
+      if (!confirm('Удалить?')) return;
+      try { await changedEcon((data) => E.deleteItem(data, pid, list, x.id)); d.remove(); } catch (e) { setStatus(e.message, true); }
+    }, 'pp-danger') : null });
     d.dataset.econ = '1';
   }
 
   function exportEconomy(list) {
-    const rows = [['Объект', 'Договор, ₽', 'Бюджет, ₽', 'Потрачено, ₽', 'Прогноз затрат, ₽', 'Выполнено, ₽', 'Получено, ₽', 'Долг заказчика, ₽', 'Маржа по плану, ₽', 'Маржа (прогноз), ₽', 'Готовность, %', 'Срок сдачи', 'Внимание']];
+    const rows = [['Объект', 'Договор, ₽', 'Бюджет, ₽', 'Потрачено, ₽', 'Прогноз затрат, ₽', 'Выполнено, ₽', 'Получено, ₽', 'Просрочка по графику, ₽', 'Маржа по плану, ₽', 'Маржа (прогноз), ₽', 'Готовность, %', 'Срок сдачи', 'Внимание']];
     const rub = (v) => (v === null || v === undefined ? null : v / 100);
     for (const { s } of list) rows.push([s.name, rub(s.contract), rub(s.budget), rub(s.spent), rub(s.forecast), rub(s.earned), rub(s.received), rub(s.customerDebt), rub(s.marginPlan), rub(s.marginForecast),
       s.progress === null ? null : Math.round(s.progress * 100), s.deadline ? { date: s.deadline } : null, s.alerts.join('; ')]);
     const bytes = O.book([{ name: 'Экономика', header: true, widths: [30, 14, 14, 14, 14, 14, 14, 14, 14, 14, 10, 12, 40], rows }]);
     const a = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: 'Экономика ' + shortDate(today) + '.xlsx' });
     document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   }
 
   // ───────── позиция ведомости ─────────
@@ -2737,6 +2761,7 @@
     const candidate = new D.Disk(token, { downloadUrl: app.dataset.downloadUrl, csrf: app.dataset.csrf });
     try {
       const user = await candidate.user();
+      accountId = user.uid;
       store = R.accountStorage(rawStorage, PREFIX, user.uid);
       writerLease = await R.acquireWriter(store, navigator.locks);
       me = writerLease.id;
@@ -2765,7 +2790,8 @@
   window.addEventListener('pagehide', persistAll);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistAll(); });
   window.addEventListener('beforeunload', (e) => {
-    const busy = Object.values(ctxs).some((c) => c.project && (c.project.dirty || c.saving));
+    const busy = Object.values(ctxs).some((c) => c.project && (c.project.dirty || c.saving)) || econ.operation ||
+      (econ.session && econ.session.editing) || (econ.vault && document.querySelector('.pp-modal[data-econ]'));
     if (busy) { persistAll(); if (!leaving) { e.preventDefault(); e.returnValue = ''; } }
   });
   start();

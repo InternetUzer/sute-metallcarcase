@@ -78,17 +78,68 @@ test('расчёт по объекту: выполнено, долг заказ�
   assert.equal(s.earned, 25000000); // 25 м³ × 10 000 ₽
   assert.equal(s.progress, 0.25);
   assert.equal(s.received, 15000000); // из «Финансов» + видимое только собственнику
-  assert.equal(s.customerDebt, 10000000);
+  assert.equal(s.workUnpaid, 10000000);
+  assert.equal(s.customerDebt, 25000000); // только просроченный график оплат
   assert.equal(s.budget, 90000000);
   assert.equal(s.forecast, 120000000); // 300 000 ₽ при 25% → 1 200 000 ₽
   assert.equal(s.marginForecast, 0);
   assert.equal(s.marginPlan, 30000000);
   assert.equal(s.stagesLate, 25000000);
   assert.ok(Math.abs(s.lag - 0.25) < 1e-9);
-  assert.ok(s.alerts.includes('отставание от графика 25%'));
+  assert.ok(s.alerts.includes('готовность ниже равномерного темпа на 25 п.п.'));
   assert.ok(s.alerts.includes('прогноз выше бюджета'));
   assert.ok(s.alerts.includes('заказчик задерживает оплату'));
   const t = E.total([s, E.summary(project({ projects: [{ id: P, name: 'Пусто', updatedAt: 1 }] }), undefined, day)]);
   assert.equal(t.contract, 120000000);
   assert.equal(t.spent, 30000000);
+});
+
+test('overruns and unplanned work cannot hide unfinished planned work', () => {
+  const p = project({
+    projects: [{ id: P, name: 'Объект', updatedAt: 1 }],
+    boq_items: [
+      { id: 'a', projectId: P, planQty: 10, priceCents: 100, updatedAt: 1 },
+      { id: 'b', projectId: P, planQty: 10, priceCents: 100, updatedAt: 1 },
+      { id: 'extra', projectId: P, planQty: null, priceCents: 1000, updatedAt: 1 },
+    ],
+    volumes: [
+      { id: 'v1', projectId: P, itemId: 'a', quantity: 20, date: 10, updatedAt: 1 },
+      { id: 'v2', projectId: P, itemId: 'extra', quantity: 100, date: 10, updatedAt: 1 },
+    ],
+  });
+  const s = E.summary(p, undefined, 11);
+  assert.equal(s.progress, 0.5); assert.equal(s.customerDebt, null);
+  assert.equal(s.earned, 102000);
+});
+
+test('partial acceptance counts; later work does not change earlier whole-item acceptance', () => {
+  const p = project({
+    projects: [{ id: P, name: 'Объект', updatedAt: 1 }],
+    boq_items: [{ id: 'a', projectId: P, planQty: 10, priceCents: 100, updatedAt: 1 }],
+    volumes: [
+      { id: 'v1', projectId: P, itemId: 'a', quantity: 3, date: 10, updatedAt: 1 },
+      { id: 'v2', projectId: P, itemId: 'a', quantity: 5, date: 20, updatedAt: 1 },
+    ],
+    acceptances: [{ id: 'acc1', projectId: P, itemId: 'a', entryId: 'v1', qty: 3, readyDate: 10, result: 'ACCEPTED', updatedAt: 1 }],
+  });
+  assert.equal(E.summary(p, undefined, 25).handedOver, 300);
+  p.put('acceptances', 'acc2', { projectId: P, itemId: 'a', readyDate: 10, result: 'ACCEPTED' });
+  assert.equal(E.summary(p, undefined, 25).handedOver, 300); // v1 counted once, v2 not accepted
+});
+
+test('payment due today is not overdue; future stages are not debt', () => {
+  const p = project({ projects: [{ id: P, name: 'Объект', updatedAt: 1 }] });
+  const data = E.empty();
+  E.saveItem(data, P, 'stages', { date: 20, amountCents: 500 });
+  assert.equal(E.summary(p, data.projects[P], 20).customerDebt, 0);
+  assert.equal(E.summary(p, data.projects[P], 21).customerDebt, 500);
+});
+
+test('malformed KDF and missing ciphertext fail before loading data', async () => {
+  const { vault } = await V.create('long-test-code', FAST);
+  const file = await V.seal(vault, E.empty());
+  file.kdf.iterations = 4294967295;
+  await assert.rejects(V.unlock(file, 'long-test-code'), /повреждён/);
+  await assert.rejects(V.open(vault, { ...file, payload: undefined }), /повреждены/);
+  assert.throws(() => E.validate({ version: 2, projects: {} }), /версия/);
 });

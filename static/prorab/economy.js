@@ -6,16 +6,36 @@
 (function (root) {
   'use strict';
 
-  let seq = 0;
-  const stamp = () => Date.now() * 1000 + (seq = (seq + 1) % 1000);
+  let lastStamp = 0;
+  const stamp = () => (lastStamp = Math.max(Date.now() * 1000, lastStamp + 1));
   const newId = () => (root.crypto || globalThis.crypto).randomUUID();
   const FIELDS = ['contractCents', 'contractNo', 'contractDate', 'budget', 'note', 'name'];
 
   const empty = () => ({ version: 1, projects: {} });
 
+  function validate(data) {
+    const object = (x) => x && typeof x === 'object' && !Array.isArray(x);
+    const safe = (s) => !['__proto__', 'prototype', 'constructor'].includes(s);
+    if (!object(data) || data.version !== 1 || !object(data.projects)) throw new Error('Неизвестная версия данных экономики.');
+    for (const [id, r] of Object.entries(data.projects)) {
+      if (!safe(id) || !object(r) || !object(r.t) || !object(r.payments) || !object(r.stages)) throw new Error('Повреждена запись экономики.');
+      for (const t of [...Object.values(r.t), ...Object.values(r.payments).map((x) => x.t), ...Object.values(r.stages).map((x) => x.t)]) {
+        if (!Number.isSafeInteger(t) || t < 0) throw new Error('Повреждена версия записи экономики.');
+        lastStamp = Math.max(lastStamp, t);
+      }
+      if (r.contractCents != null && (!Number.isSafeInteger(r.contractCents) || r.contractCents < 0)) throw new Error('Повреждена сумма договора.');
+      if (r.budget && (!object(r.budget) || Object.entries(r.budget).some(([k, v]) => !safe(k) || !Number.isSafeInteger(v) || v < 0))) throw new Error('Повреждён бюджет.');
+      for (const list of ['payments', 'stages']) for (const [k, x] of Object.entries(r[list])) {
+        if (!safe(k) || !object(x) || x.id !== k || !Number.isSafeInteger(x.amountCents) || x.amountCents <= 0 || !Number.isSafeInteger(x.date)) throw new Error('Повреждена запись оплаты.');
+      }
+    }
+    return data;
+  }
+
   /** Запись объекта (создаётся при первой правке). */
   function record(data, projectId) {
-    if (!data.projects[projectId]) data.projects[projectId] = { t: {}, payments: {}, stages: {} };
+    if (['__proto__', 'prototype', 'constructor'].includes(projectId)) throw new Error('Неверный идентификатор объекта.');
+    if (!Object.prototype.hasOwnProperty.call(data.projects, projectId)) data.projects[projectId] = { t: {}, payments: {}, stages: {} };
     return data.projects[projectId];
   }
 
@@ -45,6 +65,7 @@
 
   /** Объединить две версии (две вкладки или два компьютера): по каждому полю и записи побеждает более поздняя. */
   function merge(a, b) {
+    if (a) validate(a); if (b) validate(b);
     const out = empty();
     const ids = new Set(Object.keys((a && a.projects) || {}).concat(Object.keys((b && b.projects) || {})));
     for (const id of ids) {
@@ -52,14 +73,14 @@
       const r = { t: {}, payments: {}, stages: {} };
       for (const k of FIELDS) {
         const tx = (x.t || {})[k] || 0, ty = (y.t || {})[k] || 0;
-        const src = ty > tx ? y : x;
+        const src = ty > tx || (ty === tx && JSON.stringify(y[k]) > JSON.stringify(x[k])) ? y : x;
         if (k in src) { r[k] = src[k]; r.t[k] = Math.max(tx, ty); }
       }
       for (const list of ['payments', 'stages']) {
         const keys = new Set(Object.keys(x[list] || {}).concat(Object.keys(y[list] || {})));
         for (const k of keys) {
           const p = (x[list] || {})[k], q = (y[list] || {})[k];
-          r[list][k] = !p ? q : !q ? p : (q.t > p.t ? q : p);
+          r[list][k] = !p ? q : !q ? p : (q.t > p.t || (q.t === p.t && JSON.stringify(q) > JSON.stringify(p)) ? q : p);
         }
       }
       out.projects[id] = r;
@@ -90,11 +111,29 @@
     const priced = boq.filter((b) => prices[b.id] > 0);
     const earned = Math.round(sum(priced, (b) => b.fact * prices[b.id]));
     const planValue = Math.round(sum(priced.filter((b) => b.plan !== null), (b) => b.plan * prices[b.id]));
-    const accepted = new Set(P.acceptancesCurrent().filter((a) => !a.entryId && a.result === 'ACCEPTED').map((a) => a.itemId));
-    const handedOver = Math.round(sum(priced.filter((b) => accepted.has(b.id)), (b) => b.fact * prices[b.id]));
-    const withPlan = boq.filter((b) => b.plan);
-    const progress = planValue > 0 ? Math.min(1, earned / planValue)
-      : withPlan.length ? sum(withPlan, (b) => Math.min(1, b.fact / b.plan)) / withPlan.length : null;
+    const acceptances = P.acceptancesCurrent().filter((a) => a.result === 'ACCEPTED');
+    const volumes = P.rows('volumes');
+    let acceptedValue = 0;
+    for (const b of priced) {
+      const whole = acceptances.find((a) => !a.entryId && a.itemId === b.id);
+      const included = new Set();
+      if (whole) {
+        const done = volumes.filter((v) => v.itemId === b.id && v.date <= whole.readyDate);
+        done.forEach((v) => included.add(v.id));
+        acceptedValue += (whole.qty == null ? sum(done, (v) => Number(v.quantity) || 0) : whole.qty) * prices[b.id];
+      }
+      for (const a of acceptances.filter((a) => a.entryId && a.itemId === b.id && !included.has(a.entryId))) {
+        const entry = volumes.find((v) => v.id === a.entryId);
+        acceptedValue += (a.qty == null ? (entry ? Number(entry.quantity) || 0 : 0) : a.qty) * prices[b.id];
+        included.add(a.entryId);
+      }
+    }
+    const handedOver = Math.round(acceptedValue);
+    const withPlan = boq.filter((b) => b.plan > 0);
+    const allPriced = withPlan.length > 0 && withPlan.every((b) => prices[b.id] > 0);
+    // Extra/unplanned work and overruns on one item cannot finish other items.
+    const progress = allPriced ? sum(withPlan, (b) => Math.min(b.plan, Math.max(0, b.fact)) * prices[b.id]) / planValue
+      : withPlan.length ? sum(withPlan, (b) => Math.min(1, Math.max(0, b.fact / b.plan))) / withPlan.length : null;
 
     const contract = Number.isFinite(r.contractCents) ? r.contractCents : null;
     const budgetMap = r.budget || {};
@@ -104,12 +143,14 @@
     const marginPlan = contract !== null && budget !== null ? contract - budget : null;
     const marginForecast = contract !== null && forecast !== null ? contract - forecast : null;
     const cash = received - spent;
-    const due = earned > 0 ? Math.min(earned, contract !== null ? contract : earned) : null;
-    const customerDebt = due !== null ? Math.max(0, due - received) : null;
+    const workUnpaid = Math.max(0, earned - received);
     const contractLeft = contract !== null ? contract - received : null;
     // Этапы оплат: сколько уже должны были заплатить по графику
     const stagesDue = sum(items(r, 'stages').filter((s) => s.date <= day), (s) => s.amountCents || 0);
-    const stagesLate = stagesDue > received ? stagesDue - received : 0;
+    const overdueAmount = sum(items(r, 'stages').filter((s) => s.date < day), (s) => s.amountCents || 0);
+    const stagesLate = Math.max(0, overdueAmount - received);
+    // A work diary alone does not establish a customer's payment obligation.
+    const customerDebt = items(r, 'stages').length ? stagesLate : null;
 
     const p = P.project;
     let timeShare = null, lag = null;
@@ -120,7 +161,7 @@
     const today = P.todayView(day);
     const alerts = [];
     if (p.deadline && p.deadline < day && (progress === null || progress < 1)) alerts.push('срок сдачи прошёл');
-    else if (lag !== null && lag > 0.1) alerts.push('отставание от графика ' + Math.round(lag * 100) + '%');
+    else if (lag !== null && lag > 0.1) alerts.push('готовность ниже равномерного темпа на ' + Math.round(lag * 100) + ' п.п.');
     if (budget !== null && spent > budget) alerts.push('перерасход бюджета');
     else if (forecast !== null && budget !== null && forecast > budget * 1.05) alerts.push('прогноз выше бюджета');
     if (stagesLate > 0) alerts.push('заказчик задерживает оплату');
@@ -131,7 +172,7 @@
 
     return {
       name: p.name || 'Объект', contract, budget, budgetMap, spent, byCategory, received, incomeShared, incomePrivate,
-      earned, handedOver, planValue, progress, forecast, marginPlan, marginForecast, cash, customerDebt, contractLeft,
+      earned, handedOver, planValue, progress, progressByPrice: allPriced, forecast, marginPlan, marginForecast, cash, customerDebt, contractLeft, workUnpaid,
       stagesDue, stagesLate, timeShare, lag, deadline: p.deadline || null, startDate: p.startDate || null, alerts,
       payments: items(r, 'payments'), stages: items(r, 'stages'), contractNo: r.contractNo || '', contractDate: r.contractDate || null, note: r.note || '',
     };
@@ -144,7 +185,7 @@
       customerDebt: add('customerDebt'), marginForecast: add('marginForecast'), cash: add('cash') };
   }
 
-  const api = { empty, record, setFields, saveItem, deleteItem, items, merge, summary, total };
+  const api = { empty, validate, record, setFields, saveItem, deleteItem, items, merge, summary, total };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabEconomy = api;
 })(typeof window !== 'undefined' ? window : globalThis);
