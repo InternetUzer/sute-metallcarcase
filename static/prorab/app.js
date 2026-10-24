@@ -2458,7 +2458,8 @@
       h('div', { class: 'pp-row pp-wrap' }, field('Номер договора подряда', no), field('Дата договора', date)), field('Стройка', stroyka), field('Сметная (договорная) стоимость, ₽', value),
       h('div', { class: 'pp-row pp-wrap' }, field('НДС', rate), h('label', { class: 'pp-check' }, incl, ' Цены в ведомости уже с НДС')),
       h('p', { class: 'pp-muted' }, 'Ставку НДС проверьте у бухгалтера: с 2026 года основная ставка — 22%.'),
-      h('div', { class: 'pp-row pp-wrap' }, field('Сдал (подрядчик)', from), field('Принял (заказчик)', toR))), async () => {
+      h('div', { class: 'pp-row pp-wrap' }, field('Сдал (подрядчик)', from), field('Принял (заказчик)', toR)),
+      h('p', { class: 'pp-muted' }, 'Подписантов добавляют во вкладке «Участники строительства» → «+ Представитель»: ФИО, должность и организация. Затем выберите их здесь.')), async () => {
       if (rate.value === 'choose') bad('Выберите НДС по вашему договору.');
       const v = parseMoney(value.value);
       if (Number.isNaN(v)) bad('Стоимость — число');
@@ -2585,7 +2586,12 @@
         h('div', { class: 'pp-row pp-wrap' }, field('С', from, 'пусто — с начала'), field('По', to), button('Весь срок', () => { w.ojr = { from: null, to: today }; render(); })),
         h('div', { class: 'pp-row pp-wrap' }, button('⚙ Титульный лист и специальные журналы', () => ojrSettings(c), ''), button('📑 Сформировать общий журнал (Word)', () => makeOjr(c, w), 'pp-primary')),
         h('small', { class: 'pp-muted' }, 'В разделе 3 за выбранный период дней с работами: ' + rows.length + (set.number ? ' · журнал № ' + set.number : '') + (set.permit ? '' : ' · разрешение на строительство не указано'))),
-      !p.address || !I.orgs(d, 'builder').length ? h('p', { class: 'pp-card pp-error' }, 'Для титульного листа заполните адрес в карточке объекта и участников строительства.') : null);
+      !p.address || !I.orgs(d, 'builder').length ? h('p', { class: 'pp-card pp-error' }, 'Для титульного листа заполните адрес в карточке объекта и участников строительства.') : null,
+      w.ojrDownload ? h('section', { class: 'pp-card' },
+        h('p', { class: 'pp-error' }, 'Сохранение на Диске не подтверждено. Готовый Word можно скачать на устройство.'),
+        h('p', { class: 'pp-muted' }, w.ojrDownload.name),
+        button('⬇ Скачать сформированный журнал', () => downloadOjr(w), 'pp-primary'),
+        h('small', { class: 'pp-muted' }, 'Скачайте файл до закрытия или обновления страницы. Это документ на момент последнего формирования.')) : null);
   }
 
   function ojrSettings(c) {
@@ -2617,17 +2623,35 @@
 
   async function makeOjr(c, w) {
     const st = c.id, d = st.participants;
+    if (st.storage.busy || st.generating) return;
     const set = (d.defaults && d.defaults.ojr) || {};
+    st.generating = true;
+    w.ojrDownload = null;
+    let prepared = null;
     try {
       I.validPeriod(w.ojr.from, w.ojr.to || today);
       setStatus('Собираю общий журнал…');
       const bytes = O.richDocx(I.ojrBlocks(c.project, d, { from: w.ojr.from, to: w.ojr.to || today, today, settings: set, acts: st.acts }), { landscape: true });
       const name = ('Общий журнал работ' + (set.number ? ' № ' + set.number : '') + ' на ' + shortDate(w.ojr.to || today) + ' — ' + S.newId()).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
+      prepared = { name, bytes };
       await st.storage.generated('Общий журнал', [{ name, bytes }]);
       afterDocument(c);
       setStatus('Общий журнал сохранён: ' + ID_DIR + '/Общий журнал/' + name);
       window.open(D.webEdit(idDir(c) + '/Общий журнал/' + name), '_blank', 'noopener');
-    } catch (e) { alert(e.message); setStatus(''); }
+    } catch (e) {
+      w.ojrDownload = prepared;
+      const message = e.message + (prepared ? ' Готовый журнал можно скачать кнопкой «Скачать сформированный журнал».' : '');
+      setStatus(message, true); alert(message);
+    } finally { st.generating = false; render(); }
+  }
+
+  function downloadOjr(w) {
+    const file = w.ojrDownload;
+    if (!file) return;
+    const href = URL.createObjectURL(new Blob([file.bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    const a = h('a', { href, download: file.name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
   }
 
   // ───────── свои шаблоны документов ─────────
