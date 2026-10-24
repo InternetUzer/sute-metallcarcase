@@ -2237,7 +2237,7 @@
     if (st.loading) return h('p', { class: 'pp-muted' }, 'Загружаю исполнительную документацию…');
     if (st.error) return h('div', null, h('p', { class: 'pp-error' }, st.error), button('Повторить', () => { c.id = null; render(); }));
     w.tab = w.tab || 'acts';
-    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['ojr', 'Общий журнал работ'], ['people', 'Участники строительства'], ['templates', 'Свои шаблоны']];
+    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['ojr', 'Общий журнал работ'], ['ks', 'КС-2 и КС-3'], ['people', 'Участники строительства'], ['templates', 'Свои шаблоны']];
     const d = st.participants;
     let body;
     if (w.tab === 'acts') {
@@ -2257,6 +2257,8 @@
       body = templatesTab(c);
     } else if (w.tab === 'ojr') {
       body = ojrTab(w, c);
+    } else if (w.tab === 'ks') {
+      body = ksTab(w, c);
     } else {
       body = h('div', { class: 'pp-columns' },
         h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between' }, h('h3', null, 'Организации'), button('+ Организация', () => orgForm(c, null))),
@@ -2279,15 +2281,15 @@
     const role = h('select', null, I.ORG_ROLES.map(([k, t]) => h('option', { value: k }, t)));
     role.value = o ? o.role : 'performer';
     const inp = (v, ph) => h('input', { value: v || '', placeholder: ph || '' });
-    const name = inp(o && o.name, 'ООО «СтройМонтаж»'), ogrn = inp(o && o.ogrn), inn = inp(o && o.inn), address = inp(o && o.address), phone = inp(o && o.phone);
+    const name = inp(o && o.name, 'ООО «СтройМонтаж»'), ogrn = inp(o && o.ogrn), inn = inp(o && o.inn), okpo = inp(o && o.okpo), address = inp(o && o.address), phone = inp(o && o.phone);
     const sro = inp(o && o.sro), sroOgrn = inp(o && o.sroOgrn), sroInn = inp(o && o.sroInn);
     // Подсказка из справочника исполнителей объекта
     const known = h('datalist', { id: 'pp-org-names' }, c.project.contractors().map((x) => h('option', { value: x.name })));
     name.setAttribute('list', 'pp-org-names');
     asyncDialog(o ? 'Организация' : 'Новая организация', h('div', null, field('Роль в актах', role), field('Наименование (или ФИО предпринимателя)', name), known,
-      h('div', { class: 'pp-row pp-wrap' }, field('ОГРН / ОГРНИП', ogrn), field('ИНН', inn)), field('Адрес (место нахождения)', address), field('Телефон', phone),
+      h('div', { class: 'pp-row pp-wrap' }, field('ОГРН / ОГРНИП', ogrn), field('ИНН', inn), field('ОКПО', okpo, 'для КС-2 и КС-3')), field('Адрес (место нахождения)', address), field('Телефон', phone),
       h('h3', null, 'Саморегулируемая организация (если член СРО)'), field('Наименование СРО', sro), h('div', { class: 'pp-row pp-wrap' }, field('ОГРН СРО', sroOgrn), field('ИНН СРО', sroInn))), async () => {
-      I.saveOrg(d, { id: o ? o.id : null, role: role.value, name: name.value, ogrn: ogrn.value.replace(/\s/g, ''), inn: inn.value.replace(/\s/g, ''), address: address.value, phone: phone.value, sro: sro.value, sroOgrn: sroOgrn.value.replace(/\s/g, ''), sroInn: sroInn.value.replace(/\s/g, '') });
+      I.saveOrg(d, { id: o ? o.id : null, role: role.value, name: name.value, ogrn: ogrn.value.replace(/\s/g, ''), inn: inn.value.replace(/\s/g, ''), okpo: okpo.value.replace(/\s/g, ''), address: address.value, phone: phone.value, sro: sro.value, sroOgrn: sroOgrn.value.replace(/\s/g, ''), sroInn: sroInn.value.replace(/\s/g, '') });
       await saveParticipants(c);
       render();
     }, { extra: o ? button('Удалить', async () => { if (!confirm('Удалить организацию «' + o.name + '»? В уже сохранённых актах она останется.')) return; I.remove(d, 'orgs', o.id); await saveParticipants(c); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
@@ -2394,6 +2396,108 @@
     }, 'pp-danger') : null });
     dlg.addEventListener('input', showMissing); dlg.addEventListener('change', showMissing);
     showMissing();
+  }
+
+  // ───────── КС-2 и КС-3 ─────────
+  function monthStart(day) { const x = new Date(day * 86400000); return Math.round(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), 1) / 86400000); }
+
+  function ksTab(w, c) {
+    const st = c.id, d = st.participants, P = c.project;
+    const set = (d.defaults && d.defaults.ks) || {};
+    w.ks = w.ks || { from: monthStart(today), to: today };
+    const from = h('input', { type: 'date', value: w.ks.from !== null ? dayToInput(w.ks.from) : '' });
+    const to = h('input', { type: 'date', value: dayToInput(w.ks.to) });
+    const apply = () => { w.ks.from = from.value ? inputToDay(from.value) : null; w.ks.to = to.value ? inputToDay(to.value) : today; render(); };
+    from.addEventListener('change', apply); to.addEventListener('change', apply);
+    const k = I.ksRows(P, w.ks.from, w.ks.to);
+    const vat = I.vat(k.total, set.vatRate === undefined ? 22 : set.vatRate, !!set.vatIncluded);
+    return h('div', null,
+      h('section', { class: 'pp-card' },
+        h('p', null, 'КС-2 — выполненные за период объёмы позиций ведомости (из журнала) по ценам ведомости. КС-3 — стоимость с начала работ, с начала года и за период, НДС. Организации — из «Участников строительства», подписи — из представителей.'),
+        h('div', { class: 'pp-row pp-wrap' }, field('Отчётный период с', from), field('по', to),
+          button('Этот месяц', () => { w.ks = { from: monthStart(today), to: today }; render(); }),
+          button('Прошлый месяц', () => { const e = monthStart(today) - 1; w.ks = { from: monthStart(e), to: e }; render(); })),
+        h('div', { class: 'pp-row pp-wrap' }, button('⚙ Договор и НДС', () => ksSettings(c)), button('📑 Сформировать КС-2 и КС-3', () => ksMake(c, w), 'pp-primary'), button('⬇ КС-2 в Excel', () => ksExcel(c, w))),
+        h('small', { class: 'pp-muted' }, (set.contractNo ? 'Договор № ' + set.contractNo + (set.contractDate ? ' от ' + shortDate(set.contractDate) : '') : 'Номер договора не указан') + ' · ' +
+          (set.vatRate === null ? 'без НДС' : 'НДС ' + (set.vatRate === undefined ? 22 : set.vatRate) + '%' + (set.vatIncluded ? ' (в ценах)' : ' сверху')))),
+      k.noPrice.length ? h('section', { class: 'pp-card' }, h('p', { class: 'pp-error' }, 'Нет цены — в акт не попадут (укажите цену в ведомости):'),
+        k.noPrice.map((r) => h('button', { type: 'button', class: 'pp-line', onclick: () => boqForm(c, r.itemId) }, h('span', null, r.name), h('strong', null, num(r.qty) + ' ' + r.unit)))) : null,
+      h('section', { class: 'pp-card' }, h('h3', null, 'За период'),
+        k.rows.length ? h('div', { class: 'pp-table-wrap' }, h('table', { class: 'pp-table' },
+          h('thead', null, h('tr', null, ['№', 'Работа', 'Кол-во', 'Ед.', 'Цена', 'Стоимость'].map((t) => h('th', null, t)))),
+          h('tbody', null, k.rows.map((r, i) => h('tr', null, h('td', null, String(i + 1)), h('td', null, r.name), h('td', { class: 'pp-num' }, num(r.qty)), h('td', null, r.unit), h('td', { class: 'pp-num' }, money(r.price)), h('td', { class: 'pp-num' }, money(r.sum))))),
+          h('tfoot', null, h('tr', null, h('td', null, ''), h('th', null, 'Итого'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('th', { class: 'pp-num' }, money(k.total))),
+            vat.vat ? h('tr', null, h('td', null, ''), h('td', null, 'НДС'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('td', { class: 'pp-num' }, money(vat.vat))) : null,
+            vat.vat ? h('tr', null, h('td', null, ''), h('th', null, 'Всего с НДС'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('th', { class: 'pp-num' }, money(vat.all))) : null))) :
+          h('p', { class: 'pp-muted' }, 'За этот период в журнале нет работ по позициям с ценой.')));
+  }
+
+  function ksSettings(c) {
+    const d = c.id.participants, P = c.project;
+    const set = (d.defaults && d.defaults.ks) || {};
+    const cardNo = (P.fields().find((f) => T.norm(f.name) === 'НОМЕР ДОГОВОРА') || {}).value || '';
+    const no = h('input', { value: set.contractNo || cardNo });
+    const date = h('input', { type: 'date', value: set.contractDate ? dayToInput(set.contractDate) : '' });
+    const stroyka = h('input', { value: set.stroyka || '', placeholder: 'если отличается от названия объекта' });
+    const value = h('input', { inputmode: 'decimal', value: set.contractValue ? String(set.contractValue / 100).replace('.', ',') : '', placeholder: 'необязательно' });
+    const rate = h('select', null, [['22', 'НДС 22%'], ['20', 'НДС 20%'], ['10', 'НДС 10%'], ['0', 'НДС 0%'], ['', 'Без НДС (УСН)']].map(([v, t]) => h('option', { value: v }, t)));
+    rate.value = set.vatRate === null ? '' : String(set.vatRate === undefined ? 22 : set.vatRate);
+    const incl = h('input', { type: 'checkbox' }); incl.checked = !!set.vatIncluded;
+    const reps = I.reps(d);
+    const sel = (role, value) => { const s2 = h('select', null, h('option', { value: '' }, '—'), reps.map((r) => h('option', { value: r.id }, r.fio + ' — ' + I.roleTitle(I.REP_ROLES, r.role).toLowerCase()))); s2.value = value || ((reps.find((r) => r.role === role) || {}).id || ''); return s2; };
+    const from = sel('builder', set.signFrom), toR = sel('customerControl', set.signTo);
+    asyncDialog('КС-2 и КС-3: договор и НДС', h('div', null,
+      h('div', { class: 'pp-row pp-wrap' }, field('Номер договора подряда', no), field('Дата договора', date)), field('Стройка', stroyka), field('Сметная (договорная) стоимость, ₽', value),
+      h('div', { class: 'pp-row pp-wrap' }, field('НДС', rate), h('label', { class: 'pp-check' }, incl, ' Цены в ведомости уже с НДС')),
+      h('p', { class: 'pp-muted' }, 'Ставку НДС проверьте у бухгалтера: с 2026 года основная ставка — 22%.'),
+      h('div', { class: 'pp-row pp-wrap' }, field('Сдал (подрядчик)', from), field('Принял (заказчик)', toR))), async () => {
+      const v = parseMoney(value.value);
+      if (Number.isNaN(v)) bad('Стоимость — число');
+      I.setDefaults(d, { ks: Object.assign({}, set, { contractNo: no.value.trim(), contractDate: date.value ? inputToDay(date.value) : null, stroyka: stroyka.value.trim(), contractValue: v,
+        vatRate: rate.value === '' ? null : Number(rate.value), vatIncluded: incl.checked, signFrom: from.value || null, signTo: toR.value || null }) });
+      await saveParticipants(c);
+      render();
+    });
+  }
+
+  function ksOpts(c, w, number) {
+    const d = c.id.participants, set = (d.defaults && d.defaults.ks) || {};
+    const rep = (id) => I.reps(d).find((r) => r.id === id) || null;
+    return { number, date: today, from: w.ks.from, to: w.ks.to, contractNo: set.contractNo, contractDate: set.contractDate, stroyka: set.stroyka, contractValue: set.contractValue,
+      vatRate: set.vatRate === undefined ? 22 : set.vatRate, vatIncluded: !!set.vatIncluded,
+      signFrom: rep(set.signFrom) || I.reps(d, 'builder')[0] || null, signTo: rep(set.signTo) || I.reps(d, 'customerControl')[0] || null };
+  }
+
+  async function ksMake(c, w) {
+    const st = c.id, d = st.participants, P = c.project;
+    const set = (d.defaults && d.defaults.ks) || {};
+    if (!I.ksRows(P, w.ks.from, w.ks.to).rows.length) return alert('За этот период нет работ по позициям с ценой.');
+    const n = (prompt('Номер КС-2 и КС-3', String((set.lastNumber || 0) + 1)) || '').trim();
+    if (!n) return;
+    try {
+      setStatus('Собираю КС-2 и КС-3…');
+      const opts = ksOpts(c, w, n);
+      const period = (w.ks.from ? shortDate(w.ks.from) + '–' : 'по ') + shortDate(w.ks.to);
+      const dir = idDir(c) + '/КС';
+      await disk.mkdir(idDir(c)); await disk.mkdir(dir);
+      const type = { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+      const n2 = ('КС-2 №' + n + ' за ' + period).replace(/[\\/:*?"<>|]/g, '_') + '.docx', n3 = ('КС-3 №' + n + ' за ' + period).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
+      await disk.putBlob(dir + '/' + n2, new Blob([O.richDocx(I.ks2Blocks(P, d, opts).blocks, { landscape: true })], type), true);
+      await disk.putBlob(dir + '/' + n3, new Blob([O.richDocx(I.ks3Blocks(P, d, opts).blocks, { landscape: true })], type), true);
+      I.setDefaults(d, { ks: Object.assign({}, set, { lastNumber: parseInt(n, 10) || set.lastNumber || 0 }) });
+      await saveParticipants(c);
+      setStatus('Сохранено: ' + ID_DIR + '/КС/' + n2 + ' и ' + n3);
+      window.open(D.webEdit(dir + '/' + n2), '_blank', 'noopener');
+    } catch (e) { alert(e.message); setStatus(''); }
+  }
+
+  function ksExcel(c, w) {
+    const k = I.ksRows(c.project, w.ks.from, w.ks.to);
+    const rows = [['№ по порядку', '№ позиции', 'Наименование работ', 'Ед. изм.', 'Количество', 'Цена за ед., ₽', 'Стоимость, ₽']]
+      .concat(k.rows.map((r, i) => [i + 1, r.pos, r.name, r.unit, r.qty, r.price / 100, r.sum / 100]), [[null, null, 'Итого', null, null, null, k.total / 100]]);
+    const bytes = O.book([{ name: 'КС-2', header: true, widths: [8, 10, 60, 10, 12, 16, 18], rows }]);
+    const a = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: ('КС-2 ' + (c.project.project.name || '') + ' ' + shortDate(w.ks.to)).replace(/[\\/:*?"<>|]/g, '_') + '.xlsx' });
+    document.body.append(a); a.click(); a.remove();
   }
 
   // ───────── общий журнал работ ─────────

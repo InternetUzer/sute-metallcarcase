@@ -120,3 +120,37 @@ test('общий журнал работ: работы по дням с пого
     'Акт освидетельствования скрытых работ № 3', 'w:orient="landscape"', '<w:tblHeader/>', 'Петров П. П.']) assert.ok(text.includes(s), s);
   assert.ok(!text.includes('— 9 м³')); // запись после периода не попала
 });
+
+test('КС-2 и КС-3: объёмы за период по ценам ведомости, нарастающим итогом и с НДС', () => {
+  const p = project({
+    projects: [{ id: P, name: 'Склад', address: 'г. Казань', updatedAt: 1 }],
+    units: [{ id: 'u', projectId: P, name: 'м³', updatedAt: 1 }],
+    boq_items: [
+      { id: 'a', projectId: P, name: 'Бетонирование', unitId: 'u', priceCents: 650050, position: 0, updatedAt: 1 },
+      { id: 'b', projectId: P, name: 'Без цены', unitId: 'u', position: 1, updatedAt: 1 },
+    ],
+    volumes: [
+      { id: 'v0', projectId: P, itemId: 'a', date: 20450, quantity: 10, updatedAt: 1 }, // прошлый год (2025)
+      { id: 'v1', projectId: P, itemId: 'a', date: 20460, quantity: 3.5, updatedAt: 1 }, // 2026, до периода
+      { id: 'v2', projectId: P, itemId: 'a', date: 20480, quantity: 2, updatedAt: 1 },
+      { id: 'v3', projectId: P, itemId: 'b', date: 20480, quantity: 5, updatedAt: 1 },
+    ],
+  });
+  const k = I.ksRows(p, 20470, 20490);
+  assert.equal(k.rows.length, 1);
+  assert.equal(k.rows[0].sum, 1300100); // 2 × 6 500,50 ₽
+  assert.equal(k.noPrice[0].name, 'Без цены');
+  const k3 = I.ks3Rows(p, 20470, 20490);
+  assert.equal(k3.total, Math.round(15.5 * 650050));
+  assert.equal(k3.year, Math.round(5.5 * 650050));
+  assert.equal(k3.period, 1300100);
+  assert.deepEqual(I.vat(1000000, 22, false), { base: 1000000, vat: 220000, all: 1220000 });
+  assert.deepEqual(I.vat(1220000, 22, true), { base: 1000000, vat: 220000, all: 1220000 });
+  assert.deepEqual(I.vat(500, null), { base: 500, vat: 0, all: 500 });
+  assert.equal(I.rub(123456789), '1 234 567,89');
+  const d = participants();
+  const text = Buffer.from(O.richDocx(I.ks2Blocks(p, d, { number: 4, date: 20491, from: 20470, to: 20490, contractNo: '17/26' }).blocks, { landscape: true })).toString('utf8');
+  for (const s of ['АКТ О ПРИЁМКЕ ВЫПОЛНЕННЫХ РАБОТ', 'КС-2', '13 001,00', '6 500,50', '№ 17/26', 'Итого']) assert.ok(text.includes(s), s);
+  const t3 = Buffer.from(O.richDocx(I.ks3Blocks(p, d, { number: 4, date: 20491, from: 20470, to: 20490, vatRate: 22 }).blocks, { landscape: true })).toString('utf8');
+  for (const s of ['СПРАВКА О СТОИМОСТИ', 'Сумма НДС (22%)', '15 861,22', 'с начала года']) assert.ok(t3.includes(s), s);
+});

@@ -38,9 +38,10 @@
     const name = String(o.name || '').trim();
     if (!name) throw new Error('Укажите наименование организации или ФИО предпринимателя');
     const row = { id: o.id || newId(), role: o.role, name, ogrn: s(o.ogrn), inn: s(o.inn), address: s(o.address), phone: s(o.phone),
-      sro: s(o.sro), sroOgrn: s(o.sroOgrn), sroInn: s(o.sroInn), updatedAt: stamp() };
+      sro: s(o.sro), sroOgrn: s(o.sroOgrn), sroInn: s(o.sroInn), okpo: s(o.okpo), updatedAt: stamp() };
     if (row.inn && !/^\d{10}(\d{2})?$/.test(row.inn)) throw new Error('ИНН — 10 цифр (организация) или 12 (предприниматель)');
     if (row.ogrn && !/^\d{13}(\d{2})?$/.test(row.ogrn)) throw new Error('ОГРН — 13 цифр (ОГРНИП — 15)');
+    if (row.okpo && !/^\d{8}(\d{2})?$/.test(row.okpo)) throw new Error('ОКПО — 8 цифр (у предпринимателя — 10)');
     data.orgs = data.orgs.filter((x) => x.id !== row.id).concat([row]);
     return row;
   }
@@ -302,6 +303,122 @@
     return out;
   }
 
+  // ───────── КС-2 и КС-3 ─────────
+  /** Деньги: копейки → «1 234 567,89». */
+  const rub = (cents) => (Math.round(cents) / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u00a0/g, ' ');
+  /** Сумма в копейках: количество × цена (копейки), с округлением до копейки. */
+  const cost = (qty, priceCents) => Math.round(Number(qty) * Number(priceCents));
+
+  /**
+   * Строки КС-2: позиции ведомости с ценой и объёмом за период (из журнала). Позиции без цены
+   * возвращаются отдельно (noPrice) — их нельзя включить в акт, пока не задана цена.
+   */
+  function ksRows(P, from, to) {
+    const names = P.names();
+    const ok = (d) => (from === null || from === undefined || d >= from) && (to === null || to === undefined || d <= to);
+    const items = P.rows('boq_items').sort((a, b) => (a.position || 0) - (b.position || 0));
+    const rows = [], noPrice = [];
+    items.forEach((i, k) => {
+      const qty = Math.round(P.rows('volumes').filter((v) => v.itemId === i.id && ok(v.date)).reduce((sum, v) => sum + (Number(v.quantity) || 0), 0) * 1e6) / 1e6;
+      if (!qty) return;
+      const row = { itemId: i.id, pos: k + 1, name: P.itemName(i.id, names), unit: names.units[i.unitId] || '', qty, price: Number(i.priceCents) || 0 };
+      if (!row.price) { noPrice.push(row); return; }
+      row.sum = cost(qty, row.price);
+      rows.push(row);
+    });
+    return { rows, noPrice, total: rows.reduce((sum, r) => sum + r.sum, 0) };
+  }
+
+  /** НДС: rate — 22, 20, 10, 0 или null (без НДС, УСН); included — цены ведомости уже с НДС. */
+  function vat(total, rate, included) {
+    if (!rate) return { base: total, vat: 0, all: total };
+    if (included) { const v = Math.round(total * rate / (100 + rate)); return { base: total - v, vat: v, all: total }; }
+    const v = Math.round(total * rate / 100);
+    return { base: total, vat: v, all: total + v };
+  }
+
+  /** КС-3: стоимость выполненного с начала работ, с начала года и за период (по ценам ведомости). */
+  function ks3Rows(P, from, to) {
+    const year = new Date((to || 0) * 86400000).getUTCFullYear();
+    const yearStart = Math.round(Date.UTC(year, 0, 1) / 86400000);
+    const all = ksRows(P, null, to);
+    const byId = (r) => Object.fromEntries(r.rows.map((x) => [x.itemId, x.sum]));
+    const a = byId(all), y = byId(ksRows(P, yearStart, to)), p = byId(ksRows(P, from, to));
+    const rows = all.rows.map((r) => ({ name: r.name, total: a[r.itemId] || 0, year: y[r.itemId] || 0, period: p[r.itemId] || 0 }));
+    const sum = (k) => rows.reduce((t, r) => t + r[k], 0);
+    return { rows, total: sum('total'), year: sum('year'), period: sum('period'), noPrice: all.noPrice };
+  }
+
+  /** Шапка КС-2/КС-3: инвестор, заказчик, подрядчик, стройка, объект, договор. */
+  function ksHeader(P, participants, opts, title, subtitle) {
+    const org = (role) => orgs(participants, role)[0] || null;
+    const line = (o) => (o ? [o.name, o.address, o.phone ? 'тел. ' + o.phone : ''].filter(Boolean).join(', ') : '');
+    const p = P.project;
+    const cell = (t, o) => Object.assign({ p: [t === null || t === undefined ? '' : String(t)] }, o || {});
+    const small = (t) => ({ p: [{ t, size: 8 }] });
+    const customer = org('customer'), builder = org('builder');
+    const out = [];
+    out.push({ p: [{ t: subtitle, size: 8, i: true }], align: 'right', after: 2 });
+    out.push({ borders: true, widths: [2600, 9200, 1400, 1500], table: [
+      [small('Инвестор'), cell(line(opts.investor === 'none' ? null : customer)), small('по ОКПО'), cell(opts.investor === 'none' ? '' : (customer && customer.okpo) || '')],
+      [small('Заказчик (генподрядчик)'), cell(line(customer)), small('по ОКПО'), cell((customer && customer.okpo) || '')],
+      [small('Подрядчик (субподрядчик)'), cell(line(builder)), small('по ОКПО'), cell((builder && builder.okpo) || '')],
+      [small('Стройка'), cell(opts.stroyka || p.name || ''), small(''), cell('')],
+      [small('Объект'), cell([p.name, p.address].filter(Boolean).join(', ')), small(''), cell('')],
+      [small('Договор подряда (контракт)'), cell([opts.contractNo ? '№ ' + opts.contractNo : '', opts.contractDate ? 'от ' + dmy(opts.contractDate) : ''].filter(Boolean).join(' ')), small(''), cell('')],
+    ] });
+    out.push({ borders: true, widths: [3000, 3000, 2500, 2500], table: [
+      [small('Номер документа'), small('Дата составления'), small('Отчётный период: с'), small('по')],
+      [cell(opts.number || ''), cell(dmy(opts.date)), cell(opts.from ? dmy(opts.from) : ''), cell(dmy(opts.to))],
+    ] });
+    out.push({ p: [{ t: title, b: true, size: 13 }], align: 'center', before: 6, after: 4 });
+    return out;
+  }
+
+  function ksSigns(out, left, leftRep, right, rightRep) {
+    const who = (r) => (r ? [r.position, r.fio].filter(Boolean).join(' ') : '');
+    out.push({ widths: [7500, 7500], table: [
+      [{ p: [{ t: left + ': ', b: true }, who(leftRep) + '   ____________'] }, { p: [{ t: right + ': ', b: true }, who(rightRep) + '   ____________'] }],
+      [{ p: [{ t: '(должность, расшифровка подписи, подпись)', i: true, size: 8 }] }, { p: [{ t: '(должность, расшифровка подписи, подпись)', i: true, size: 8 }] }],
+      [{ p: ['М. П.'] }, { p: ['М. П.'] }],
+    ] });
+  }
+
+  /** КС-2 «Акт о приёмке выполненных работ» (унифицированная форма). opts: { number, date, from, to, contractNo, contractDate, stroyka, contractValue, signFrom, signTo }. */
+  function ks2Blocks(P, participants, opts) {
+    const k = ksRows(P, opts.from, opts.to);
+    const out = ksHeader(P, participants, opts, 'АКТ О ПРИЁМКЕ ВЫПОЛНЕННЫХ РАБОТ', 'Унифицированная форма № КС-2');
+    if (opts.contractValue) out.push({ p: ['Сметная (договорная) стоимость в соответствии с договором подряда (субподряда): ', { t: rub(opts.contractValue) + ' руб.', u: true }], size: 10, after: 4 });
+    const h = (t) => ({ p: [{ t, b: true, size: 9 }], align: 'center' });
+    const c = (t, align) => ({ p: [{ t: String(t), size: 9 }], align: align || 'left' });
+    const rows = [[h('№ по порядку'), h('№ позиции по смете'), h('Наименование работ'), h('№ единичной расценки'), h('Единица измерения'), h('Выполнено работ: количество'), h('цена за единицу, руб.'), h('стоимость, руб.')]];
+    k.rows.forEach((r, i) => rows.push([c(i + 1, 'center'), c(r.pos, 'center'), c(r.name), c(''), c(r.unit, 'center'), c(num(r.qty), 'right'), c(rub(r.price), 'right'), c(rub(r.sum), 'right')]));
+    rows.push([c(''), c(''), { p: [{ t: 'Итого', b: true, size: 9 }], align: 'right' }, c(''), c(''), c(''), c(''), { p: [{ t: rub(k.total), b: true, size: 9 }], align: 'right' }]);
+    out.push({ borders: true, header: true, widths: [800, 1100, 6400, 1300, 1200, 1400, 1500, 1600], table: rows });
+    ksSigns(out, 'Сдал', opts.signFrom, 'Принял', opts.signTo);
+    return { blocks: out, ks: k };
+  }
+
+  /** КС-3 «Справка о стоимости выполненных работ и затрат». opts как у КС-2 + vatRate, vatIncluded. */
+  function ks3Blocks(P, participants, opts) {
+    const k = ks3Rows(P, opts.from, opts.to);
+    const out = ksHeader(P, participants, opts, 'СПРАВКА О СТОИМОСТИ ВЫПОЛНЕННЫХ РАБОТ И ЗАТРАТ', 'Унифицированная форма № КС-3');
+    const h = (t) => ({ p: [{ t, b: true, size: 9 }], align: 'center' });
+    const c = (t, align, b) => ({ p: [{ t: String(t), size: 9, b: !!b }], align: align || 'left' });
+    const rows = [[h('№ по порядку'), h('Наименование пусковых комплексов, этапов, объектов, видов выполненных работ, оборудования, затрат'), h('Код'),
+      h('Стоимость выполненных работ и затрат, руб.: с начала проведения работ'), h('с начала года'), h('в том числе за отчётный период')]];
+    rows.push([c(''), c('Всего работ и затрат, включаемых в стоимость работ', 'left', true), c(''), c(rub(k.total), 'right', true), c(rub(k.year), 'right', true), c(rub(k.period), 'right', true)]);
+    rows.push([c(''), c('в том числе:'), c(''), c(''), c(''), c('')]);
+    k.rows.forEach((r, i) => rows.push([c(i + 1, 'center'), c(r.name), c(''), c(rub(r.total), 'right'), c(rub(r.year), 'right'), c(rub(r.period), 'right')]));
+    const tv = vat(k.total, opts.vatRate, opts.vatIncluded), yv = vat(k.year, opts.vatRate, opts.vatIncluded), pv = vat(k.period, opts.vatRate, opts.vatIncluded);
+    rows.push([c(''), c('Итого', 'right', true), c(''), c(rub(tv.base), 'right', true), c(rub(yv.base), 'right', true), c(rub(pv.base), 'right', true)]);
+    rows.push([c(''), c(opts.vatRate ? 'Сумма НДС (' + opts.vatRate + '%)' : 'Без НДС', 'right'), c(''), c(opts.vatRate ? rub(tv.vat) : '—', 'right'), c(opts.vatRate ? rub(yv.vat) : '—', 'right'), c(opts.vatRate ? rub(pv.vat) : '—', 'right')]);
+    rows.push([c(''), c('Всего с учётом НДС', 'right', true), c(''), c(rub(tv.all), 'right', true), c(rub(yv.all), 'right', true), c(rub(pv.all), 'right', true)]);
+    out.push({ borders: true, header: true, widths: [800, 7000, 900, 2300, 2000, 2300], table: rows });
+    ksSigns(out, 'Заказчик', opts.signTo, 'Подрядчик', opts.signFrom);
+    return { blocks: out, ks: k, vat: pv };
+  }
+
   /** Строки реестра актов (для Excel). */
   function registry(acts) {
     return acts.slice().sort((a, b) => (parseInt(a.number, 10) || 0) - (parseInt(b.number, 10) || 0)).map((a) => ({
@@ -315,7 +432,7 @@
     return ('АОСР №' + act.number + ' от ' + (act.date ? dmy(act.date) : '') + (title ? ' — ' + title : '')).replace(/[\\/:*?"<>|]/g, '_').trim() + '.docx';
   }
 
-  const api = { ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
+  const api = { ksRows, ks3Rows, ks2Blocks, ks3Blocks, vat, rub, ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabId = api;
 })(typeof window !== 'undefined' ? window : globalThis);
