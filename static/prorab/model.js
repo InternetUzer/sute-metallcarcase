@@ -407,6 +407,29 @@
     }
     deleteView(id) { this.del('drawing_views', id); }
 
+    /** Свои линии на чертеже (drawing_shapes, как в приложении): по времени создания. */
+    shapesOf(drawingId) { return this.rows('drawing_shapes').filter((r) => r.drawingId === drawingId).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)); }
+    /** Новая фигура: s — { drawingId, page, kind, points: [[x,y]], text, color, size, value, viewId }. */
+    addShape(s) {
+      const SH = (typeof module !== 'undefined' && module.exports) ? require('./shapes.js') : root.ProrabShapes;
+      const kind = SH.kindOf(s.kind).code;
+      if (!SH.complete(kind, s.points || [])) throw new Error('Не хватает точек для фигуры «' + SH.kindOf(kind).title + '»');
+      if (kind === 'text' && !String(s.text || '').trim()) throw new Error('Пустая надпись');
+      return this.put('drawing_shapes', S.newId(), {
+        projectId: this.projectId, drawingId: s.drawingId, page: s.page || 0, kind, points: SH.encode(s.points), text: String(s.text || '').trim().slice(0, 300),
+        color: SH.colorOf(s.color).hex, width: 2, size: s.size > 0 ? s.size : null, value: Number.isFinite(s.value) ? s.value : null, viewId: s.viewId || null, deleted: 0,
+      });
+    }
+    updateShape(id, changes) {
+      if (!this.get('drawing_shapes', id)) throw new Error('Фигура не найдена');
+      const SH = (typeof module !== 'undefined' && module.exports) ? require('./shapes.js') : root.ProrabShapes;
+      const out = {};
+      if (changes.color !== undefined) out.color = SH.colorOf(changes.color).hex;
+      if (changes.text !== undefined) out.text = String(changes.text || '').trim().slice(0, 300);
+      return this.put('drawing_shapes', id, out);
+    }
+    deleteShape(id) { this.del('drawing_shapes', id); }
+
     /** Следующий номер пометки на чертеже (с удалёнными — как в телефоне). */
     nextNoteNumber(drawingId) { return this.rows('drawing_notes', true).filter((x) => x.drawingId === drawingId).reduce((m, x) => Math.max(m, x.number || 0), 0) + 1; }
 

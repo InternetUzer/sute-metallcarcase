@@ -1449,7 +1449,7 @@
     if (opts.viewId) { w.pendingView = opts.viewId; if (w.viewer) applyPlanView(w, c, opts.viewId); }
     if (opts.place) {
       // Постановка замечания или доп. работы: следующий щелчок по чертежу ставит точку
-      w.placeFor = opts.place; w.placing = true;
+      w.placeFor = opts.place; w.placing = true; w.drawCfg = null; w.drawInfo = null;
       if (w.viewer) w.viewer.setMode('place');
       setStatus('Щёлкните по месту на чертеже: ' + opts.place.title);
       render();
@@ -1494,6 +1494,18 @@
       w.host = h('div', { class: 'pp-plan' });
       w.viewer = window.ProrabViewer.create(w.host, {
         kind: d.kind, dxf: w.dxf, pdf: w.pdf, hidden: w.hidden, notes,
+        shapes: P.shapesOf(d.id), metersPerUnit: shapeScale(w, d),
+        onShape: (sh) => {
+          try { const saved = P.addShape(Object.assign(sh, { drawingId: d.id, viewId: w.viewId })); w.shapeSel = saved.id; changed(c); }
+          catch (e) { alert(e.message); }
+        },
+        onShapeText: (x, y, page, size) => shapeTextForm(c, w, d, { x, y, page, size }),
+        onShapePick: (id) => { w.shapeSel = id; render(); },
+        onDrawChange: (info) => {
+          w.drawInfo = info;
+          const el = document.querySelector('.pp-win[data-key="' + CSS.escape(w.key) + '"] .pp-draw-hint');
+          if (el) el.textContent = drawHint(w, info);
+        },
         onNote: (id) => noteForm(c, w, { id }),
         onPlace: (x, y, page) => {
           w.placing = false; w.viewer.setMode('view');
@@ -1515,6 +1527,9 @@
       if (w.pendingView) { const v = w.pendingView; w.pendingView = null; setTimeout(() => applyPlanView(w, c, v), 0); }
       if (w.focusNote) { const n = P.get('drawing_notes', w.focusNote); w.focusNote = null; if (n) setTimeout(() => w.viewer.focus(n), 0); }
     } else w.viewer.setNotes(notes);
+    const shapes = P.shapesOf(d.id);
+    w.viewer.setShapes(shapes, w.shapeSel === undefined ? null : w.shapeSel);
+    w.viewer.setShapesVisible(w.showShapes !== false);
     const views = P.viewsOf(d.id);
     const viewSel = h('select', { title: 'Сохранённые виды' }, h('option', { value: '' }, 'Весь чертёж'), views.map((v) => h('option', { value: v.id }, v.name || 'Вид')));
     viewSel.value = w.viewId || '';
@@ -1533,12 +1548,89 @@
       h('small', { class: 'pp-muted' }, 'Щелчок — показать, двойной — изменить.'));
     return h('div', { class: 'pp-planwrap' },
       h('div', { class: 'pp-row pp-wrap pp-plan-bar' },
-        button(w.placing ? 'Щёлкните по месту' + (w.placeFor ? ' для «' + w.placeFor.title + '»' : '') + '… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; if (!w.placing) w.placeFor = null; w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
+        button(w.placing ? 'Щёлкните по месту' + (w.placeFor ? ' для «' + w.placeFor.title + '»' : '') + '… (отмена)' : '+ Пометка', () => { w.placing = !w.placing; if (!w.placing) w.placeFor = null; else { w.drawCfg = null; w.drawInfo = null; } w.viewer.setMode(w.placing ? 'place' : 'view'); render(); }, w.placing ? 'pp-danger' : 'pp-primary'),
         button('⤢', () => w.viewer.fit(), 'pp-icon', 'Весь чертёж'), button('−', () => w.viewer.zoom(1 / 1.5), 'pp-icon', 'Дальше'), button('+', () => w.viewer.zoom(1.5), 'pp-icon', 'Ближе'),
         pageBar, w.dxf ? button('Слои', () => layersDialog(w)) : null,
         viewSel, button('Сохранить вид', () => saveViewDialog(w, c, d)),
+        // Подписи кнопок постоянные: панель не переносится и чертёж не сдвигается
+        button('✏️ Чертить', () => {
+          w.drawCfg = w.drawCfg ? null : { kind: 'line', color: '#FF3B30', ortho: false };
+          if (w.drawCfg) { w.placing = false; w.placeFor = null; w.viewer.setMode('view'); w.shapeSel = null; w.showShapes = true; w.viewer.setShapesVisible(true); }
+          w.viewer.setDraw(w.drawCfg); render();
+        }, w.drawCfg ? 'pp-primary' : '', w.drawCfg ? 'Закончить черчение' : 'Свои линии поверх чертежа: линия, ломаная, прямоугольник, размер, текст, площадь'),
+        button('🖊 Линии', () => { w.showShapes = w.showShapes === false; if (!w.showShapes) w.shapeSel = null; w.viewer.setShapesVisible(w.showShapes); render(); }, w.showShapes === false ? '' : 'pp-on', w.showShapes === false ? 'Свои линии скрыты — показать' : 'Свои линии показаны — скрыть'),
         w.dxf && w.dxf.warnings.length ? h('small', { class: 'pp-muted', title: w.dxf.warnings.join('\n') }, 'ⓘ ' + w.dxf.warnings[0]) : null),
-      h('div', { class: 'pp-plan-main' }, w.host, side));
+      // Панель черчения — поверх чертежа: область чертежа не меняет размер, чертёж не «прыгает»
+      h('div', { class: 'pp-plan-main' }, h('div', { class: 'pp-plan-stage' }, w.host, w.drawCfg ? drawBar(w, c, d, shapes) : null),
+        h('div', { class: 'pp-plan-col' }, shapeSide(w, c, d, shapes), side)));
+  }
+
+  // ───────── свои линии на чертеже (этап 1 «упрощённого автокада») ─────────
+  const SHP = window.ProrabShapes;
+  const pdfScaleKey = (d) => 'prorab.pdfscale.' + d.id;
+  function pdfScaleN(d) { try { const n = Number(localStorage.getItem(pdfScaleKey(d))); return n > 0 ? n : null; } catch (e) { return null; } }
+  /** Метров в единице чертежа: DXF — по единицам файла, PDF — по масштабу листа 1:N, который указали здесь. */
+  function shapeScale(w, d) { return d.kind === 'pdf' ? SHP.metersPerUnit(true, 0, pdfScaleN(d)) : SHP.metersPerUnit(false, w.dxf ? w.dxf.units : 0, null); }
+  function drawHint(w, info) {
+    const kind = w.drawCfg ? w.drawCfg.kind : 'line', n = info ? info.count : 0;
+    const tip = n === 0 ? (kind === 'text' ? 'Щёлкните, где будет надпись' : 'Щёлкните начало') :
+      kind === 'rect' ? 'Щёлкните противоположный угол' : (kind === 'line' || kind === 'dim') ? 'Щёлкните конец' :
+        kind === 'area' && n < 3 ? 'Углы контура по порядку (хотя бы 3)' : 'Следующая точка; двойной щелчок или Enter — готово';
+    return (info && info.live ? info.live + ' · ' : '') + tip + ' · Esc — заново, Backspace — убрать точку' + (w.dxf ? ', Alt — без привязки к узлам' : '');
+  }
+  function drawBar(w, c, d, shapes) {
+    const cfg = w.drawCfg;
+    const set = (ch) => { Object.assign(cfg, ch); w.viewer.setDraw(cfg); render(); };
+    const isPdf = d.kind === 'pdf';
+    const scaleIn = isPdf ? h('input', { class: 'pp-num', size: 5, value: pdfScaleN(d) || '', placeholder: '100', title: 'Масштаб листа 1:N (если PDF не уменьшали при печати)' }) : null;
+    if (scaleIn) scaleIn.addEventListener('change', () => {
+      const n = Number(String(scaleIn.value).replace(',', '.'));
+      try { if (n > 0 && n <= 1e6) localStorage.setItem(pdfScaleKey(d), String(n)); else localStorage.removeItem(pdfScaleKey(d)); } catch (e) { /* нет хранилища — масштаб на один раз */ }
+      w.viewer.setScale(SHP.metersPerUnit(true, 0, n > 0 ? n : null)); render();
+    });
+    return h('div', { class: 'pp-row pp-wrap pp-draw-bar' },
+      SHP.KINDS.map((k) => button(k.title, () => set({ kind: k.code }), cfg.kind === k.code ? 'pp-primary' : '')),
+      h('span', { class: 'pp-row' }, SHP.COLORS.map((col) => { const b = h('button', { type: 'button', class: 'pp-swatch-btn' + (cfg.color === col.hex ? ' pp-on' : ''), title: col.title, onclick: () => set({ color: col.hex }) }); b.style.background = col.hex; return b; })),
+      (() => { const b = h('input', { type: 'checkbox' }); b.checked = !!cfg.ortho; b.addEventListener('change', () => set({ ortho: b.checked })); return h('label', { class: 'pp-check', title: 'Только по горизонтали и вертикали' }, b, ' Орто'); })(),
+      cfg.kind === 'polyline' || cfg.kind === 'area' ? button('Готово', () => w.viewer.finishDraw(), 'pp-primary') : null,
+      button('↶ Точку', () => w.viewer.undoPoint(), '', 'Убрать последнюю точку'),
+      isPdf ? h('label', { class: 'pp-row', title: 'Для размеров и площади на PDF' }, 'Масштаб 1:', scaleIn) : null,
+      button('⬇ DXF', () => downloadShapesDxf(w, d, shapes), '', 'Свои линии файлом DXF — ложатся на исходный DXF в точку 0,0'),
+      h('small', { class: 'pp-muted pp-draw-hint' }, drawHint(w, w.drawInfo)),
+      button('✕', () => { w.drawCfg = null; w.viewer.setDraw(null); render(); }, 'pp-icon', 'Закончить черчение'),
+      isPdf && !pdfScaleN(d) && (cfg.kind === 'dim' || cfg.kind === 'area') ? h('small', { class: 'pp-error' }, 'Масштаб PDF не задан — размер будет без значения') : null);
+  }
+  function shapeSide(w, c, d, shapes) {
+    const P = c.project;
+    const sel = w.shapeSel ? shapes.find((x) => x.id === w.shapeSel) : null;
+    if (!sel) return shapes.length ? h('aside', { class: 'pp-plan-side pp-shape-side' }, h('h3', null, 'Линии (' + shapes.length + ')'), h('small', { class: 'pp-muted' }, 'Щёлкните линию на чертеже, чтобы изменить или удалить.')) : null;
+    const sh = SHP.fromRow(sel);
+    const info = sh.kind === 'text' ? sh.text : sh.kind === 'dim' || sh.kind === 'area' ? (SHP.label(sh) || 'без значения (масштаб не был задан)') : 'точек: ' + sh.points.length;
+    return h('aside', { class: 'pp-plan-side pp-shape-side' },
+      h('h3', null, SHP.kindOf(sh.kind).title), h('p', null, info),
+      h('div', { class: 'pp-row pp-wrap' }, SHP.COLORS.map((col) => { const b = h('button', { type: 'button', class: 'pp-swatch-btn' + (sh.color === col.hex ? ' pp-on' : ''), title: col.title, onclick: () => { P.updateShape(sel.id, { color: col.hex }); changed(c); } }); b.style.background = col.hex; return b; })),
+      h('div', { class: 'pp-row pp-wrap' },
+        sh.kind === 'text' ? button('Изменить текст', () => shapeTextForm(c, w, d, { id: sel.id })) : null,
+        button('Удалить', () => { P.deleteShape(sel.id); w.shapeSel = null; changed(c); }, 'pp-danger'),
+        button('Закрыть', () => { w.shapeSel = null; render(); })));
+  }
+  function shapeTextForm(c, w, d, { id, x, y, page, size }) {
+    const P = c.project;
+    const cur = id ? P.get('drawing_shapes', id) : null;
+    const text = h('input', { value: cur ? cur.text : '', maxlength: 300, placeholder: 'Ось А, Бетон B25…' });
+    modal(c, cur ? 'Изменить надпись' : 'Надпись на чертеже', field('Текст', text), () => {
+      if (!text.value.trim()) bad('Введите текст');
+      if (cur) P.updateShape(cur.id, { text: text.value });
+      else { const s = P.addShape({ drawingId: d.id, viewId: w.viewId, kind: 'text', points: [[x, y]], page, size, color: w.drawCfg ? w.drawCfg.color : '#FF3B30', text: text.value }); w.shapeSel = s.id; }
+    });
+  }
+  function downloadShapesDxf(w, d, rows) {
+    const list = rows.map(SHP.fromRow).filter((s) => d.kind !== 'pdf' || s.page === w.viewer.page);
+    if (!list.length) { alert('На этом листе своих линий нет'); return; }
+    const text = SHP.dxf(list, SHP.defaultTextHeight(list), w.dxf && w.dxf.units ? w.dxf.units : null);
+    const name = ('Линии ' + (d.name || 'Чертёж') + (d.kind === 'pdf' && w.pdf && w.pdf.numPages > 1 ? ' лист ' + (w.viewer.page + 1) : '')).replace(/[\\/:*?"<>|]/g, '_') + '.dxf';
+    const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'application/dxf' })), download: name });
+    document.body.append(a); a.click(); a.remove();
   }
 
   function layersDialog(w) {

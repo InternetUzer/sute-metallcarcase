@@ -131,7 +131,7 @@ assert 'no-store' in journal.headers['Cache-Control']
 assert b'/static/prorab/persistence.js' in journal.data
 assert b'/admin/prorab' in client.get('/admin',base_url=base).data
 assert b'Disallow: /prorab' in client.get('/robots.txt',base_url=base).data
-for name in ['app.js', 'persistence.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'document-store.js', 'templates.js', 'fixation.js', 'fixation-store.js', 'office.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/libredwg/libredwg-web.js']:
+for name in ['app.js', 'persistence.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'document-store.js', 'templates.js', 'fixation.js', 'fixation-store.js', 'office.js', 'shapes.js', 'viewer.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/libredwg/libredwg-web.js']:
     response=client.get('/static/prorab/'+name,base_url=base)
     assert response.status_code==200 and 'javascript' in response.mimetype, (name,response.status_code,response.mimetype)
 response=client.get('/static/prorab/vendor/libredwg/libredwg-web.wasm',base_url=base)

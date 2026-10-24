@@ -859,6 +859,93 @@ window.PRORAB_SCHEMA = {
    }
   }
  },
+ "drawing_shapes": {
+  "class": "DrawingShape",
+  "pk": "id",
+  "cols": {
+   "id": {
+    "type": "text",
+    "null": false,
+    "def": {
+     "fn": "id"
+    }
+   },
+   "projectId": {
+    "type": "text",
+    "null": false,
+    "def": null
+   },
+   "drawingId": {
+    "type": "text",
+    "null": false,
+    "def": null
+   },
+   "page": {
+    "type": "int",
+    "null": false,
+    "def": 0
+   },
+   "kind": {
+    "type": "text",
+    "null": false,
+    "def": "line"
+   },
+   "points": {
+    "type": "text",
+    "null": false,
+    "def": ""
+   },
+   "text": {
+    "type": "text",
+    "null": false,
+    "def": ""
+   },
+   "color": {
+    "type": "text",
+    "null": false,
+    "def": "#FF3B30"
+   },
+   "width": {
+    "type": "real",
+    "null": false,
+    "def": 2.0
+   },
+   "size": {
+    "type": "real",
+    "null": true,
+    "def": null
+   },
+   "value": {
+    "type": "real",
+    "null": true,
+    "def": null
+   },
+   "viewId": {
+    "type": "text",
+    "null": true,
+    "def": null
+   },
+   "createdAt": {
+    "type": "int",
+    "null": false,
+    "def": {
+     "fn": "now"
+    }
+   },
+   "updatedAt": {
+    "type": "int",
+    "null": false,
+    "def": {
+     "fn": "now"
+    }
+   },
+   "deleted": {
+    "type": "bool",
+    "null": false,
+    "def": 0
+   }
+  }
+ },
  "remarks": {
   "class": "Remark",
   "pk": "id",
@@ -1388,6 +1475,28 @@ window.PRORAB_SCHEMA = {
     "type": "text",
     "null": true,
     "def": null
+   },
+   "id": {
+    "type": "text",
+    "null": false,
+    "def": null
+   },
+   "projectId": {
+    "type": "text",
+    "null": false,
+    "def": ""
+   },
+   "updatedAt": {
+    "type": "int",
+    "null": false,
+    "def": {
+     "fn": "now"
+    }
+   },
+   "deleted": {
+    "type": "bool",
+    "null": false,
+    "def": 0
    }
   }
  },

@@ -9,6 +9,20 @@ from app import create_app
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_deployment_manifest_contains_current_browser_assets():
+    import hashlib
+    import json
+
+    manifest = json.loads((ROOT / 'docs/prorab-manifest.json').read_text())
+    files = {entry['path']: entry for entry in manifest['files']}
+    assets = {path.relative_to(ROOT).as_posix()
+              for path in (ROOT / 'static/prorab').rglob('*')
+              if path.is_file() and path.suffix in {'.js', '.css', '.wasm'}}
+    assert assets <= files.keys(), 'Browser module missing from hosting installation'
+    for path, entry in files.items():
+        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == entry['sha256'], path
+
+
 @pytest.fixture
 def app(tmp_path):
     app = create_app({'TESTING': True, 'SECRET_KEY': 'test-secret-not-for-production', 'DATA_DIR': str(tmp_path), 'SITE_URL': 'https://example.com'})
@@ -203,7 +217,7 @@ def test_drawing_viewer_files_are_served(app):
     client = app.test_client()
     login(client, 1)
     html = client.get('/admin/prorab').get_data(as_text=True)
-    for name in ('catalog.js', 'dxf.js', 'viewer.js'):
+    for name in ('catalog.js', 'dxf.js', 'shapes.js', 'viewer.js'):
         assert f'src="/static/prorab/{name}?v=' in html
         assert client.get(f'/static/prorab/{name}').status_code == 200
     assert 'data-pdfjs="/static/prorab/vendor/pdf.min.js?v=' in html
