@@ -91,9 +91,9 @@
     const tableXml = (bl) => {
       const widths = bl.widths;
       const grid = '<w:tblGrid>' + widths.map((w) => '<w:gridCol w:w="' + w + '"/>').join('') + '</w:tblGrid>';
-      const rows = bl.table.map((row) => {
+      const rows = bl.table.map((row, ri) => {
         let col = 0;
-        return '<w:tr>' + row.map((cell) => {
+        return '<w:tr>' + (bl.header && ri === 0 ? '<w:trPr><w:tblHeader/></w:trPr>' : '') + row.map((cell) => {
           const span = cell && typeof cell === 'object' && cell.span > 1 ? cell.span : 1;
           const w = widths.slice(col, col + span).reduce((a, x) => a + x, 0);
           col += span;
@@ -106,7 +106,8 @@
     return zip([
       { name: '[Content_Types].xml', text: XML + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>' },
       { name: '_rels/.rels', text: RELS.replace('%T', 'word/document.xml') },
-      { name: 'word/document.xml', text: XML + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + body + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="851" w:right="567" w:bottom="851" w:left="1134" w:header="425" w:footer="425" w:gutter="0"/></w:sectPr></w:body></w:document>' },
+      { name: 'word/document.xml', text: XML + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + body + (opts.landscape ? '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="851" w:right="851" w:bottom="851" w:left="1134" w:header="425" w:footer="425" w:gutter="0"/></w:sectPr>'
+        : '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="851" w:right="567" w:bottom="851" w:left="1134" w:header="425" w:footer="425" w:gutter="0"/></w:sectPr>') + '</w:body></w:document>' },
     ]);
   }
 

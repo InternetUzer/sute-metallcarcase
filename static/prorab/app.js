@@ -2237,7 +2237,7 @@
     if (st.loading) return h('p', { class: 'pp-muted' }, 'Загружаю исполнительную документацию…');
     if (st.error) return h('div', null, h('p', { class: 'pp-error' }, st.error), button('Повторить', () => { c.id = null; render(); }));
     w.tab = w.tab || 'acts';
-    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['people', 'Участники строительства'], ['templates', 'Свои шаблоны']];
+    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['ojr', 'Общий журнал работ'], ['people', 'Участники строительства'], ['templates', 'Свои шаблоны']];
     const d = st.participants;
     let body;
     if (w.tab === 'acts') {
@@ -2255,6 +2255,8 @@
           h('p', { class: 'pp-card pp-muted' }, 'Актов пока нет. Нажмите «+ АОСР» или «Оформить АОСР» в журнале приёмки.'));
     } else if (w.tab === 'templates') {
       body = templatesTab(c);
+    } else if (w.tab === 'ojr') {
+      body = ojrTab(w, c);
     } else {
       body = h('div', { class: 'pp-columns' },
         h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between' }, h('h3', null, 'Организации'), button('+ Организация', () => orgForm(c, null))),
@@ -2392,6 +2394,68 @@
     }, 'pp-danger') : null });
     dlg.addEventListener('input', showMissing); dlg.addEventListener('change', showMissing);
     showMissing();
+  }
+
+  // ───────── общий журнал работ ─────────
+  function ojrTab(w, c) {
+    const st = c.id, d = st.participants;
+    const set = (d.defaults && d.defaults.ojr) || {};
+    const p = c.project.project;
+    w.ojr = w.ojr || { from: null, to: today };
+    const from = h('input', { type: 'date', value: w.ojr.from !== null ? dayToInput(w.ojr.from) : '' });
+    const to = h('input', { type: 'date', value: dayToInput(w.ojr.to || today) });
+    from.addEventListener('change', () => { w.ojr.from = from.value ? inputToDay(from.value) : null; });
+    to.addEventListener('change', () => { w.ojr.to = to.value ? inputToDay(to.value) : today; });
+    const rows = I.ojrWorkRows(c.project, w.ojr.from, w.ojr.to);
+    return h('div', null,
+      h('section', { class: 'pp-card' },
+        h('p', null, 'Общий журнал собирается из того, что уже ведётся: титульный лист — из карточки объекта и участников строительства; раздел 3 (выполнение работ) — из журнала по дням с объёмами, погодой и исполнителями; раздел 4 (строительный контроль) — из замечаний и пометок на чертежах; раздел 5 — из АОСР.'),
+        h('p', { class: 'pp-muted' }, 'Структура — по форме общего журнала работ (приказ Минстроя России № 1026/пр); перед сдачей сверьте с действующей редакцией. Документ Word, альбомная страница, можно дописать и распечатать.'),
+        h('div', { class: 'pp-row pp-wrap' }, field('С', from, 'пусто — с начала'), field('По', to), button('Весь срок', () => { w.ojr = { from: null, to: today }; render(); })),
+        h('div', { class: 'pp-row pp-wrap' }, button('⚙ Титульный лист и специальные журналы', () => ojrSettings(c), ''), button('📑 Сформировать общий журнал (Word)', () => makeOjr(c, w), 'pp-primary')),
+        h('small', { class: 'pp-muted' }, 'В разделе 3 за выбранный период дней с работами: ' + rows.length + (set.number ? ' · журнал № ' + set.number : '') + (set.permit ? '' : ' · разрешение на строительство не указано'))),
+      !p.address || !I.orgs(d, 'builder').length ? h('p', { class: 'pp-card pp-error' }, 'Для титульного листа заполните адрес в карточке объекта и участников строительства.') : null);
+  }
+
+  function ojrSettings(c) {
+    const d = c.id.participants;
+    const set = (d.defaults && d.defaults.ojr) || {};
+    const number = h('input', { value: set.number || '' });
+    const permit = h('input', { value: set.permit || '', placeholder: '№ 16-RU…-2026 от 10.01.2026, кем выдано' });
+    const expertise = h('input', { value: set.expertise || '', placeholder: '№ … от …, кем выдано' });
+    const journals = (set.journals || []).map((j) => Object.assign({}, j));
+    const list = h('div', { class: 'pp-list' });
+    const draw = () => list.replaceChildren(...journals.map((j, i) => {
+      const n = h('input', { value: j.name || '', placeholder: 'Журнал бетонных работ' });
+      const k = h('input', { value: j.keeper || '', placeholder: 'Кто ведёт (ФИО, должность)' });
+      const dt = h('input', { type: 'date', value: j.date ? dayToInput(j.date) : '' });
+      n.addEventListener('input', () => { j.name = n.value; }); k.addEventListener('input', () => { j.keeper = k.value; });
+      dt.addEventListener('change', () => { j.date = dt.value ? inputToDay(dt.value) : null; });
+      return h('div', { class: 'pp-row pp-wrap' }, n, k, dt, button('✕', () => { journals.splice(i, 1); draw(); }, 'pp-icon', 'Убрать'));
+    }));
+    draw();
+    asyncDialog('Общий журнал: титульный лист', h('div', null,
+      field('Номер журнала', number), field('Разрешение на строительство', permit), field('Заключение экспертизы проектной документации', expertise),
+      h('h3', null, 'Раздел 2. Специальные журналы'), list, button('+ Журнал', () => { journals.push({ name: '', keeper: '', date: null }); draw(); }),
+      h('p', { class: 'pp-muted' }, 'Объект, адрес, застройщик, генподрядчик, проектировщик и строительный контроль берутся из карточки объекта и участников строительства.')), async () => {
+      I.setDefaults(d, { ojr: { number: number.value.trim(), permit: permit.value.trim(), expertise: expertise.value.trim(), journals: journals.filter((j) => String(j.name || '').trim()) } });
+      await saveParticipants(c);
+      render();
+    });
+  }
+
+  async function makeOjr(c, w) {
+    const st = c.id, d = st.participants;
+    const set = (d.defaults && d.defaults.ojr) || {};
+    try {
+      setStatus('Собираю общий журнал…');
+      const bytes = O.richDocx(I.ojrBlocks(c.project, d, { from: w.ojr.from, to: w.ojr.to || today, today, settings: set, acts: st.acts }), { landscape: true });
+      const name = ('Общий журнал работ' + (set.number ? ' № ' + set.number : '') + ' на ' + shortDate(w.ojr.to || today)).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
+      await disk.mkdir(idDir(c));
+      await disk.putBlob(idDir(c) + '/' + name, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), true);
+      setStatus('Общий журнал сохранён: ' + ID_DIR + '/' + name);
+      window.open(D.webEdit(idDir(c) + '/' + name), '_blank', 'noopener');
+    } catch (e) { alert(e.message); setStatus(''); }
   }
 
   // ───────── свои шаблоны документов ─────────

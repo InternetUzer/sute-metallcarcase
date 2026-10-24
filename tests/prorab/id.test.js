@@ -86,3 +86,37 @@ test('АОСР в Word: правильный пакет и все пункты �
   for (const s of ['освидетельствования скрытых работ', 'К освидетельствованию предъявлены', 'Разрешается производство последующих работ', 'Петров П. П.', 'С-77-123456',
     'ИНН 7701234567', 'СтройМонтаж', 'Устройство гидроизоляции &lt;фундамента&gt; &amp; стен', '«14» ноября 2025 г.', 'СП 70.13330.2012']) assert.ok(text.includes(s), s);
 });
+
+test('общий журнал работ: работы по дням с погодой, замечания, ИД, персонал', () => {
+  const p = project({
+    projects: [{ id: P, name: 'Склад', address: 'г. Казань', startDate: 20390, updatedAt: 1 }],
+    units: [{ id: 'u', projectId: P, name: 'м³', updatedAt: 1 }],
+    contractors: [{ id: 'k', projectId: P, name: 'СтройМонтаж', updatedAt: 1 }],
+    boq_items: [{ id: 'a', projectId: P, name: 'Бетонирование', unitId: 'u', position: 0, updatedAt: 1 }],
+    volumes: [
+      { id: 'v1', projectId: P, itemId: 'a', date: 20400, quantity: 4, note: 'Ф1', contractorId: 'k', updatedAt: 1 },
+      { id: 'v2', projectId: P, itemId: 'a', date: 20400, quantity: 2, contractorId: 'k', updatedAt: 1 },
+      { id: 'v3', projectId: P, itemId: 'a', date: 20420, quantity: 9, updatedAt: 1 },
+    ],
+    day_weather: [{ id: 'w', projectId: P, date: 20400, tMin: -2.4, tMax: 4.6, precip: 1.26, wind: 7, updatedAt: 1 }],
+    crew_days: [{ id: 'c:20400', projectId: P, crewId: 'c', date: 20400, people: 6, updatedAt: 1 }],
+    remarks: [{ id: 'r', projectId: P, number: 1, date: 20401, text: 'Раковины', place: 'Ф1', dueDate: 20405, status: 'DONE', doneDate: 20404, doneNote: 'затёрли', updatedAt: 1 }],
+  });
+  const rows = I.ojrWorkRows(p, null, 20410);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].works, 'Бетонирование — 4 м³ (Ф1);\nБетонирование — 2 м³');
+  assert.equal(rows[0].weather, '-2…5 °C, осадки 1,3 мм, ветер до 7 м/с');
+  assert.equal(rows[0].who, 'СтройМонтаж');
+  assert.equal(rows[0].people, 6);
+  const ctrl = I.ojrControlRows(p, null, null);
+  assert.equal(ctrl[0].text, 'Раковины (Ф1)');
+  assert.equal(ctrl[0].done, 20404);
+  const d = participants();
+  const blocks = I.ojrBlocks(p, d, { from: null, to: 20410, today: 20410, settings: { number: '1', permit: '16-RU-123-2026', journals: [{ name: 'Журнал бетонных работ', keeper: 'Иванов И. И.' }] },
+    acts: [{ number: 3, date: 20402, works: 'Армирование', signed: true }] });
+  const bytes = O.richDocx(blocks, { landscape: true });
+  const text = Buffer.from(bytes).toString('utf8');
+  for (const s of ['ОБЩИЙ ЖУРНАЛ № 1', '16-RU-123-2026', 'Раздел 1.', 'Раздел 6.', 'Иванов И. И.', 'Журнал бетонных работ', 'Раковины (Ф1)', 'затёрли',
+    'Акт освидетельствования скрытых работ № 3', 'w:orient="landscape"', '<w:tblHeader/>', 'Петров П. П.']) assert.ok(text.includes(s), s);
+  assert.ok(!text.includes('— 9 м³')); // запись после периода не попала
+});

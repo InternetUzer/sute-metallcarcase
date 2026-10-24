@@ -202,6 +202,106 @@
     return out;
   }
 
+  // ───────── общий журнал работ ─────────
+  const weatherLine = (w) => {
+    if (!w) return '';
+    const t = [w.tMin, w.tMax].every((v) => v !== null && v !== undefined) ? Math.round(w.tMin) + '…' + Math.round(w.tMax) + ' °C' : '';
+    return [t, w.precip ? 'осадки ' + num(Math.round(w.precip * 10) / 10) + ' мм' : 'без осадков', w.wind ? 'ветер до ' + Math.round(w.wind) + ' м/с' : ''].filter(Boolean).join(', ');
+  };
+
+  /** Строки раздела 3 — по дням журнала: работы с объёмами и местом, погода, исполнители. */
+  function ojrWorkRows(P, from, to) {
+    return P.days(from, to).filter((d) => d.works.length).sort((a, b) => a.day - b.day).map((d) => ({
+      day: d.day,
+      works: d.works.map((x) => x.title + (x.qty ? ' — ' + num(x.qty) + (x.unit ? ' ' + x.unit : '') : '') + (x.note ? ' (' + x.note + ')' : '')).join(';\n'),
+      weather: weatherLine(d.weather),
+      who: Array.from(new Set(d.works.map((x) => x.who).filter(Boolean))).join(', '),
+      people: d.people.reduce((sum, x) => sum + (Number(x.people) || 0), 0),
+    }));
+  }
+
+  /** Строки раздела 4 — замечания строительного контроля (журнал замечаний и пометки на чертежах). */
+  function ojrControlRows(P, from, to) {
+    const ok = (d) => (from === null || from === undefined || d >= from) && (to === null || to === undefined || d <= to);
+    const names = P.names();
+    const rows = P.remarks().filter((r) => ok(r.date)).map((r) => ({
+      day: r.date, text: (r.text || '') + (r.place ? ' (' + r.place + ')' : ''), due: r.dueDate || null, done: r.status === 'DONE' ? r.doneDate || null : null,
+      doneNote: r.doneNote || '', who: names.contractors[r.contractorId] || '',
+    }));
+    const drawings = Object.fromEntries(P.drawings().map((x) => [x.id, x.name]));
+    for (const n of P.rows('drawing_notes')) {
+      if (drawings[n.drawingId] === undefined) continue;
+      const day = Math.floor((n.createdAt || 0) / 86400000);
+      if (!ok(day)) continue;
+      rows.push({ day, text: (n.text || '') + ' (чертёж «' + drawings[n.drawingId] + '», пометка № ' + n.number + ')', due: n.dueDate || null, done: n.status === 'DONE' ? n.doneDate || null : null, doneNote: '', who: names.contractors[n.contractorId] || '' });
+    }
+    return rows.sort((a, b) => a.day - b.day);
+  }
+
+  /**
+   * Общий журнал работ: титульный лист и разделы 1–6 (по принятой структуре общего журнала; форму сверять
+   * с действующей редакцией приказа Минстроя России № 1026/пр). opts: { from, to, today, settings, acts }.
+   * settings: { number, permit, expertise, journals: [{ name, keeper, date }] }.
+   */
+  function ojrBlocks(P, participants, opts) {
+    const st = opts.settings || {};
+    const p = P.project;
+    const org = (role) => orgs(participants, role)[0] || null;
+    const out = [];
+    const line = (label, value) => out.push({ p: [{ t: label + ': ', b: true }, { t: value || '________________________________', u: !!value }], size: 11, after: 4 });
+    out.push({ p: [{ t: 'ОБЩИЙ ЖУРНАЛ № ' + (st.number || '____'), b: true, size: 16 }], align: 'center', before: 24, after: 2 });
+    out.push({ p: [{ t: 'учёта выполнения работ при строительстве, реконструкции, капитальном ремонте объекта капитального строительства', b: true, size: 12 }], align: 'center', after: 14 });
+    line('Объект капитального строительства', p.name);
+    line('Почтовый или строительный адрес', p.address);
+    line('Застройщик (технический заказчик)', orgLine(org('customer')));
+    line('Лицо, осуществляющее строительство', orgLine(org('builder')));
+    line('Лицо, осуществляющее подготовку проектной документации', orgLine(org('designer')));
+    line('Разрешение на строительство', st.permit);
+    line('Заключение экспертизы проектной документации', st.expertise);
+    const ctrl = reps(participants, 'customerControl').map((r) => repLine(r, participants.orgs.find((o) => o.id === r.orgId))).join('; ');
+    line('Строительный контроль застройщика (технического заказчика)', ctrl);
+    line('Начало строительства', p.startDate ? dmy(p.startDate) : '');
+    line('Окончание строительства', p.deadline ? dmy(p.deadline) + ' (по плану)' : '');
+    line('Журнал сформирован за период', (opts.from ? 'с ' + dmy(opts.from) : 'с начала') + ' по ' + dmy(opts.to || opts.today));
+    out.push({ p: ['В настоящем журнале ____ страниц, прошнуровано и пронумеровано.'], size: 11, before: 10 });
+    const head = (n, title) => { out.push({ pageBreak: true }); out.push({ p: [{ t: 'Раздел ' + n + '. ' + title, b: true, size: 12 }], align: 'center', after: 6 }); };
+    const table = (cols, widths, rows, empty) => out.push({ header: true, borders: true, widths,
+      table: [cols.map((c) => ({ p: [{ t: c, b: true, size: 9 }], align: 'center' }))].concat(rows.length ? rows.map((r) => r.map((c) => ({ p: [{ t: c === null || c === undefined ? '' : String(c), size: 9 }] })))
+        : Array.from({ length: empty || 3 }, () => cols.map(() => ({ p: [' '] })))) });
+
+    head(1, 'Список инженерно-технического персонала лица, осуществляющего строительство, занятого при строительстве объекта капитального строительства');
+    const staff = ['builder', 'builderControl', 'performer'].flatMap((role) => reps(participants, role)).map((r, i) => {
+      const o = participants.orgs.find((x) => x.id === r.orgId) || org('builder') || {};
+      return [i + 1, o.name || '', r.fio + (r.nrs ? ', НРС ' + r.nrs : ''), r.position || '', roleTitle(REP_ROLES, r.role), p.startDate ? dmy(p.startDate) : '', '', r.order || ''];
+    });
+    table(['№ п/п', 'Наименование лица, осуществляющего строительство (подрядчика)', 'Фамилия, инициалы, идентификационный номер в НРС', 'Должность', 'Роль на объекте', 'Дата начала работ на объекте', 'Дата окончания работ', 'Документ о полномочиях'],
+      [700, 2700, 2700, 1800, 2400, 1300, 1300, 2000], staff);
+
+    head(2, 'Перечень специальных журналов, в которых ведётся учёт выполнения работ, а также журналов авторского надзора');
+    table(['№ п/п', 'Наименование специального журнала (журнала авторского надзора)', 'Кто ведёт журнал (наименование, ФИО, должность)', 'Дата передачи застройщику'],
+      [700, 6200, 5800, 2200], (st.journals || []).map((j, i) => [i + 1, j.name, j.keeper, j.date ? dmy(j.date) : '']));
+
+    head(3, 'Сведения о выполнении работ в процессе строительства объекта капитального строительства');
+    const works = ojrWorkRows(P, opts.from, opts.to);
+    table(['№ п/п', 'Дата выполнения работ', 'Наименование работ, их объём и место выполнения', 'Условия производства работ (погода)', 'Исполнитель работ', 'Людей на объекте', 'Представитель лица, осуществляющего строительство (ФИО, подпись)'],
+      [700, 1300, 6000, 2200, 2100, 1000, 1600], works.map((r, i) => [i + 1, dmy(r.day), r.works, r.weather, r.who, r.people || '', '']), 5);
+
+    head(4, 'Сведения о строительном контроле застройщика (технического заказчика) в процессе строительства');
+    const ctrlRows = ojrControlRows(P, opts.from, opts.to);
+    table(['№ п/п', 'Дата', 'Выявленные недостатки и замечания', 'Кто устраняет', 'Срок устранения', 'Дата устранения, что сделано', 'Представитель строительного контроля (ФИО, подпись)'],
+      [700, 1300, 5200, 2100, 1400, 2400, 1800], ctrlRows.map((r, i) => [i + 1, dmy(r.day), r.text, r.who, r.due ? dmy(r.due) : '', r.done ? dmy(r.done) + (r.doneNote ? ' — ' + r.doneNote : '') : '', '']), 5);
+
+    head(5, 'Перечень исполнительной документации');
+    const acts = registry(opts.acts || []).filter((a) => (!opts.from || !a.date || a.date >= opts.from) && (!opts.to || !a.date || a.date <= opts.to));
+    table(['№ п/п', 'Наименование исполнительной документации', 'Дата подписания', 'Отметка о подписании', 'Примечание'],
+      [700, 8200, 1800, 1800, 2400], acts.map((a, i) => [i + 1, 'Акт освидетельствования скрытых работ № ' + a.number + ': ' + String(a.works || '').split('\n')[0], a.date ? dmy(a.date) : '', a.signed ? 'подписан' : 'не подписан', a.next ? 'далее: ' + a.next : '']), 3);
+
+    head(6, 'Сведения о государственном строительном надзоре при строительстве объекта капитального строительства');
+    table(['№ п/п', 'Дата проверки', 'Сведения о проверке, выявленные нарушения', 'Срок устранения', 'Должностное лицо органа государственного строительного надзора (ФИО, подпись)'],
+      [700, 1500, 7200, 1800, 3700], [], 6);
+    return out;
+  }
+
   /** Строки реестра актов (для Excel). */
   function registry(acts) {
     return acts.slice().sort((a, b) => (parseInt(a.number, 10) || 0) - (parseInt(b.number, 10) || 0)).map((a) => ({
@@ -215,7 +315,7 @@
     return ('АОСР №' + act.number + ' от ' + (act.date ? dmy(act.date) : '') + (title ? ' — ' + title : '')).replace(/[\\/:*?"<>|]/g, '_').trim() + '.docx';
   }
 
-  const api = { orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
+  const api = { ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabId = api;
 })(typeof window !== 'undefined' ? window : globalThis);
