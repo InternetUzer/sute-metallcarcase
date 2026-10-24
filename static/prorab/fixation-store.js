@@ -145,7 +145,9 @@
       // Compare current files with the latest recorded fingerprints; do not call a difference a forgery.
       const files = new Map();
       const seals = raw.flatMap((ch) => ch.seals.map((s) => ({ seal: s, at: Date.parse((ch.anchors.get(s.seq) || {}).time) || s.createdAt }))).sort((a, b) => a.at - b.at || a.seal.seq - b.seal.seq);
-      for (const { seal } of seals) for (const f of seal.files) { F.filePath(f.name); files.set(f.name, f.sha256); }
+      // Телефон версии 1.0.122 (снимки v1) писал имя файла без папки: его файлы лежат в «files/»
+      const fileName = (seal, f) => (seal.version === 1 && typeof f.name === 'string' && f.name && !f.name.includes('/') ? 'files/' + f.name : f.name);
+      for (const { seal } of seals) for (const f of seal.files) { const name = F.filePath(fileName(seal, f)); files.set(name, f.sha256); }
       let verifiedFiles = 0;
       for (const [name, hash] of files) {
         try {

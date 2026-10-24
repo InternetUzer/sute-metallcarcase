@@ -1,11 +1,11 @@
 {
-  "base_commit": "560f04c2bdcf50f1daa7d31af309941752e182f6",
-  "reviewed_pr_head": "488ba624a4a8c55f2e2900e018f6a58581b6d298",
+  "base_commit": "76e94a5afc9063af957f949257b8f463b723cf59",
+  "reviewed_pr_head": "5ad6f1a3388c0ef85423856c653f53c2d14faa27",
   "files": [
     {
       "path": "app.py",
-      "sha256": "336bdc6e584b297dfe8f1a84fba7f657e2fa3afdfbd7a09fb60e2a499168af1a",
-      "base_sha256": "083314a5c9f1647dc664253a99f13034823a6414cee3d43a9b66d2e6686c323b"
+      "sha256": "2db47f31207ba4ee1d0c201b1332e31d1798afce10b7dd208a5ca2d906d3530f",
+      "base_sha256": "336bdc6e584b297dfe8f1a84fba7f657e2fa3afdfbd7a09fb60e2a499168af1a"
     },
     {
       "path": "prorab_anchor.py",
@@ -15,7 +15,7 @@
     {
       "path": "prorab_transfer.py",
       "sha256": "b68955edde85a96db9d420b6811baeb0bc283982d01f33241b1a6754ced925fa",
-      "base_sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68"
+      "base_sha256": "b68955edde85a96db9d420b6811baeb0bc283982d01f33241b1a6754ced925fa"
     },
     {
       "path": "seo_panel.py",
@@ -25,7 +25,7 @@
     {
       "path": "static/prorab/app.js",
       "sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd",
-      "base_sha256": "ebd2db1c1533493440e86bb3351e87a0279b5083940ae3070cf8f332334fb7ef"
+      "base_sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd"
     },
     {
       "path": "static/prorab/catalog.js",
@@ -35,7 +35,7 @@
     {
       "path": "static/prorab/disk.js",
       "sha256": "cd2f1430020719c9771889184a0fecbe7ee7ea06339ae68f6702dc44748f114c",
-      "base_sha256": "691392c29e79b79fcfff081662968feac343c215151ed8ed486c7f0f56c53c51"
+      "base_sha256": "cd2f1430020719c9771889184a0fecbe7ee7ea06339ae68f6702dc44748f114c"
     },
     {
       "path": "static/prorab/document-store.js",
@@ -59,7 +59,7 @@
     },
     {
       "path": "static/prorab/fixation-store.js",
-      "sha256": "8c0deccb43f33ef31b1fc2ad44df01885b448fa3dbe9411e4ffbe357fd804311",
+      "sha256": "0a9676214dde5c3519689d3957d0969139c1ec845f9539dd33af90f8150df094",
       "base_sha256": "8c0deccb43f33ef31b1fc2ad44df01885b448fa3dbe9411e4ffbe357fd804311"
     },
     {
@@ -160,7 +160,7 @@
     {
       "path": "templates/prorab.html",
       "sha256": "e0ebd996919afe53052cae187699a608634e20ccc817cbc27cbcfe84a112cc7b",
-      "base_sha256": "e91641fa3cc8c70ba23141a4c9c9c0bb91be0560accf29708fa9171d9baba423"
+      "base_sha256": "e0ebd996919afe53052cae187699a608634e20ccc817cbc27cbcfe84a112cc7b"
     }
   ]
 }
