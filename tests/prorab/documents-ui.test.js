@@ -35,7 +35,8 @@ function setup() {
   vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
-  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => {}; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, makeOjr, repForm, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
+  ctx.reviewOptions = options;
+  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => { reviewOptions.renderCount = (reviewOptions.renderCount || 0) + 1; }; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, makeOjr, repForm, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
   vm.runInNewContext(source, ctx);
   const p = new M.Project({}, window.PRORAB_SCHEMA, 'p', 'web-test', new S.Clock());
   p.put('projects', 'p', { name: 'Учебный объект' });
@@ -119,6 +120,29 @@ test('повтор того же периода остановлен; ошибо
   assert.equal(c.id.certificates.length, 2); assert.equal(c.id.certificates[1].number, '2');
   for (const path of originalFiles) assert.ok(files.has(path));
   assert.equal(c.id.certificates[0].id, original.id);
+});
+
+test('ввод дат КС не перерисовывает поля после первой цифры; применяется по кнопке', async () => {
+  const { api, c, alerts, options, files } = setup();
+  const w = { tab: 'ks', ks: { from: S.today(), to: S.today() } };
+  const tree = api.idView(w, c), dates = nodes(tree).filter((n) => n.tag === 'input' && n.type === 'date');
+  const [from, to] = dates;
+  assert.equal(dates.length, 2);
+  const oldTo = to.value;
+  for (const partial of ['', '2026-10-0', '2026-10-01']) {
+    from.value = partial; from.events.input(); from.events.change();
+    assert.equal(options.renderCount || 0, 0); assert.equal(to.value, oldTo);
+  }
+  to.value = ''; to.events.input(); to.events.change();
+  const generate = nodes(tree).find((n) => n.tag === 'button' && n.textContent.includes('Сформировать КС-2'));
+  await generate.events.click();
+  assert.ok(alerts.at(-1).includes('обе даты')); assert.equal(files.size, 0);
+  to.value = '2026-10-24'; to.events.input(); to.events.change();
+  assert.equal(options.renderCount || 0, 0);
+  nodes(tree).find((n) => n.tag === 'button' && n.textContent === 'Применить период').events.click();
+  assert.equal(options.renderCount, 1);
+  assert.equal(w.ks.from, Math.round(Date.UTC(2026, 9, 1) / 86400000));
+  assert.equal(w.ks.to, Math.round(Date.UTC(2026, 9, 24) / 86400000));
 });
 
 test('кнопки фиксации и проверки: снимок и квитанция сохранены, офлайн не показывает успех', async () => {

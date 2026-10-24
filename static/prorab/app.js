@@ -2414,9 +2414,28 @@
     catch (e) { return h('p', { class: 'pp-error' }, e.message); }
     if (!w.ks || (w.ks.contractKey && w.ks.contractKey !== I.contractKey(set))) w.ks = { from: next.from, to: next.to, contractKey: I.contractKey(set) };
     const from = h('input', { type: 'date', value: w.ks.from !== null ? dayToInput(w.ks.from) : '' });
-    const to = h('input', { type: 'date', value: dayToInput(w.ks.to) });
-    const apply = () => { w.ks.from = from.value ? inputToDay(from.value) : null; w.ks.to = to.value ? inputToDay(to.value) : today; render(); };
-    from.addEventListener('change', apply); to.addEventListener('change', apply);
+    const to = h('input', { type: 'date', value: w.ks.to !== null ? dayToInput(w.ks.to) : '' });
+    const periodHint = h('small', { class: 'pp-muted', 'aria-live': 'polite' });
+    const readDate = (value) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+      const day = inputToDay(value);
+      return day !== null && dayToInput(day) === value ? day : null;
+    };
+    // Native date controls can emit change while a day/year segment is still being typed.
+    // Keep both input elements mounted; render only after an explicit action.
+    const capturePeriod = () => {
+      w.ks.from = readDate(from.value); w.ks.to = readDate(to.value); w.ks.contractKey = I.contractKey(set);
+      periodHint.textContent = 'Даты изменены. Нажмите «Применить период», чтобы обновить таблицу.';
+    };
+    const withPeriod = (action) => {
+      capturePeriod();
+      try {
+        if (w.ks.from === null || w.ks.to === null) throw new Error('Введите обе даты отчётного периода полностью.');
+        I.validPeriod(w.ks.from, w.ks.to);
+      } catch (e) { alert(e.message); return; }
+      return action();
+    };
+    for (const input of [from, to]) { input.addEventListener('input', capturePeriod); input.addEventListener('change', capturePeriod); }
     let k;
     try { k = I.ksRows(P, w.ks.from, w.ks.to); } catch (e) { k = { rows: [], noPrice: [], total: 0, error: e.message }; }
     const vat = I.vat(k.total, set.vatRate === undefined ? null : set.vatRate, !!set.vatIncluded);
@@ -2424,10 +2443,12 @@
       h('section', { class: 'pp-card' },
         h('p', null, 'КС-2 — объёмы за период из журнала по ценам ведомости. КС-3 — сохранённые суммы ранее предъявленных КС-2 и текущего акта. Прежние суммы не меняются при редактировании журнала или цен. Перед подачей проверьте комплект у ПТО и бухгалтера.'),
         h('div', { class: 'pp-row pp-wrap' }, field('Отчётный период с', from), field('по', to),
+          button('Применить период', () => withPeriod(() => render())),
           button('Следующий период', () => { w.ks = { from: next.from, to: next.to, contractKey: I.contractKey(set) }; render(); }),
           button('Этот месяц', () => { w.ks = { from: monthStart(today), to: today }; render(); }),
           button('Прошлый месяц', () => { const e = monthStart(today) - 1; w.ks = { from: monthStart(e), to: e }; render(); })),
-        h('div', { class: 'pp-row pp-wrap' }, button('⚙ Договор и НДС', () => ksSettings(c)), button('📑 Сформировать КС-2 и КС-3', () => ksMake(c, w), 'pp-primary'), button('⬇ Объёмы КС-2 в Excel', () => ksExcel(c, w))),
+        periodHint,
+        h('div', { class: 'pp-row pp-wrap' }, button('⚙ Договор и НДС', () => ksSettings(c)), button('📑 Сформировать КС-2 и КС-3', () => withPeriod(() => ksMake(c, w)), 'pp-primary'), button('⬇ Объёмы КС-2 в Excel', () => withPeriod(() => ksExcel(c, w)))),
         h('small', { class: 'pp-muted' }, (set.contractNo ? 'Договор № ' + set.contractNo + (set.contractDate ? ' от ' + shortDate(set.contractDate) : '') : 'Номер договора не указан') + ' · ' +
           (set.vatRate === undefined ? 'НДС ещё не выбран' : set.vatRate === null ? 'без НДС' : 'НДС ' + (set.vatRate === undefined ? null : set.vatRate) + '%' + (set.vatIncluded ? ' (в ценах)' : ' сверху'))),
         h('p', { class: 'pp-muted' }, 'Следующий номер комплекта: ' + next.number + '. Период начинается после последнего сохранённого КС-2. Если предыдущий акт уже подан заказчику, отметьте его предъявленным — его сумма войдёт в КС-3.')),
