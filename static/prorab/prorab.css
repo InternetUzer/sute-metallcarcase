@@ -205,3 +205,7 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-table tr.pp-click { cursor: pointer; }
 .pp-table tr.pp-click:hover { background: var(--pp-bg); }
 .pp-totals > div { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
+
+/* шаблоны */
+.pp-dialog.pp-wide { width: min(900px, 96vw); max-width: 96vw; }
+.pp-card code { background: var(--pp-bg); padding: 1px 5px; border-radius: 5px; font-size: 0.95em; }

@@ -10,7 +10,7 @@
 </head>
 <body class="pp-body">
 <div class="pp-bar">{% if shared %}<a href="/">Металл-Каркас</a>{% else %}<a href="/admin">← Панель управления</a>{% endif %}<span>Прораб+ · журнал работ</span></div>
-<div id="prorab" class="pp-app" data-client-id="{{ client_id }}" data-root="{{ root }}" data-pdfjs="/static/prorab/vendor/pdf.min.js?v={{ version }}" data-pdfjs-worker="/static/prorab/vendor/pdf.worker.min.js?v={{ version }}" data-dwg="/static/prorab/vendor/libredwg/libredwg-web.js?v={{ version }}" data-download-url="/prorab/download" data-csrf="{{ csrf_token() }}"{% if can_set_root %} data-root-save="/admin/prorab/root"{% endif %}><p class="pp-card">Загружаю…</p></div>
+<div id="prorab" class="pp-app" data-client-id="{{ client_id }}" data-root="{{ root }}" data-pdfjs="/static/prorab/vendor/pdf.min.js?v={{ version }}" data-pdfjs-worker="/static/prorab/vendor/pdf.worker.min.js?v={{ version }}" data-dwg="/static/prorab/vendor/libredwg/libredwg-web.js?v={{ version }}" data-download-url="/prorab/download" data-anchor-url="/prorab/anchor" data-csrf="{{ csrf_token() }}"{% if can_set_root %} data-root-save="/admin/prorab/root"{% endif %}><p class="pp-card">Загружаю…</p></div>
 <noscript><p class="pp-card">Для журнала нужен включённый JavaScript.</p></noscript>
 <script src="/static/prorab/schema.js?v={{ version }}"></script>
 <script src="/static/prorab/sync.js?v={{ version }}"></script>
@@ -21,6 +21,11 @@
 <script src="/static/prorab/economy-store.js?v={{ version }}"></script>
 <script src="/static/prorab/disk.js?v={{ version }}"></script>
 <script src="/static/prorab/office.js?v={{ version }}"></script>
+<script src="/static/prorab/id.js?v={{ version }}"></script>
+<script src="/static/prorab/document-store.js?v={{ version }}"></script>
+<script src="/static/prorab/templates.js?v={{ version }}"></script>
+<script src="/static/prorab/fixation.js?v={{ version }}"></script>
+<script src="/static/prorab/fixation-store.js?v={{ version }}"></script>
 <script src="/static/prorab/catalog.js?v={{ version }}"></script>
 <script src="/static/prorab/dxf.js?v={{ version }}"></script>
 <script src="/static/prorab/viewer.js?v={{ version }}"></script>
