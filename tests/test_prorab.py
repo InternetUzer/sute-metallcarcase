@@ -33,7 +33,7 @@ def test_only_owner_opens_journal(app):
     r = client.get('/admin/prorab')
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    for name in ['schema.js', 'sync.js', 'persistence.js', 'model.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'disk.js', 'office.js', 'app.js', 'prorab.css']:
+    for name in ['schema.js', 'sync.js', 'persistence.js', 'model.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'templates.js', 'disk.js', 'office.js', 'app.js', 'prorab.css']:
         assert '/static/prorab/' + name in html
         assert (ROOT / 'static/prorab' / name).is_file()
     assert 'style=' not in html and '<script>' not in html  # без встроенных скриптов и стилей (CSP)

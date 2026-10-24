@@ -2188,7 +2188,7 @@
   /** Участники и акты объекта (загружаются при первом открытии окна). */
   function idState(c) {
     if (c.id) return c.id;
-    const st = c.id = { loading: true, error: null, participants: I.emptyParticipants(), acts: [] };
+    const st = c.id = { loading: true, error: null, participants: I.emptyParticipants(), acts: [], templates: [] };
     (async () => {
       try {
         const text = await disk.getText(idDir(c) + '/участники.json');
@@ -2200,6 +2200,7 @@
           if (t !== null) { try { acts.push(JSON.parse(t)); } catch (e) { /* повреждённый — пропускаем */ } }
         }
         st.acts = acts;
+        st.templates = await listTemplates(c);
       } catch (e) { st.error = e.message; }
       st.loading = false;
       if (!modalOpen()) render();
@@ -2217,11 +2218,11 @@
   }
 
   /** Сохранить акт: данные (JSON) и документ Word; старый документ при смене имени — в корзину. */
-  async function saveAct(c, act) {
+  async function saveAct(c, act, filled) {
     const st = c.id;
     await disk.mkdir(idDir(c)); await disk.mkdir(idActs(c));
     const name = I.fileName(act);
-    const bytes = O.richDocx(I.blocks(act, st.participants, c.project.project));
+    const bytes = filled || O.richDocx(I.blocks(act, st.participants, c.project.project));
     await disk.putBlob(idActs(c) + '/' + name, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), true);
     if (act.docx && act.docx !== name) { try { await disk.remove(idActs(c) + '/' + act.docx); } catch (e) { /* уже нет */ } }
     act.docx = name;
@@ -2236,7 +2237,7 @@
     if (st.loading) return h('p', { class: 'pp-muted' }, 'Загружаю исполнительную документацию…');
     if (st.error) return h('div', null, h('p', { class: 'pp-error' }, st.error), button('Повторить', () => { c.id = null; render(); }));
     w.tab = w.tab || 'acts';
-    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['people', 'Участники строительства']];
+    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['people', 'Участники строительства'], ['templates', 'Свои шаблоны']];
     const d = st.participants;
     let body;
     if (w.tab === 'acts') {
@@ -2252,6 +2253,8 @@
           h('small', null, [a.start && a.end ? 'работы ' + shortDate(a.start) + '–' + shortDate(a.end) : '', a.next ? 'далее: ' + a.next : ''].filter(Boolean).join(' · ')),
           h('strong', { class: a.signed ? 'pp-plus' : 'pp-muted' }, a.signed ? 'подписан' : 'черновик')))) :
           h('p', { class: 'pp-card pp-muted' }, 'Актов пока нет. Нажмите «+ АОСР» или «Оформить АОСР» в журнале приёмки.'));
+    } else if (w.tab === 'templates') {
+      body = templatesTab(c);
     } else {
       body = h('div', { class: 'pp-columns' },
         h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between' }, h('h3', null, 'Организации'), button('+ Организация', () => orgForm(c, null))),
@@ -2326,6 +2329,9 @@
     performer.value = act.performerId || '';
     const repBoxes = I.reps(d).map((r) => { const b = h('input', { type: 'checkbox' }); b.checked = act.repIds.includes(r.id); return [r, b]; });
     const signed = h('input', { type: 'checkbox' }); signed.checked = !!act.signed;
+    const forms = (st.templates || []).filter((t) => t.kind === 'docx');
+    const form = h('select', null, h('option', { value: '' }, 'Встроенная форма АОСР'), forms.map((t) => h('option', { value: t.path }, '📝 ' + t.title + (t.scope === 'common' ? ' (общий)' : ''))));
+    form.value = forms.some((t) => t.path === (act.template || d.defaults.aosrTemplate)) ? act.template || d.defaults.aosrTemplate : '';
     const fill = () => {
       const dr = I.draft(P, d, { itemId: itemSel.value || null, from: from.value ? inputToDay(from.value) : null, to: to.value ? inputToDay(to.value) : null, today });
       if (!dr.works) return alert('В журнале нет записей по этой позиции за выбранные даты.');
@@ -2348,6 +2354,7 @@
     const showMissing = () => { try { const m = I.missing(collect(), d); warn.textContent = m.length ? 'Не заполнено: ' + m.join('; ') + '. Акт можно сохранить черновиком.' : ''; } catch (e) { warn.textContent = e.message; } };
     const dlg = asyncDialog((a ? 'АОСР № ' + a.number : 'Новый АОСР') + ' · ' + projName(c.path), h('div', { class: 'pp-aosr' },
       h('div', { class: 'pp-row pp-wrap' }, field('№ акта', number), field('Дата акта', date), field('Место составления', place)),
+      field('Форма документа', form, forms.length ? 'свои шаблоны — во вкладке «Свои шаблоны»' : 'можно загрузить свою форму во вкладке «Свои шаблоны»'),
       h('h3', null, 'Откуда работы'),
       h('div', { class: 'pp-row pp-wrap' }, field('Позиция ведомости', itemSel), field('С', from), field('По', to)),
       button('Заполнить из журнала', fill), h('small', { class: 'pp-muted' }, ' — работы с объёмом, даты начала и окончания, исполнитель и следующая позиция ведомости.'),
@@ -2359,11 +2366,19 @@
       h('div', { class: 'pp-catalog' }, repBoxes.length ? repBoxes.map(([r, b]) => h('label', { class: 'pp-check' }, b, ' ' + r.fio + ' — ' + I.roleTitle(I.REP_ROLES, r.role).toLowerCase())) : h('p', { class: 'pp-muted' }, 'Представителей нет — добавьте их во вкладке «Участники строительства».')),
       h('label', { class: 'pp-check' }, signed, ' Акт подписан всеми сторонами'), warn), async () => {
       collect();
-      const name = await saveAct(c, act);
+      act.template = form.value || null;
+      let filled = null, missingLabels = [];
+      if (act.template) {
+        const buf = await disk.getBytes(act.template);
+        if (!buf) bad('Шаблон не найден на Диске: ' + act.template);
+        const res = await T.fill(new Uint8Array(buf), T.values(P, d, act, today), 'docx');
+        filled = res.bytes; missingLabels = res.missing;
+      }
+      const name = await saveAct(c, act, filled);
       // Запомнить общие значения для следующих актов
-      I.setDefaults(d, { place: act.place, project: act.project, norms: act.norms, documents: act.documents, copies: act.copies });
+      I.setDefaults(d, { place: act.place, project: act.project, norms: act.norms, documents: act.documents, copies: act.copies, aosrTemplate: act.template });
       await saveParticipants(c);
-      setStatus('Акт сохранён: ' + ID_DIR + '/АОСР/' + name);
+      setStatus('Акт сохранён: ' + ID_DIR + '/АОСР/' + name + (missingLabels.length ? ' · в шаблоне незнакомые метки: ' + missingLabels.join(', ') : ''), missingLabels.length > 0);
       window.open(D.webEdit(idActs(c) + '/' + name), '_blank', 'noopener');
       render();
     }, { okText: 'Сохранить и открыть в Word', busyText: 'Сохраняю на Диск…', extra: a ? button('Удалить акт', async () => {
@@ -2377,6 +2392,103 @@
     }, 'pp-danger') : null });
     dlg.addEventListener('input', showMissing); dlg.addEventListener('change', showMissing);
     showMissing();
+  }
+
+  // ───────── свои шаблоны документов ─────────
+  const T = window.ProrabTemplates;
+  const TPL = 'Шаблоны';
+  const tplDirs = (c) => [[idDir(c) + '/' + TPL, 'object'], [ROOT + '/' + TPL, 'common']];
+
+  async function listTemplates(c) {
+    const out = [];
+    for (const [dir, scope] of tplDirs(c)) {
+      const items = (await disk.list(dir)) || [];
+      for (const it of items) {
+        const kind = it.type === 'file' ? T.kindOf(it.name) : null;
+        if (kind && !it.name.startsWith('~$')) out.push({ name: it.name, title: it.name.replace(/\.(docx|xlsx)$/i, ''), path: dir + '/' + it.name, scope, kind });
+      }
+    }
+    return out.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  }
+
+  function templatesTab(c) {
+    const st = c.id;
+    const pickFor = (scope) => {
+      const input = h('input', { type: 'file', accept: '.docx,.xlsx', multiple: true });
+      input.addEventListener('change', () => uploadTemplates(c, scope, Array.from(input.files)));
+      input.click();
+    };
+    const list = st.templates || [];
+    return h('div', null,
+      h('section', { class: 'pp-card' },
+        h('p', null, 'Возьмите любой свой документ Word или таблицу Excel (форму акта, бланк, письмо, КС-2) и в нужных местах напишите метки в фигурных скобках, например ', h('code', null, '{ОБЪЕКТ}'), ', ', h('code', null, '{ЗАСТРОЙЩИК ИНН}'), ', ', h('code', null, '{РАБОТЫ}'), '. Кабинет подставит данные карточки объекта, участников строительства и акта, а оформление останется вашим.'),
+        h('p', { class: 'pp-muted' }, 'Регистр, «ё» и подчёркивания не важны: {Застройщик_ИНН} = {ЗАСТРОЙЩИК ИНН}. Свои поля карточки объекта тоже работают: поле «Номер договора» → {НОМЕР ДОГОВОРА}.'),
+        h('div', { class: 'pp-row pp-wrap' }, button('📋 Список меток', () => labelsDialog(c), 'pp-primary'), button('⬆ Шаблон для этого объекта', () => pickFor('object')), button('⬆ Общий шаблон (для всех объектов)', () => pickFor('common')))),
+      h('section', { class: 'pp-card' }, h('h3', null, 'Шаблоны'),
+        list.length ? list.map((t) => h('div', { class: 'pp-line' },
+          h('span', null, (t.kind === 'xlsx' ? '📊 ' : '📝 ') + t.title),
+          h('small', null, t.scope === 'common' ? 'общий — папка «' + lastName(ROOT) + '/' + TPL + '»' : 'этого объекта — «' + ID_DIR + '/' + TPL + '»'),
+          h('strong', null, h('span', { class: 'pp-row' }, button('Создать документ', () => fromTemplate(c, t), 'pp-primary'), button('Открыть', () => window.open(D.webEdit(t.path), '_blank', 'noopener')),
+            button('✕', async () => { if (!confirm('Удалить шаблон «' + t.title + '»? Он уйдёт в корзину Яндекс Диска.')) return; try { await disk.remove(t.path); st.templates = await listTemplates(c); render(); } catch (e) { alert(e.message); } }, 'pp-icon', 'Удалить шаблон'))))) :
+          h('p', { class: 'pp-muted' }, 'Шаблонов пока нет. Форма АОСР по умолчанию — встроенная; свою можно загрузить кнопками выше.'),
+        h('small', { class: 'pp-muted' }, 'Шаблон Word можно выбрать в форме АОСР («Форма документа») — тогда акт выйдет в вашем виде. «Создать документ» — документ без акта: данные объекта и участников.')));
+  }
+
+  async function uploadTemplates(c, scope, files) {
+    const st = c.id;
+    const known = new Set(T.values(c.project, st.participants, I.draft(c.project, st.participants, { today }), today).map((v) => T.norm(v.key)));
+    const notes = [];
+    for (const f of files) {
+      const kind = T.kindOf(f.name);
+      if (!kind) { notes.push(f.name + ': нужен .docx или .xlsx (старые .doc/.xls сохраните в новом формате)'); continue; }
+      try {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const labels = await T.labelsIn(bytes, kind);
+        const unknown = labels.filter((l) => !known.has(T.norm(l.slice(1, -1))));
+        const dir = tplDirs(c).find(([, s2]) => s2 === scope)[0];
+        await disk.mkdir(scope === 'object' ? idDir(c) : ROOT); await disk.mkdir(dir);
+        await disk.putBlob(dir + '/' + f.name, f, true);
+        notes.push(f.name + ': меток ' + labels.length + (unknown.length ? ', незнакомые (проверьте написание): ' + unknown.join(', ') : ', все знакомые ✓'));
+      } catch (e) { notes.push(f.name + ': ' + e.message); }
+    }
+    st.templates = await listTemplates(c);
+    render();
+    alert(notes.join('\n'));
+  }
+
+  async function fromTemplate(c, t) {
+    const st = c.id;
+    const base = t.title + ' ' + shortDate(today);
+    const name = (prompt('Название документа', base) || '').trim();
+    if (!name) return;
+    if (!validName(name)) return alert('В названии нельзя использовать \\ / : * ? " < > |');
+    try {
+      setStatus('Заполняю шаблон…');
+      const buf = await disk.getBytes(t.path);
+      if (!buf) throw new Error('Шаблон не найден на Диске');
+      const res = await T.fill(new Uint8Array(buf), T.values(c.project, st.participants, null, today), t.kind);
+      const dir = idDir(c) + '/Документы';
+      await disk.mkdir(idDir(c)); await disk.mkdir(dir);
+      const file = dir + '/' + name + '.' + t.kind;
+      await disk.putBlob(file, new Blob([res.bytes]), false);
+      setStatus('Документ создан: ' + ID_DIR + '/Документы/' + name + '.' + t.kind + (res.missing.length ? ' · не заполнены метки: ' + res.missing.join(', ') : ''), res.missing.length > 0);
+      window.open(D.webEdit(file), '_blank', 'noopener');
+    } catch (e) { alert(e.message); setStatus(''); }
+  }
+
+  function labelsDialog(c) {
+    const st = c.id;
+    const act = st.acts.length ? st.acts.slice().sort((a, b) => (parseInt(b.number, 10) || 0) - (parseInt(a.number, 10) || 0))[0] : I.draft(c.project, st.participants, { today });
+    const list = T.values(c.project, st.participants, act, today);
+    const groups = Array.from(new Set(list.map((x) => x.group)));
+    const copy = async (text) => { try { await navigator.clipboard.writeText(text); setStatus('Скопировано: ' + text); } catch (e) { /* выделите вручную */ } };
+    const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap) wrap.remove(); } },
+      h('div', { class: 'pp-dialog pp-wide' },
+        h('div', { class: 'pp-row pp-between' }, h('h2', null, 'Метки для шаблонов'), button('✕', () => wrap.remove(), 'pp-icon')),
+        h('p', { class: 'pp-muted' }, 'Нажмите на метку — она скопируется; вставьте её в документ Word или Excel. Справа — что подставится сейчас' + (st.acts.length ? ' (метки акта — по последнему АОСР).' : '.')),
+        h('div', { class: 'pp-catalog' }, groups.map((g) => h('div', null, h('h3', null, g), h('table', { class: 'pp-table' }, h('tbody', null, list.filter((x) => x.group === g).map((x) => h('tr', null,
+          h('td', null, button('{' + x.key + '}', () => copy('{' + x.key + '}'), 'pp-link')), h('td', null, h('small', null, x.title)), h('td', null, h('small', { class: x.value ? '' : 'pp-muted' }, x.value || '— пусто —')))))))))));
+    document.body.append(wrap);
   }
 
   function exportActs(c) {
