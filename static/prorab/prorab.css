@@ -199,3 +199,9 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
   .pp-plan { min-height: 320px; }
   .pp-plan-side { width: auto; max-height: 34vh; border-left: 0; border-top: 1px solid var(--pp-line); }
 }
+
+/* экономика */
+.pp-recovery { font: 600 20px/1.4 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 1px; padding: 12px; border: 1px dashed var(--pp-line); border-radius: 10px; text-align: center; user-select: all; }
+.pp-table tr.pp-click { cursor: pointer; }
+.pp-table tr.pp-click:hover { background: var(--pp-bg); }
+.pp-totals > div { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
