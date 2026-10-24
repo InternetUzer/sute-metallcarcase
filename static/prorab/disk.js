@@ -12,7 +12,21 @@
   const diskPath = (p) => 'disk:' + normalize(p);
 
   class Disk {
-    constructor(token, options) { this.token = token; this.options = options || {}; }
+    constructor(token, options) { this.token = token; this.options = options || {}; this.folders = new Map(); }
+
+    async writeError(response, fallback) {
+      const body = await response.json().catch(() => ({}));
+      const detail = [body && body.error, body && body.reason, body && body.description, body && body.message].join(' ');
+      const quota = /UploadTrafficLimitExceeded|UPLOAD_TRAFFIC_LIMIT_EXCEEDED/i.test(detail);
+      let message = fallback + ' (' + response.status + ')';
+      if (response.status === 423) message = quota ?
+        'Яндекс Диск сообщил об исчерпанном лимите загрузки (423). Проверьте ограничения в своём аккаунте Диска.' :
+        'Яндекс Диск заблокировал запись (423). Повторите позже; если ошибка остаётся, откройте Диск и проверьте его уведомления и ограничения.';
+      if (response.status === 507) message = 'На Яндекс Диске недостаточно свободного места (507).';
+      const error = new DiskError(message, response.status);
+      error.retryable = response.status === 423 && !quota;
+      return error;
+    }
 
     async call(method, path, query, opts) {
       const qs = new URLSearchParams(query || {}).toString();
@@ -97,20 +111,20 @@
     async putText(path, text) {
       const r = await this.call('GET', '/resources/upload', { path: diskPath(path), overwrite: 'true' });
       if (r.status === 409) throw new DiskError('Папки на Диске нет: ' + path, 409);
-      if (!r.ok) throw new DiskError('Не удалось записать на Диск (' + r.status + ')', r.status);
+      if (!r.ok) throw await this.writeError(r, 'Не удалось записать на Диск');
       const { href, method } = await r.json();
       const up = await fetch(href, { method: method || 'PUT', body: new Blob([text], { type: 'application/json' }) });
-      if (!up.ok && up.status !== 201 && up.status !== 202) throw new DiskError('Не удалось записать на Диск (' + up.status + ')', up.status);
+      if (!up.ok && up.status !== 201 && up.status !== 202) throw await this.writeError(up, 'Не удалось записать на Диск');
     }
 
     /** Файл с компьютера или собранный документ → на Диск. overwrite=false — не затирать существующий. */
     async putBlob(path, blob, overwrite) {
       const r = await this.call('GET', '/resources/upload', { path: diskPath(path), overwrite: overwrite ? 'true' : 'false' });
       if (r.status === 409) throw new DiskError('Файл с таким именем уже есть: ' + path.split('/').pop(), 409);
-      if (!r.ok) throw new DiskError('Не удалось записать на Диск (' + r.status + ')', r.status);
+      if (!r.ok) throw await this.writeError(r, 'Не удалось записать на Диск');
       const { href, method } = await r.json();
       const up = await fetch(href, { method: method || 'PUT', body: blob });
-      if (!up.ok && up.status !== 201 && up.status !== 202) throw new DiskError('Не удалось записать на Диск (' + up.status + ')', up.status);
+      if (!up.ok && up.status !== 201 && up.status !== 202) throw await this.writeError(up, 'Не удалось записать на Диск');
     }
 
     /** Ссылка на скачивание файла (временная). */
@@ -163,8 +177,38 @@
     }
 
     async mkdir(path) {
-      const r = await this.call('PUT', '/resources', { path: diskPath(path) });
-      if (!r.ok && r.status !== 409) throw new DiskError('Не удалось создать папку (' + r.status + ')', r.status);
+      const key = diskPath(path);
+      if (this.folders.has(key)) return this.folders.get(key);
+      const work = this.ensureFolder(key);
+      this.folders.set(key, work);
+      try { return await work; }
+      finally { if (this.folders.get(key) === work) this.folders.delete(key); }
+    }
+
+    /** An existing directory needs no PUT; 409 alone does not prove it exists. */
+    async ensureFolder(path) {
+      const directory = async (response) => {
+        const value = await response.json();
+        if (value && value.type === 'dir') return;
+        throw new DiskError('Путь для папки занят файлом или не распознан: ' + path.replace(/^disk:/, ''), 409);
+      };
+      for (let attempt = 0; attempt < 4; attempt++) {
+        let r = await this.call('GET', '/resources', { path, fields: 'type' });
+        if (r.ok) return directory(r);
+        if (r.status === 404) {
+          r = await this.call('PUT', '/resources', { path });
+          if (r.ok) { await this.completed(r); return; }
+          if (r.status === 409) {
+            // Another client may have created it; a missing parent also returns 409.
+            r = await this.call('GET', '/resources', { path, fields: 'type' });
+            if (r.ok) return directory(r);
+            if (r.status === 404) throw new DiskError('Не удалось создать папку: родительская папка отсутствует или путь изменён. Обновите объект.', 409);
+          }
+        }
+        const error = await this.writeError(r, 'Не удалось создать папку');
+        if (!error.retryable || attempt === 3) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 750 * Math.pow(2, attempt)));
+      }
     }
   }
 

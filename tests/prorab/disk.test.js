@@ -71,3 +71,48 @@ test('download errors explain failure without leaking signed URLs', async () => 
   await assert.rejects(client([[200, { href }], [413, { error: 'Файл больше 200 МБ.' }]], options).disk.getText('/object'),
     error => error.status === 413 && /200 МБ/.test(error.message));
 });
+
+test('существующая папка не создаётся повторно; файл с тем же именем не считается папкой', async () => {
+  const existing = client([[200, { type: 'dir' }]]);
+  await existing.disk.mkdir('/Объект/Исполнительная документация');
+  assert.equal(existing.calls.length, 1);
+  assert.equal(existing.calls[0].options.method, 'GET');
+  await assert.rejects(client([[200, { type: 'file' }]]).disk.mkdir('/Документы'), /занят файлом/);
+});
+
+test('временный 423 при создании папки повторяется с проверкой существования', async () => {
+  const c = client([[404, {}], [423, { error: 'DiskResourceLockedError' }], [404, {}], [201, {}]]);
+  await c.disk.mkdir('/Объект/Общий журнал');
+  assert.deepEqual(c.calls.map((x) => x.options.method), ['GET', 'PUT', 'GET', 'PUT']);
+  const concurrent = client([[404, {}], [423, {}], [200, { type: 'dir' }]]);
+  await Promise.all([concurrent.disk.mkdir('/Объект//Общий журнал'), concurrent.disk.mkdir('/Объект/Общий журнал')]);
+  assert.equal(concurrent.calls.length, 3);
+});
+
+test('409 проверяет папку; отсутствующий родитель не превращается в успешное создание', async () => {
+  await client([[404, {}], [409, {}], [200, { type: 'dir' }]]).disk.mkdir('/Объект/Общий журнал');
+  await assert.rejects(client([[404, {}], [409, {}], [404, {}]]).disk.mkdir('/Объект/Общий журнал'), /родительская папка/);
+});
+
+test('постоянная блокировка ограничена четырьмя попытками; повторное действие после ошибки доступно', async () => {
+  const c = client([[423, {}], [423, {}], [423, {}], [423, {}], [200, { type: 'dir' }]]);
+  await assert.rejects(c.disk.mkdir('/Объект'), (e) => e.status === 423 && /заблокировал запись/.test(e.message));
+  assert.equal(c.calls.length, 4);
+  await c.disk.mkdir('/Объект');
+  assert.equal(c.calls.length, 5);
+});
+
+test('лимит загрузки и отсутствие прав не повторяются, секреты из ответа не выводятся', async () => {
+  const quota = client([[404, {}], [423, { error: 'DiskUploadTrafficLimitExceeded', description: 'private-link' }]]);
+  await assert.rejects(quota.disk.mkdir('/Объект'), (e) => /лимите загрузки/.test(e.message) && !e.message.includes('private-link'));
+  assert.equal(quota.calls.length, 2);
+  const denied = client([[403, {}]]);
+  await assert.rejects(denied.disk.mkdir('/Объект'), (e) => e.status === 403);
+  assert.equal(denied.calls.length, 1);
+});
+
+test('асинхронное создание папки дожидается завершения операции', async () => {
+  const c = client([[404, {}], [202, { href: 'https://cloud-api.yandex.net/v1/disk/operations/folder' }], [200, { status: 'success' }]]);
+  await c.disk.mkdir('/Объект');
+  assert.equal(c.calls.length, 3);
+});
