@@ -1,11 +1,11 @@
 {
-  "base_commit": "76e94a5afc9063af957f949257b8f463b723cf59",
+  "base_commit": "b276fe4b84bedf6a044b19ff6948c30fa97bb300",
   "reviewed_pr_head": "5ad6f1a3388c0ef85423856c653f53c2d14faa27",
   "files": [
     {
       "path": "app.py",
-      "sha256": "2db47f31207ba4ee1d0c201b1332e31d1798afce10b7dd208a5ca2d906d3530f",
-      "base_sha256": "336bdc6e584b297dfe8f1a84fba7f657e2fa3afdfbd7a09fb60e2a499168af1a"
+      "sha256": "db1f4b85c5c56a27c0dcbe78e6642ab6d286f2acddfd43d52af282a769304433",
+      "base_sha256": "2db47f31207ba4ee1d0c201b1332e31d1798afce10b7dd208a5ca2d906d3530f"
     },
     {
       "path": "prorab_anchor.py",
@@ -24,7 +24,7 @@
     },
     {
       "path": "static/prorab/app.js",
-      "sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd",
+      "sha256": "0acb713ca2bb28bd8a9bfc8742b3f67537f3e2470487095e4ee1555142bafb10",
       "base_sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd"
     },
     {
@@ -39,7 +39,7 @@
     },
     {
       "path": "static/prorab/document-store.js",
-      "sha256": "9dbe8f47d3079b49c721dd5366d6c811d45820cd1849736b9d67de911561ed8f",
+      "sha256": "f19f309bcaea3920bee203b622903a50423238f38e8e496470b9eb359b9415f8",
       "base_sha256": "9dbe8f47d3079b49c721dd5366d6c811d45820cd1849736b9d67de911561ed8f"
     },
     {
@@ -60,7 +60,7 @@
     {
       "path": "static/prorab/fixation-store.js",
       "sha256": "0a9676214dde5c3519689d3957d0969139c1ec845f9539dd33af90f8150df094",
-      "base_sha256": "8c0deccb43f33ef31b1fc2ad44df01885b448fa3dbe9411e4ffbe357fd804311"
+      "base_sha256": "0a9676214dde5c3519689d3957d0969139c1ec845f9539dd33af90f8150df094"
     },
     {
       "path": "static/prorab/fixation.js",
@@ -69,7 +69,7 @@
     },
     {
       "path": "static/prorab/id.js",
-      "sha256": "552cd59e035424fae1599bc2d9864b72a0515e5d2a27dd9cb0bdf8bb28b5768a",
+      "sha256": "7a4cc07284f12558f1bf6f3877a3360fca61d98acc7e60f8dce5fb200b1c895a",
       "base_sha256": "552cd59e035424fae1599bc2d9864b72a0515e5d2a27dd9cb0bdf8bb28b5768a"
     },
     {

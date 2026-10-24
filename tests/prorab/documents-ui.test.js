@@ -31,7 +31,7 @@ function setup() {
   for (const [name, file] of Object.entries({ ProrabPersistence: 'persistence', ProrabOffice: 'office', ProrabTemplates: 'templates', ProrabVault: 'vault', ProrabEconomy: 'economy', ProrabEconomyStore: 'economy-store', ProrabFixation: 'fixation', ProrabFixationStore: 'fixation-store' })) window[name] = require('../../static/prorab/' + file + '.js');
   const ctx = { window, document: { body, createElement: (t) => new Node(t), getElementById: () => app, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
     navigator: {}, location: {}, history: {}, localStorage, fetch, AbortController, setTimeout: () => 1, setInterval: () => 1, clearTimeout() {}, clearInterval() {}, queueMicrotask, URLSearchParams, Blob, URL,
-    prompt: () => '1', confirm: () => true, alert: (msg) => alerts.push(msg), console };
+    prompt: (_, fallback) => options.number || fallback, confirm: () => true, alert: (msg) => alerts.push(msg), console };
   vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
@@ -43,7 +43,7 @@ function setup() {
   p.put('volumes', 'v', { projectId: 'p', itemId: 'a', date: S.today(), quantity: 1 });
   const files = new Map();
   const disk = { mkdir: async () => { if (options.failFolder) throw new Error('Яндекс Диск заблокировал запись (423)'); }, list: async (path) => [...new Map([...files.keys()].filter((x) => x.startsWith(path + '/')).map((x) => { const rest = x.slice(path.length + 1), name = rest.split('/')[0]; return [name, { name, type: rest.includes('/') ? 'dir' : 'file' }]; })).values()],
-    getText: async (path) => files.has(path) ? typeof files.get(path) === 'string' ? files.get(path) : new TextDecoder().decode(files.get(path)) : null, putText: async (path, text) => files.set(path, text),
+    getText: async (path) => files.has(path) ? typeof files.get(path) === 'string' ? files.get(path) : new TextDecoder().decode(files.get(path)) : null, putText: async (path, text) => { if (options.failParticipants && path.endsWith('/участники.json')) throw new Error('423 participants'); files.set(path, text); },
     putBlob: async (path, blob, overwrite) => { assert.equal(overwrite, false); if (files.has(path)) throw new Error('exists'); files.set(path, new Uint8Array(await blob.arrayBuffer())); }, getBytes: async (path) => files.get(path) };
   window.review.setSession(disk);
   const c = { path: '/Прораб+/Учебный объект', project: p };
@@ -75,6 +75,50 @@ test('создание КС из интерфейса сохраняет оба 
   assert.deepEqual(alerts, []);
   assert.equal(c.id.certificates[0].status, 'issued');
   assert.equal(c.id.certificates[0].totals.all, 10000);
+});
+
+test('второй комплект получает №2 и новый период даже при недоступном файле участников', async () => {
+  const { api, c, files, alerts, options } = setup();
+  c.project.put('volumes', 'v', { date: S.today() - 1, quantity: 1 });
+  c.project.put('volumes', 'next-volume', { projectId: 'p', itemId: 'a', date: S.today(), quantity: 2 });
+  options.failParticipants = true;
+  const w = { tab: 'ks', ks: { from: S.today() - 1, to: S.today() - 1 } };
+  await api.ksMake(c, w);
+  assert.deepEqual(alerts, []);
+  assert.equal(c.id.certificates[0].number, '1');
+  assert.equal(w.ks.from, S.today());
+  await nodes(api.idView(w, c)).find((n) => n.tag === 'button' && n.textContent === 'Отметить предъявленной').events.click();
+  await api.ksMake(c, w);
+  assert.deepEqual(alerts, []);
+  const second = c.id.certificates[1];
+  assert.equal(second.number, '2'); assert.equal(second.rows[0].qty, 2);
+  assert.equal(second.ledger.prior.all, 10000); assert.equal(second.ledger.period.all, 20000);
+  assert.equal(second.ledger.total.all, 30000);
+  assert.equal([...files.keys()].filter((p) => p.endsWith('.docx')).length, 4);
+  assert.ok(second.ks3.includes('№2'));
+  const text = Buffer.from(files.get(c.path + '/Исполнительная документация/КС/' + second.ks3)).toString('utf8');
+  assert.ok(text.includes('Текущая КС-2 № 2: 200,00'));
+  await api.ksMake(c, w);
+  assert.ok(alerts.at(-1).includes('Нет работ'));
+  assert.equal(c.id.certificates.length, 2);
+});
+
+test('повтор того же периода остановлен; ошибочный черновик можно отменить с сохранением файлов', async () => {
+  const { api, c, files, alerts } = setup();
+  const w = { tab: 'ks', ks: { from: S.today(), to: S.today() } };
+  await api.ksMake(c, w);
+  const original = c.id.certificates[0], originalFiles = [...files.keys()].filter((p) => p.endsWith('.docx'));
+  w.ks = { from: S.today(), to: S.today() };
+  await api.ksMake(c, w);
+  assert.ok(alerts.at(-1).includes('черновик')); assert.equal(c.id.certificates.length, 1);
+  const tree = api.idView(w, c);
+  await nodes(tree).find((n) => n.tag === 'button' && n.textContent === 'Отменить черновик').events.click();
+  assert.ok(c.id.certificates[0].cancelledAt); assert.equal(w.ks, null);
+  api.idView(w, c);
+  await api.ksMake(c, w);
+  assert.equal(c.id.certificates.length, 2); assert.equal(c.id.certificates[1].number, '2');
+  for (const path of originalFiles) assert.ok(files.has(path));
+  assert.equal(c.id.certificates[0].id, original.id);
 });
 
 test('кнопки фиксации и проверки: снимок и квитанция сохранены, офлайн не показывает успех', async () => {

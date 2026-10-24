@@ -103,3 +103,30 @@ test('сохранение остаётся в исходном аккаунте
   assert.equal(original.writes, 1); assert.equal(other.writes, 0);
   for (const name of ['..', '../a', 'a/b', 'a\\b', 'a\u0000b']) assert.throws(() => leaf(name), /имя/);
 });
+
+test('отмена черновика сохраняет документы и не позволяет предъявить отменённый комплект', async () => {
+  const disk = new Disk(), store = new Store(disk, ROOT), r = record(1, 20500);
+  r.ledger = I.certificateLedger([], r);
+  const bytes = new Uint8Array([1, 2, 3]);
+  await store.generated('КС', [{ name: 'original.docx', bytes }], r);
+  const cancelled = await store.cancelCertificate(r);
+  assert.ok(cancelled.cancelledAt); assert.equal(cancelled.status, 'draft');
+  assert.deepEqual(disk.files.get(ROOT + '/КС/original.docx'), bytes);
+  const writes = disk.writes;
+  assert.deepEqual(await store.cancelCertificate(r), cancelled);
+  assert.equal(disk.writes, writes);
+  await assert.rejects(store.issue(r), /отменён/);
+  const second = record(2, 20500); second.ledger = I.certificateLedger([cancelled], second);
+  await store.generated('КС', [], second);
+  await store.issue(second);
+  await assert.rejects(store.cancelCertificate(second), /Предъявленную/);
+});
+
+test('конфликтующий черновик проверяется до загрузки файлов', async () => {
+  const disk = new Disk(), store = new Store(disk, ROOT), first = record(1, 20500), second = record(2, 20500);
+  first.ledger = I.certificateLedger([], first); second.ledger = I.certificateLedger([], second);
+  await store.generated('КС', [], first);
+  const writes = disk.writes;
+  await assert.rejects(store.generated('КС', [{ name: 'duplicate.docx', bytes: new Uint8Array([1, 2]) }], second), /черновик/);
+  assert.equal(disk.writes, writes);
+});

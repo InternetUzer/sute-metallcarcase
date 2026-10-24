@@ -95,3 +95,43 @@ test('таблица Word помещается в печатную област�
     assert.ok(sizes.reduce((a, b) => a + b, 0) <= max);
   }
 });
+
+test('следующая КС получает номер из реестра и только новые объёмы той же работы', () => {
+  const p = makeProject([20500, 20501]);
+  const first = make(p, 1, 20500);
+  const unrelated = make(p, 90, 20500, { contractNo: 'Другой' });
+  const next = I.nextCertificate([first, unrelated], { ...opts(1, 20500), lastNumber: 0 }, 20501);
+  assert.deepEqual(next, { number: '2', from: 20501, to: 20501, lastTo: 20500 });
+  const second = I.certificate(p, I.emptyParticipants(), { ...opts(next.number, next.from), to: next.to });
+  assert.equal(first.rows[0].qty, 1); assert.equal(second.rows[0].qty, 2);
+  assert.equal(second.totals.all, 20000);
+  const noNewDays = I.nextCertificate([first, second], opts(1, 20500), 20501);
+  assert.equal(noNewDays.from, 20502);
+  assert.equal(I.ksRows(p, noNewDays.from, noNewDays.to).rows.length, 0);
+  first.cancelledAt = Date.now();
+  assert.equal(I.nextCertificate([first], opts(1, 20500), 20501).number, '2');
+  assert.equal(I.nextCertificate([first], opts(1, 20500), 20501).lastTo, null);
+});
+
+test('КС-2 и КС-3 печатают номер и даты сохранённого комплекта при устаревших настройках', () => {
+  const p = makeProject(), r = make(p, 2, 20510);
+  r.ledger = I.certificateLedger([], r);
+  const stale = { ...opts(1, 20500), certificate: r };
+  for (const build of [I.ks2Blocks, I.ks3Blocks]) {
+    const blocks = build(p, I.emptyParticipants(), stale).blocks;
+    const header = blocks.find((b) => b.table && JSON.stringify(b.table[0]).includes('Номер документа')).table;
+    assert.deepEqual(header[1].map((c) => c.p[0]), ['2', I.dmy(r.date), I.dmy(r.from), I.dmy(r.to)]);
+  }
+});
+
+test('сохранённый черновик резервирует номер и период; отмена освобождает период без изменения сумм', () => {
+  const p = makeProject(), first = make(p, 1, 20500);
+  assert.throws(() => I.certificateLedger([first], make(p, 1, 20510)), /номером/);
+  assert.throws(() => I.certificateLedger([first], make(p, 2, 20500)), /черновик/);
+  first.cancelledAt = Date.now();
+  const replacement = make(p, 2, 20500);
+  assert.equal(I.certificateLedger([first], replacement).prior.all, 0);
+  assert.equal(first.totals.all, 10000);
+  const issued = { ...first, status: 'issued' };
+  assert.throws(() => I.validateCertificate(issued), /отмены/);
+});

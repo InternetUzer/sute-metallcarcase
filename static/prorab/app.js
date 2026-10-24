@@ -2409,7 +2409,10 @@
   function ksTab(w, c) {
     const st = c.id, d = st.participants, P = c.project;
     const set = (d.defaults && d.defaults.ks) || {};
-    w.ks = w.ks || { from: monthStart(today), to: today };
+    let next;
+    try { next = I.nextCertificate(st.certificates, set, today); }
+    catch (e) { return h('p', { class: 'pp-error' }, e.message); }
+    if (!w.ks || (w.ks.contractKey && w.ks.contractKey !== I.contractKey(set))) w.ks = { from: next.from, to: next.to, contractKey: I.contractKey(set) };
     const from = h('input', { type: 'date', value: w.ks.from !== null ? dayToInput(w.ks.from) : '' });
     const to = h('input', { type: 'date', value: dayToInput(w.ks.to) });
     const apply = () => { w.ks.from = from.value ? inputToDay(from.value) : null; w.ks.to = to.value ? inputToDay(to.value) : today; render(); };
@@ -2421,13 +2424,15 @@
       h('section', { class: 'pp-card' },
         h('p', null, 'КС-2 — объёмы за период из журнала по ценам ведомости. КС-3 — сохранённые суммы ранее предъявленных КС-2 и текущего акта. Прежние суммы не меняются при редактировании журнала или цен. Перед подачей проверьте комплект у ПТО и бухгалтера.'),
         h('div', { class: 'pp-row pp-wrap' }, field('Отчётный период с', from), field('по', to),
+          button('Следующий период', () => { w.ks = { from: next.from, to: next.to, contractKey: I.contractKey(set) }; render(); }),
           button('Этот месяц', () => { w.ks = { from: monthStart(today), to: today }; render(); }),
           button('Прошлый месяц', () => { const e = monthStart(today) - 1; w.ks = { from: monthStart(e), to: e }; render(); })),
         h('div', { class: 'pp-row pp-wrap' }, button('⚙ Договор и НДС', () => ksSettings(c)), button('📑 Сформировать КС-2 и КС-3', () => ksMake(c, w), 'pp-primary'), button('⬇ Объёмы КС-2 в Excel', () => ksExcel(c, w))),
         h('small', { class: 'pp-muted' }, (set.contractNo ? 'Договор № ' + set.contractNo + (set.contractDate ? ' от ' + shortDate(set.contractDate) : '') : 'Номер договора не указан') + ' · ' +
-          (set.vatRate === undefined ? 'НДС ещё не выбран' : set.vatRate === null ? 'без НДС' : 'НДС ' + (set.vatRate === undefined ? null : set.vatRate) + '%' + (set.vatIncluded ? ' (в ценах)' : ' сверху')))),
+          (set.vatRate === undefined ? 'НДС ещё не выбран' : set.vatRate === null ? 'без НДС' : 'НДС ' + (set.vatRate === undefined ? null : set.vatRate) + '%' + (set.vatIncluded ? ' (в ценах)' : ' сверху'))),
+        h('p', { class: 'pp-muted' }, 'Следующий номер комплекта: ' + next.number + '. Период начинается после последнего сохранённого КС-2. Если предыдущий акт уже подан заказчику, отметьте его предъявленным — его сумма войдёт в КС-3.')),
       k.error ? h('p', { class: 'pp-error' }, k.error) : null,
-      ksRegistry(c),
+      ksRegistry(c, w),
       k.noPrice.length ? h('section', { class: 'pp-card' }, h('p', { class: 'pp-error' }, 'Нет цены — формирование остановлено до заполнения цен:'),
         k.noPrice.map((r) => h('button', { type: 'button', class: 'pp-line', onclick: () => boqForm(c, r.itemId) }, h('span', null, r.name), h('strong', null, num(r.qty) + ' ' + r.unit)))) : null,
       h('section', { class: 'pp-card' }, h('h3', null, 'За период'),
@@ -2484,14 +2489,16 @@
     const d = JSON.parse(JSON.stringify(st.participants));
     const set = (d.defaults && d.defaults.ks) || {};
     if (set.vatRate === undefined || !set.contractNo) { alert('Сначала заполните договор и выберите НДС.'); ksSettings(c); return; }
-    const n = (prompt('Номер новой КС-2 и КС-3', String((set.lastNumber || 0) + 1)) || '').trim();
-    if (!n) return;
     st.generating = true;
     try {
+      const existing = await st.storage.records('КС');
+      st.certificates = existing;
+      const next = I.nextCertificate(existing, set, today);
+      const n = (prompt('Номер новой КС-2 и КС-3', next.number) || '').trim();
+      if (!n) return;
       setStatus('Собираю КС-2 и КС-3…');
       const opts = ksOpts(c, w, n);
       const record = I.certificate(P, d, opts);
-      const existing = await st.storage.records('КС');
       record.ledger = I.certificateLedger(existing, record);
       opts.certificate = record;
       const period = shortDate(record.from) + '–' + shortDate(record.to);
@@ -2505,8 +2512,9 @@
       ];
       await st.storage.generated('КС', files, record);
       st.certificates = existing.concat([record]);
-      I.setDefaults(d, { ks: Object.assign({}, set, { lastNumber: Math.max(parseInt(n, 10) || 0, set.lastNumber || 0) }) });
-      await saveParticipants(c, d).catch(() => {});
+      const following = I.nextCertificate(st.certificates, set, today);
+      w.ks = { from: following.from, to: following.to, contractKey: I.contractKey(set) };
+      afterDocument(c);
       setStatus('КС-2 и КС-3 сохранены. После фактической подачи отметьте КС-2 как предъявленную в реестре.');
       render();
       window.open(D.webEdit(idDir(c) + '/КС/' + record.docx), '_blank', 'noopener');
@@ -2514,23 +2522,32 @@
     finally { st.generating = false; }
   }
 
-  function ksRegistry(c) {
+  function ksRegistry(c, w) {
     const st = c.id;
     return h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between pp-wrap' }, h('h3', null, 'Реестр КС-2'), button('+ Ранее предъявленная КС-2', () => importCertificate(c))),
-      h('p', { class: 'pp-muted' }, 'В накопление входят только предъявленные КС-2 по этому договору. Суммы сохранены на дату формирования. Отметка не отправляет документы заказчику. КС-3 показывает ранее предъявленное, текущую сумму и общий итог. Если меняли суммы в Word, внесите окончательные суммы через «Ранее предъявленная КС-2», оставив исходный комплект черновиком.'),
+      h('p', { class: 'pp-muted' }, 'В накопление входят только предъявленные КС-2 по этому договору. Суммы сохранены на дату формирования. Отметка не отправляет документы заказчику. КС-3 показывает ранее предъявленное, текущую сумму и общий итог. Если меняли суммы в Word, отмените исходный черновик и внесите окончательные суммы через «Ранее предъявленная КС-2». Отменённые файлы сохраняются в истории.'),
       st.certificates.length ? st.certificates.slice().sort((a, b) => a.to - b.to).map((r) => h('div', { class: 'pp-line' },
         h('span', null, 'КС-2 № ' + r.number + ' · ' + shortDate(r.from) + '–' + shortDate(r.to)),
-        h('strong', null, money(r.totals.all)), h('small', null, r.status === 'issued' ? 'предъявлена' : 'черновик'),
+        h('strong', null, money(r.totals.all)), h('small', null, r.cancelledAt ? 'черновик отменён' : r.status === 'issued' ? 'предъявлена' : 'черновик'),
         h('span', { class: 'pp-row pp-wrap' },
           r.docx ? button('КС-2', () => window.open(D.webEdit(idDir(c) + '/КС/' + r.docx), '_blank', 'noopener')) : null,
           r.ks3 ? button('КС-3', () => window.open(D.webEdit(idDir(c) + '/КС/' + r.ks3), '_blank', 'noopener')) : null,
-          r.status === 'draft' ? button('Отметить предъявленной', async () => {
+          r.status === 'draft' && !r.cancelledAt ? button('Отметить предъявленной', async () => {
             if (!confirm('КС-2 № ' + r.number + ' на ' + money(r.totals.all) + ' уже подана заказчику? Она войдёт в накопление следующих КС-3.')) return;
             try {
               const saved = await st.storage.issue(r);
               st.certificates = st.certificates.map((x) => x.id === saved.id ? saved : x);
               afterDocument(c);
               setStatus('КС-2 № ' + saved.number + ' учтена как предъявленная.'); render();
+            } catch (e) { alert(e.message); }
+          }) : null,
+          r.status === 'draft' && !r.cancelledAt ? button('Отменить черновик', async () => {
+            if (!confirm('Отменить ошибочный черновик КС-2 № ' + r.number + '? Файлы останутся в реестре. После отмены можно сформировать исправленный комплект за этот период.')) return;
+            try {
+              const saved = await st.storage.cancelCertificate(r);
+              st.certificates = st.certificates.map((x) => x.id === saved.id ? saved : x);
+              w.ks = null; afterDocument(c); render();
+              setStatus('Черновик КС-2 № ' + saved.number + ' отменён. Его файлы сохранены.');
             } catch (e) { alert(e.message); }
           }) : null))) : h('p', { class: 'pp-muted' }, 'Предыдущие КС-2 ещё не внесены. Если подавали их раньше — добавьте перед формированием новой КС.'));
   }
