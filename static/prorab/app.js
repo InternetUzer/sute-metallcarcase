@@ -475,12 +475,13 @@
     today: { title: 'Сегодня', icon: '☀️', view: (w, c) => todayView(w, c) },
     extras: { title: 'Доп. работы', icon: '➕', view: (w, c) => extrasView(w, c) },
     acceptance: { title: 'Журнал приёмки', icon: '✅', view: (w, c) => acceptanceView(w, c) },
+    id: { title: 'Исполнительная документация', icon: '📑', view: (w, c) => idView(w, c) },
     project: { title: 'Объект', icon: '🏗️', view: (w, c) => projectView(w, c) },
     economy: { title: 'Экономика', icon: '💼', view: () => economyView() },
     econ: { title: 'Экономика объекта', icon: '💼', view: (w, c) => econView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
+  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -1815,7 +1816,8 @@
       rc.remarks.map((r) => h('button', { type: 'button', class: 'pp-line', onclick: closeAnd(() => remarkForm(c, r.id)) }, h('span', null, '№' + r.number + ' — ' + (r.text || 'без текста')), h('strong', { class: r.status === 'DONE' ? 'pp-plus' : 'pp-error' }, r.status === 'DONE' ? 'устранено' : 'открыто'))),
       rc.notes.map((n) => h('button', { type: 'button', class: 'pp-line', onclick: closeAnd(() => openDrawing(c, n.drawingId, { noteId: n.id })) }, h('span', null, 'Ч№' + n.number + ' — ' + (n.text || 'без текста')), h('strong', { class: n.status === 'DONE' ? 'pp-plus' : 'pp-error' }, n.status === 'DONE' ? 'устранено' : 'открыто'))),
       h('div', { class: 'pp-row pp-wrap' }, button('+ Замечание', closeAnd(() => remarkForm(c, null, { acceptanceId: a.id, text: '' }))),
-        a.result === 'REJECTED' && !rc.open ? button('Замечания устранены — предъявить снова', closeAnd(() => { P.resubmitAcceptance(a.id, today); changed(c); }), 'pp-primary') : null),
+        a.result === 'REJECTED' && !rc.open ? button('Замечания устранены — предъявить снова', closeAnd(() => { P.resubmitAcceptance(a.id, today); changed(c); }), 'pp-primary') : null,
+        button('📑 Оформить АОСР', closeAnd(() => { openWindow('id', c.path); aosrForm(c, null, { itemId: a.itemId }); }))),
       history.length ? h('details', null, h('summary', null, 'Раньше по этой работе (' + history.length + ')'), history.map((x) => h('div', { class: 'pp-line' },
         h('span', null, 'закончено ' + shortDate(x.readyDate) + (x.acceptedBy ? ' · ' + x.acceptedBy : '')), h('strong', { class: ACCEPT[x.result][1] }, ACCEPT[x.result][0])))) : null), () => {
       if (cancelled) return;
@@ -2174,6 +2176,215 @@
     const a = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: 'Экономика ' + shortDate(today) + '.xlsx' });
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  }
+
+  // ───────── исполнительная документация (АОСР) ─────────
+  // Лежит в папке объекта: «Исполнительная документация/участники.json», «…/АОСР/<id>.json» и документы Word рядом.
+  const I = window.ProrabId;
+  const ID_DIR = 'Исполнительная документация';
+  const idDir = (c) => c.path + '/' + ID_DIR;
+  const idActs = (c) => idDir(c) + '/АОСР';
+
+  /** Участники и акты объекта (загружаются при первом открытии окна). */
+  function idState(c) {
+    if (c.id) return c.id;
+    const st = c.id = { loading: true, error: null, participants: I.emptyParticipants(), acts: [] };
+    (async () => {
+      try {
+        const text = await disk.getText(idDir(c) + '/участники.json');
+        if (text !== null) st.participants = JSON.parse(text);
+        const items = (await disk.list(idActs(c))) || [];
+        const acts = [];
+        for (const it of items.filter((i) => i.type === 'file' && i.name.endsWith('.json'))) {
+          const t = await disk.getText(idActs(c) + '/' + it.name);
+          if (t !== null) { try { acts.push(JSON.parse(t)); } catch (e) { /* повреждённый — пропускаем */ } }
+        }
+        st.acts = acts;
+      } catch (e) { st.error = e.message; }
+      st.loading = false;
+      if (!modalOpen()) render();
+    })();
+    return st;
+  }
+
+  async function saveParticipants(c) {
+    const st = c.id;
+    await disk.mkdir(idDir(c));
+    // Другой компьютер мог изменить участников — объединяем
+    const text = await disk.getText(idDir(c) + '/участники.json');
+    if (text !== null) { try { st.participants = I.mergeParticipants(JSON.parse(text), st.participants); } catch (e) { /* свой файл главнее повреждённого */ } }
+    await disk.putText(idDir(c) + '/участники.json', JSON.stringify(st.participants, null, 1));
+  }
+
+  /** Сохранить акт: данные (JSON) и документ Word; старый документ при смене имени — в корзину. */
+  async function saveAct(c, act) {
+    const st = c.id;
+    await disk.mkdir(idDir(c)); await disk.mkdir(idActs(c));
+    const name = I.fileName(act);
+    const bytes = O.richDocx(I.blocks(act, st.participants, c.project.project));
+    await disk.putBlob(idActs(c) + '/' + name, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), true);
+    if (act.docx && act.docx !== name) { try { await disk.remove(idActs(c) + '/' + act.docx); } catch (e) { /* уже нет */ } }
+    act.docx = name;
+    act.updatedAt = Date.now();
+    await disk.putText(idActs(c) + '/' + act.id + '.json', JSON.stringify(act, null, 1));
+    st.acts = st.acts.filter((a) => a.id !== act.id).concat([act]);
+    return name;
+  }
+
+  function idView(w, c) {
+    const st = idState(c);
+    if (st.loading) return h('p', { class: 'pp-muted' }, 'Загружаю исполнительную документацию…');
+    if (st.error) return h('div', null, h('p', { class: 'pp-error' }, st.error), button('Повторить', () => { c.id = null; render(); }));
+    w.tab = w.tab || 'acts';
+    const tabs = [['acts', 'Акты скрытых работ (АОСР)'], ['people', 'Участники строительства']];
+    const d = st.participants;
+    let body;
+    if (w.tab === 'acts') {
+      const acts = st.acts.slice().sort((a, b) => (parseInt(b.number, 10) || 0) - (parseInt(a.number, 10) || 0));
+      const ready = I.orgs(d, 'customer').length && I.orgs(d, 'builder').length;
+      body = h('div', null,
+        h('div', { class: 'pp-row pp-between pp-wrap' },
+          h('p', { class: 'pp-muted' }, 'Работы, объёмы и даты берутся из журнала, участники — из вкладки «Участники строительства». Акт сохраняется документом Word в «' + ID_DIR + '/АОСР» и открывается в Яндекс Документах для печати.'),
+          h('div', { class: 'pp-row' }, acts.length ? button('⬇ Реестр Excel', () => exportActs(c)) : null, button('+ АОСР', () => aosrForm(c, null, {}), 'pp-primary'))),
+        !ready ? h('p', { class: 'pp-card pp-error' }, 'Сначала заполните участников: застройщика (заказчика) и лицо, осуществляющее строительство, и их представителей.') : null,
+        acts.length ? h('section', { class: 'pp-card' }, acts.map((a) => h('button', { type: 'button', class: 'pp-line', onclick: () => aosrForm(c, a, {}) },
+          h('span', null, 'АОСР № ' + a.number + ' от ' + (a.date ? shortDate(a.date) : '—') + ' — ' + (String(a.works || '').split('\n')[0] || 'без названия')),
+          h('small', null, [a.start && a.end ? 'работы ' + shortDate(a.start) + '–' + shortDate(a.end) : '', a.next ? 'далее: ' + a.next : ''].filter(Boolean).join(' · ')),
+          h('strong', { class: a.signed ? 'pp-plus' : 'pp-muted' }, a.signed ? 'подписан' : 'черновик')))) :
+          h('p', { class: 'pp-card pp-muted' }, 'Актов пока нет. Нажмите «+ АОСР» или «Оформить АОСР» в журнале приёмки.'));
+    } else {
+      body = h('div', { class: 'pp-columns' },
+        h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between' }, h('h3', null, 'Организации'), button('+ Организация', () => orgForm(c, null))),
+          I.ORG_ROLES.map(([role, title]) => h('div', null, h('small', { class: 'pp-muted' }, title),
+            I.orgs(d, role).length ? I.orgs(d, role).map((o) => h('button', { type: 'button', class: 'pp-line', onclick: () => orgForm(c, o) }, h('span', null, o.name), h('small', null, [o.inn ? 'ИНН ' + o.inn : '', o.sro ? 'СРО' : ''].filter(Boolean).join(' · ')))) :
+              h('p', { class: 'pp-muted' }, '—')))),
+        h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between' }, h('h3', null, 'Представители (подписывают акты)'), button('+ Представитель', () => repForm(c, null))),
+          I.REP_ROLES.map(([role, title]) => {
+            const list = I.reps(d, role);
+            return list.length ? h('div', null, h('small', { class: 'pp-muted' }, title), list.map((r) => h('button', { type: 'button', class: 'pp-line', onclick: () => repForm(c, r) },
+              h('span', null, r.fio + (r.position ? ', ' + r.position : '')), h('small', null, [r.nrs ? 'НРС ' + r.nrs : '', r.order].filter(Boolean).join(' · '))))) : null;
+          }),
+          h('small', { class: 'pp-muted' }, 'Для представителей по строительному контролю нужен идентификационный номер в национальном реестре специалистов (НРС). Реквизиты документа о полномочиях — например «приказ № 12 от 10.01.2026».')));
+    }
+    return h('main', null, h('div', { class: 'pp-tabs' }, tabs.map(([k, t]) => h('button', { type: 'button', class: 'pp-tab' + (w.tab === k ? ' pp-active' : ''), onclick: () => { w.tab = k; render(); } }, t))), body);
+  }
+
+  function orgForm(c, o) {
+    const d = c.id.participants;
+    const role = h('select', null, I.ORG_ROLES.map(([k, t]) => h('option', { value: k }, t)));
+    role.value = o ? o.role : 'performer';
+    const inp = (v, ph) => h('input', { value: v || '', placeholder: ph || '' });
+    const name = inp(o && o.name, 'ООО «СтройМонтаж»'), ogrn = inp(o && o.ogrn), inn = inp(o && o.inn), address = inp(o && o.address), phone = inp(o && o.phone);
+    const sro = inp(o && o.sro), sroOgrn = inp(o && o.sroOgrn), sroInn = inp(o && o.sroInn);
+    // Подсказка из справочника исполнителей объекта
+    const known = h('datalist', { id: 'pp-org-names' }, c.project.contractors().map((x) => h('option', { value: x.name })));
+    name.setAttribute('list', 'pp-org-names');
+    asyncDialog(o ? 'Организация' : 'Новая организация', h('div', null, field('Роль в актах', role), field('Наименование (или ФИО предпринимателя)', name), known,
+      h('div', { class: 'pp-row pp-wrap' }, field('ОГРН / ОГРНИП', ogrn), field('ИНН', inn)), field('Адрес (место нахождения)', address), field('Телефон', phone),
+      h('h3', null, 'Саморегулируемая организация (если член СРО)'), field('Наименование СРО', sro), h('div', { class: 'pp-row pp-wrap' }, field('ОГРН СРО', sroOgrn), field('ИНН СРО', sroInn))), async () => {
+      I.saveOrg(d, { id: o ? o.id : null, role: role.value, name: name.value, ogrn: ogrn.value.replace(/\s/g, ''), inn: inn.value.replace(/\s/g, ''), address: address.value, phone: phone.value, sro: sro.value, sroOgrn: sroOgrn.value.replace(/\s/g, ''), sroInn: sroInn.value.replace(/\s/g, '') });
+      await saveParticipants(c);
+      render();
+    }, { extra: o ? button('Удалить', async () => { if (!confirm('Удалить организацию «' + o.name + '»? В уже сохранённых актах она останется.')) return; I.remove(d, 'orgs', o.id); await saveParticipants(c); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
+  }
+
+  function repForm(c, r) {
+    const d = c.id.participants;
+    const role = h('select', null, I.REP_ROLES.map(([k, t]) => h('option', { value: k }, t)));
+    role.value = r ? r.role : 'builder';
+    const org = h('select', null, h('option', { value: '' }, '—'), I.orgs(d).map((o) => h('option', { value: o.id }, o.name)));
+    org.value = r && r.orgId ? r.orgId : '';
+    const inp = (v, ph) => h('input', { value: v || '', placeholder: ph || '' });
+    const fio = inp(r && r.fio, 'Иванов И. И.'), position = inp(r && r.position, 'начальник участка'), nrs = inp(r && r.nrs, 'С-16-123456'), order = inp(r && r.order, 'приказ № 12 от 10.01.2026');
+    asyncDialog(r ? 'Представитель' : 'Новый представитель', h('div', null, field('Кого представляет в акте', role), field('Организация', org),
+      h('div', { class: 'pp-row pp-wrap' }, field('Фамилия, инициалы', fio), field('Должность', position)),
+      field('Идентификационный номер в НРС', nrs, 'для представителей по строительному контролю'), field('Документ о полномочиях', order)), async () => {
+      I.saveRep(d, { id: r ? r.id : null, role: role.value, orgId: org.value || null, fio: fio.value, position: position.value, nrs: nrs.value, order: order.value });
+      await saveParticipants(c);
+      render();
+    }, { extra: r ? button('Удалить', async () => { if (!confirm('Удалить представителя ' + r.fio + '? В уже сохранённых актах он останется.')) return; I.remove(d, 'reps', r.id); await saveParticipants(c); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
+  }
+
+  /** Форма АОСР. a — сохранённый акт или null (новый); opts.itemId — из позиции ведомости / приёмки. */
+  function aosrForm(c, a, opts) {
+    const st = idState(c);
+    if (st.loading) { setStatus('Загружаю исполнительную документацию…'); const t = setInterval(() => { if (!st.loading) { clearInterval(t); aosrForm(c, a, opts); } }, 200); return; }
+    const P = c.project, d = st.participants;
+    const act = a ? JSON.parse(JSON.stringify(a)) : Object.assign(I.draft(P, d, { itemId: opts.itemId, today }), { id: S.newId(), number: I.nextNumber(st.acts) });
+    const items = P.boq();
+    const itemSel = h('select', null, h('option', { value: '' }, '— не из ведомости —'), items.map((r) => h('option', { value: r.id }, r.name + (r.fact ? ' (сделано ' + num(r.fact) + ' ' + r.unit + ')' : ''))));
+    itemSel.value = act.itemId || '';
+    const from = h('input', { type: 'date', value: act.start ? dayToInput(act.start) : '' });
+    const to = h('input', { type: 'date', value: act.end ? dayToInput(act.end) : '' });
+    const ta = (v, rows) => h('textarea', { rows: rows || 2 }, v || '');
+    const number = h('input', { value: String(act.number || ''), inputmode: 'numeric' });
+    const date = h('input', { type: 'date', value: act.date ? dayToInput(act.date) : dayToInput(today) });
+    const place = h('input', { value: act.place || '', placeholder: 'г. Казань' });
+    const works = ta(act.works, 3), project = ta(act.project), materials = ta(act.materials), documents = ta(act.documents), norms = ta(act.norms), next = ta(act.next), extra = ta(act.extra), annexes = ta(act.annexes);
+    const copies = h('input', { value: String(act.copies || 3), inputmode: 'numeric' });
+    const performer = h('select', null, h('option', { value: '' }, '—'), I.orgs(d, 'performer').map((o) => h('option', { value: o.id }, o.name)));
+    performer.value = act.performerId || '';
+    const repBoxes = I.reps(d).map((r) => { const b = h('input', { type: 'checkbox' }); b.checked = act.repIds.includes(r.id); return [r, b]; });
+    const signed = h('input', { type: 'checkbox' }); signed.checked = !!act.signed;
+    const fill = () => {
+      const dr = I.draft(P, d, { itemId: itemSel.value || null, from: from.value ? inputToDay(from.value) : null, to: to.value ? inputToDay(to.value) : null, today });
+      if (!dr.works) return alert('В журнале нет записей по этой позиции за выбранные даты.');
+      works.value = dr.works; if (dr.next) next.value = dr.next;
+      from.value = dr.start ? dayToInput(dr.start) : ''; to.value = dr.end ? dayToInput(dr.end) : '';
+      if (dr.performerId) { performer.value = dr.performerId; repBoxes.forEach(([r, b]) => { if (r.role === 'performer') b.checked = r.orgId === dr.performerId; }); }
+    };
+    const collect = () => {
+      const n = parseInt(number.value, 10);
+      if (!n || n < 1) bad('Номер акта — число');
+      if (st.acts.some((x) => x.id !== act.id && parseInt(x.number, 10) === n)) bad('Акт № ' + n + ' уже есть на этом объекте');
+      return Object.assign(act, {
+        number: n, date: inputToDay(date.value) || today, place: place.value.trim(), itemId: itemSel.value || null, works: works.value.trim(), project: project.value.trim(),
+        materials: materials.value.trim(), documents: documents.value.trim(), norms: norms.value.trim(), next: next.value.trim(), extra: extra.value.trim(), annexes: annexes.value.trim(),
+        start: from.value ? inputToDay(from.value) : null, end: to.value ? inputToDay(to.value) : null, copies: parseInt(copies.value, 10) || 3,
+        performerId: performer.value || null, repIds: repBoxes.filter(([, b]) => b.checked).map(([r]) => r.id), signed: signed.checked,
+      });
+    };
+    const warn = h('p', { class: 'pp-error' });
+    const showMissing = () => { try { const m = I.missing(collect(), d); warn.textContent = m.length ? 'Не заполнено: ' + m.join('; ') + '. Акт можно сохранить черновиком.' : ''; } catch (e) { warn.textContent = e.message; } };
+    const dlg = asyncDialog((a ? 'АОСР № ' + a.number : 'Новый АОСР') + ' · ' + projName(c.path), h('div', { class: 'pp-aosr' },
+      h('div', { class: 'pp-row pp-wrap' }, field('№ акта', number), field('Дата акта', date), field('Место составления', place)),
+      h('h3', null, 'Откуда работы'),
+      h('div', { class: 'pp-row pp-wrap' }, field('Позиция ведомости', itemSel), field('С', from), field('По', to)),
+      button('Заполнить из журнала', fill), h('small', { class: 'pp-muted' }, ' — работы с объёмом, даты начала и окончания, исполнитель и следующая позиция ведомости.'),
+      field('1. Предъявленные работы', works), field('2. Проектная документация (шифр, листы, разработчик)', project), field('3. Применённые материалы (с документами о качестве)', materials),
+      field('4. Документы, подтверждающие соответствие (исполнительные схемы, испытания)', documents),
+      field('6. Работы выполнены в соответствии с (СП, ГОСТ, разделы проекта)', norms), field('7. Разрешается производство последующих работ', next),
+      field('Дополнительные сведения', extra), h('div', { class: 'pp-row pp-wrap' }, field('Экземпляров', copies), field('Приложения', annexes)),
+      h('h3', null, 'Участники'), field('Лицо, выполнившее работы', performer),
+      h('div', { class: 'pp-catalog' }, repBoxes.length ? repBoxes.map(([r, b]) => h('label', { class: 'pp-check' }, b, ' ' + r.fio + ' — ' + I.roleTitle(I.REP_ROLES, r.role).toLowerCase())) : h('p', { class: 'pp-muted' }, 'Представителей нет — добавьте их во вкладке «Участники строительства».')),
+      h('label', { class: 'pp-check' }, signed, ' Акт подписан всеми сторонами'), warn), async () => {
+      collect();
+      const name = await saveAct(c, act);
+      // Запомнить общие значения для следующих актов
+      I.setDefaults(d, { place: act.place, project: act.project, norms: act.norms, documents: act.documents, copies: act.copies });
+      await saveParticipants(c);
+      setStatus('Акт сохранён: ' + ID_DIR + '/АОСР/' + name);
+      window.open(D.webEdit(idActs(c) + '/' + name), '_blank', 'noopener');
+      render();
+    }, { okText: 'Сохранить и открыть в Word', busyText: 'Сохраняю на Диск…', extra: a ? button('Удалить акт', async () => {
+      if (!confirm('Удалить АОСР № ' + a.number + '? Документ Word уйдёт в корзину Яндекс Диска.')) return;
+      try {
+        await disk.remove(idActs(c) + '/' + a.id + '.json');
+        if (a.docx) await disk.remove(idActs(c) + '/' + a.docx).catch(() => {});
+        st.acts = st.acts.filter((x) => x.id !== a.id);
+        dlg.remove(); render();
+      } catch (e) { alert(e.message); }
+    }, 'pp-danger') : null });
+    dlg.addEventListener('input', showMissing); dlg.addEventListener('change', showMissing);
+    showMissing();
+  }
+
+  function exportActs(c) {
+    const rows = [['№', 'Дата акта', 'Предъявленные работы', 'Начало работ', 'Окончание работ', 'Последующие работы', 'Статус', 'Документ']];
+    for (const r of I.registry(c.id.acts)) rows.push([r.number, r.date ? { date: r.date } : null, r.works, r.start ? { date: r.start } : null, r.end ? { date: r.end } : null, r.next, r.signed ? 'подписан' : 'черновик', r.file]);
+    const bytes = O.book([{ name: 'Реестр АОСР', header: true, widths: [6, 12, 60, 12, 12, 40, 12, 50], rows }]);
+    const el = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: ('Реестр АОСР ' + (c.project.project.name || '') + ' ' + shortDate(today)).replace(/[\\/:*?"<>|]/g, '_') + '.xlsx' });
+    document.body.append(el); el.click(); el.remove();
   }
 
   // ───────── позиция ведомости ─────────
