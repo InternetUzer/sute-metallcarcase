@@ -3425,7 +3425,7 @@
     try { takeTokenFromUrl(); } catch (e) { starting = false; return loginScreen(e.message); }
     const token = authStore.get('token');
     if (!token) { starting = false; return loginScreen(); }
-    const candidate = new D.Disk(token, { downloadUrl: app.dataset.downloadUrl, csrf: app.dataset.csrf });
+    const candidate = new D.Disk(token, { downloadUrl: app.dataset.downloadUrl, uploadUrl: app.dataset.uploadUrl, csrf: app.dataset.csrf });
     try {
       const user = await candidate.user();
       accountId = user.uid;

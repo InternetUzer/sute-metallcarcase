@@ -120,6 +120,59 @@ def test_relay_rejects_unrelated_url_without_network(app):
     assert response.status_code == 400 and response.is_json
 
 
+def test_signed_upload_requires_csrf_and_passes_only_bytes_and_temporary_link(app, monkeypatch):
+    import io
+    import prorab_transfer
+    client = app.test_client()
+    page = client.get('/prorab')
+    assert b'data-upload-url="/prorab/upload"' in page.data
+    with client.session_transaction() as session:
+        token = session['csrf']
+    seen = []
+    streams = []
+    def upload(href, stream):
+        seen.append((href, stream.read()))
+        streams.append(stream)
+        return 201
+    monkeypatch.setattr(prorab_transfer, 'upload', upload)
+    def fields():
+        return dict(href='temporary-upload-link', csrf_token=token, file=(io.BytesIO(b'PK\x00\xff'), 'private-project.docx'))
+    bad = fields()
+    bad.pop('csrf_token')
+    assert client.post('/prorab/upload', data=bad).status_code == 400
+    assert client.post('/prorab/upload', data=fields(), headers={'Authorization': 'OAuth test-token'}).status_code == 400
+    assert client.post('/prorab/upload', data={'csrf_token': token}).status_code == 400
+    assert seen == []
+    response = client.post('/prorab/upload', data=fields())
+    assert response.status_code == 200 and response.get_json() == {'ok': True, 'upstream_status': 201}
+    assert seen == [('temporary-upload-link', b'PK\x00\xff')]
+    assert streams[0].closed
+    assert 'no-store' in response.headers['Cache-Control']
+    assert response.headers['X-Robots-Tag'] == 'noindex, nofollow'
+    assert b'temporary-upload-link' not in response.data and b'private-project' not in response.data
+    def locked(href, stream):
+        raise prorab_transfer.TransferError('Запись заблокирована.', 423, 'DiskResourceLocked')
+    monkeypatch.setattr(prorab_transfer, 'upload', locked)
+    response = client.post('/prorab/upload', data=fields())
+    assert response.status_code == 423 and response.get_json()['code'] == 'DiskResourceLocked'
+    assert not response.get_json().get('ok')
+
+
+def test_upload_enforces_site_request_limit_and_rejects_unrelated_target(app, monkeypatch):
+    import io
+    import prorab_transfer
+    client = app.test_client()
+    token = anchor_token(client)
+    monkeypatch.setattr(prorab_transfer, 'public_address', lambda host: pytest.fail('Unexpected network request'))
+    response = client.post('/prorab/upload', data={'csrf_token': token, 'href': 'http://127.0.0.1',
+        'file': (io.BytesIO(b'doc'), 'file.docx')})
+    assert response.status_code == 400
+    app.config['MAX_CONTENT_LENGTH'] = 1024
+    response = client.post('/prorab/upload', data={'csrf_token': token,
+        'href': 'https://uploader1d.dst.yandex.net/upload-target/test', 'file': (io.BytesIO(b'x' * 1024), 'file.docx')})
+    assert response.status_code == 413
+
+
 def test_owner_pins_desktop_folder_for_everyone(app):
     """Папка рабочего стола закрепляется владельцем на сайте и подставляется всем (и приглашённым на /prorab)."""
     client = app.test_client()

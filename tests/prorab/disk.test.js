@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 function client(replies, options) {
   const calls = [];
-  const ctx = { window: {}, URL, URLSearchParams, Blob,
+  const ctx = { window: {}, URL, URLSearchParams, Blob, FormData,
     setTimeout: (f) => { f(); return 1; },
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
@@ -13,7 +13,8 @@ function client(replies, options) {
       const reply = replies.shift();
       if (reply instanceof Error) throw reply;
       const [status, body] = reply;
-      return { status, ok: status >= 200 && status < 300, json: async () => body, text: async () => body };
+      return { status, ok: status >= 200 && status < 300, json: async () => body, text: async () => body,
+        arrayBuffer: async () => Uint8Array.from(body).buffer };
     } };
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   return { disk: new ctx.window.ProrabDisk.Disk('test-token', options), calls };
@@ -115,4 +116,91 @@ test('асинхронное создание папки дожидается з
   const c = client([[404, {}], [202, { href: 'https://cloud-api.yandex.net/v1/disk/operations/folder' }], [200, { status: 'success' }]]);
   await c.disk.mkdir('/Объект');
   assert.equal(c.calls.length, 3);
+});
+
+const uploadHref = 'https://uploader1d.dst.yandex.net:443/upload-target/signed-test';
+const uploadOptions = { uploadUrl: '/prorab/upload', csrf: 'test-csrf' };
+
+test('JSON and Word bytes use same-origin upload without giving the site the OAuth key', async () => {
+  for (const isText of [true, false]) {
+    const c = client([[200, { href: uploadHref, method: 'PUT' }], [200, { ok: true, upstream_status: 201 }]], uploadOptions);
+    if (isText) await c.disk.putText('/object/участники.json', '{"name":"Иван"}');
+    else await c.disk.putBlob('/object/журнал.docx', new Blob([new Uint8Array([0x50, 0x4b, 0, 255])]), false);
+    assert.equal(c.calls.length, 2);
+    assert.equal(c.calls[0].options.headers.Authorization, 'OAuth test-token');
+    assert.equal(new URL(c.calls[0].url).searchParams.get('overwrite'), isText ? 'true' : 'false');
+    const { url, options } = c.calls[1];
+    assert.equal(url, '/prorab/upload');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.credentials, 'same-origin');
+    assert.equal(options.headers, undefined);
+    assert.equal(options.body.get('href'), uploadHref);
+    assert.equal(options.body.get('csrf_token'), 'test-csrf');
+    assert.equal(options.body.get('file').name, 'prorab-upload.bin');
+    if (isText) assert.equal(await options.body.get('file').text(), '{"name":"Иван"}');
+    else assert.deepEqual(new Uint8Array(await options.body.get('file').arrayBuffer()), new Uint8Array([0x50, 0x4b, 0, 255]));
+    assert.equal(c.calls.some(x => x.url === uploadHref), false);
+  }
+});
+
+test('upload 423 is distinguished from a quota and is never blindly retried', async () => {
+  for (const quota of [false, true]) {
+    const c = client([[200, { href: uploadHref }], [423, { code: quota ? 'UploadTrafficLimitExceeded' : 'DiskResourceLocked' }]], uploadOptions);
+    await assert.rejects(c.disk.putText('/object/file', '{}'), e =>
+      e.status === 423 && (quota ? /лимите загрузки/.test(e.message) : /заблокировал запись/.test(e.message)));
+    assert.equal(c.calls.length, 2);
+  }
+});
+
+test('upload network failures, expired CSRF and an HTML success page never become saved files', async () => {
+  const failures = [
+    [new TypeError('Failed to fetch ' + uploadHref), /Сохранение на Диске не подтверждено/],
+    [[400, null], /Сессия кабинета истекла/],
+    [[200, null], /не подтвердил передачу/],
+    [[200, { ok: true, upstream_status: 500 }], /не подтвердил передачу/]
+  ];
+  for (const [reply, message] of failures) {
+    const c = client([[200, { href: uploadHref }], reply], uploadOptions);
+    await assert.rejects(c.disk.putBlob('/object/журнал.docx', new Blob(['Word']), false), e =>
+      message.test(e.message) && !e.message.includes('signed-test'));
+    assert.equal(c.calls.length, 2);
+  }
+});
+
+test('large files retain direct upload, with no key/cookies/referrer and no raw fetch errors', async () => {
+  const blob = new Blob([new Uint8Array(20 * 1024 * 1024 + 1)]);
+  const c = client([[200, { href: uploadHref }], [201, {}]], uploadOptions);
+  await c.disk.putBlob('/object/drawing.pdf', blob, false);
+  assert.equal(c.calls[1].url, uploadHref);
+  assert.equal(c.calls[1].options.credentials, 'omit');
+  assert.equal(c.calls[1].options.referrerPolicy, 'no-referrer');
+  assert.equal(c.calls[1].options.redirect, 'error');
+  assert.equal(c.calls[1].options.headers, undefined);
+  await assert.rejects(client([[200, { href: uploadHref }], new TypeError('Failed to fetch ' + uploadHref)], uploadOptions)
+    .disk.putBlob('/object/drawing.pdf', blob, false), e => /Сохранение не подтверждено/.test(e.message) && !e.message.includes('signed-test'));
+});
+
+test('unexpected upload method is rejected before any transfer', async () => {
+  const c = client([[200, { href: uploadHref, method: 'DELETE' }]], uploadOptions);
+  await assert.rejects(c.disk.putText('/object/участники.json', '{}'), /неподдерживаемый/);
+  assert.equal(c.calls.length, 1);
+});
+
+test('upload acknowledgement still needs exact document read-back before it is considered saved', async () => {
+  const Store = require('../../static/prorab/document-store.js').Store;
+  for (const complete of [false, true]) {
+    const bytes = new Uint8Array([0x50, 0x4b, 0, 255]);
+    const c = client([[200, { href: uploadHref }], [200, { ok: true, upstream_status: 202 }],
+      [200, { href: 'https://downloader.disk.yandex.ru/disk/signed-download' }], [200, complete ? bytes : new Uint8Array([0x50])]],
+    { ...uploadOptions, downloadUrl: '/prorab/download' });
+    const store = new Store(c.disk, '/object/docs');
+    let verified = false;
+    store.onVerified = async () => { verified = true; };
+    if (complete) await store.file('/object/docs/journal.docx', bytes);
+    else await assert.rejects(store.file('/object/docs/journal.docx', bytes), /не подтвердил сохранение файла/);
+    assert.equal(verified, complete);
+    assert.equal(c.calls.length, 4);
+    assert.equal(c.calls[1].url, '/prorab/upload');
+    assert.equal(c.calls[3].url, '/prorab/download');
+  }
 });

@@ -14,11 +14,13 @@
   class Disk {
     constructor(token, options) { this.token = token; this.options = options || {}; this.folders = new Map(); }
 
-    async writeError(response, fallback) {
+    async writeError(response, fallback, relay) {
       const body = await response.json().catch(() => ({}));
-      const detail = [body && body.error, body && body.reason, body && body.description, body && body.message].join(' ');
+      const detail = [body && body.error, body && body.code, body && body.reason, body && body.description, body && body.message].join(' ');
       const quota = /UploadTrafficLimitExceeded|UPLOAD_TRAFFIC_LIMIT_EXCEEDED/i.test(detail);
-      let message = fallback + ' (' + response.status + ')';
+      let message = relay && body && typeof body.error === 'string' ? body.error : fallback + ' (' + response.status + ')';
+      if (relay && response.status === 400 && !(body && body.error)) message = 'Сессия кабинета истекла. Сохраните готовый документ на устройство, обновите страницу и повторите.';
+      if (relay && response.status === 413) message = 'Сайт не принял файл из-за ограничения размера (413). Скачайте документ на устройство и загрузите через Яндекс Диск.';
       if (response.status === 423) message = quota ?
         'Яндекс Диск сообщил об исчерпанном лимите загрузки (423). Проверьте ограничения в своём аккаунте Диска.' :
         'Яндекс Диск заблокировал запись (423). Повторите позже; если ошибка остаётся, откройте Диск и проверьте его уведомления и ограничения.';
@@ -108,13 +110,42 @@
       return response;
     }
 
+    /** Small files go through the site so the browser can read upload errors as well as success. */
+    async upload(href, method, blob) {
+      if (method && method !== 'PUT') throw new DiskError('Яндекс Диск вернул неподдерживаемый способ загрузки.', 0);
+      const relay = !!this.options.uploadUrl && blob.size <= 20 * 1024 * 1024;
+      let response;
+      try {
+        if (relay) {
+          const body = new FormData();
+          body.append('href', href);
+          body.append('csrf_token', this.options.csrf || '');
+          body.append('file', blob, 'prorab-upload.bin');
+          response = await fetch(this.options.uploadUrl, { method: 'POST', credentials: 'same-origin', body });
+        } else {
+          // Large drawings/media retain the existing direct path; never forward the OAuth key.
+          response = await fetch(href, { method: 'PUT', body: blob, credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error' });
+        }
+      } catch (_) {
+        throw new DiskError(relay ?
+          'Связь прервалась при загрузке файла. Сохранение на Диске не подтверждено; повторите после восстановления связи.' :
+          'Не удалось передать файл на Яндекс Диск. Сохранение не подтверждено. Проверьте связь и ограничения Диска; большой файл можно загрузить через сайт Диска.', 0);
+      }
+      if (!response.ok) throw await this.writeError(response, 'Не удалось записать на Диск', relay);
+      if (relay) {
+        const result = await response.json().catch(() => ({}));
+        if (!result || result.ok !== true || ![200, 201, 202, 204].includes(result.upstream_status)) {
+          throw new DiskError('Сайт не подтвердил передачу файла на Диск. Скачайте готовый документ на устройство и повторите позже.', 0);
+        }
+      }
+    }
+
     async putText(path, text) {
       const r = await this.call('GET', '/resources/upload', { path: diskPath(path), overwrite: 'true' });
       if (r.status === 409) throw new DiskError('Папки на Диске нет: ' + path, 409);
       if (!r.ok) throw await this.writeError(r, 'Не удалось записать на Диск');
       const { href, method } = await r.json();
-      const up = await fetch(href, { method: method || 'PUT', body: new Blob([text], { type: 'application/json' }) });
-      if (!up.ok && up.status !== 201 && up.status !== 202) throw await this.writeError(up, 'Не удалось записать на Диск');
+      await this.upload(href, method, new Blob([text], { type: 'application/json' }));
     }
 
     /** Файл с компьютера или собранный документ → на Диск. overwrite=false — не затирать существующий. */
@@ -123,8 +154,7 @@
       if (r.status === 409) throw new DiskError('Файл с таким именем уже есть: ' + path.split('/').pop(), 409);
       if (!r.ok) throw await this.writeError(r, 'Не удалось записать на Диск');
       const { href, method } = await r.json();
-      const up = await fetch(href, { method: method || 'PUT', body: blob });
-      if (!up.ok && up.status !== 201 && up.status !== 202) throw await this.writeError(up, 'Не удалось записать на Диск');
+      await this.upload(href, method, blob);
     }
 
     /** Ссылка на скачивание файла (временная). */
