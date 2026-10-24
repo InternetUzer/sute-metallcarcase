@@ -396,14 +396,35 @@
     if (new Date(r.from * 86400000).getUTCFullYear() !== new Date(r.to * 86400000).getUTCFullYear()) throw new Error('Разделите КС-2 на периоды по календарным годам, чтобы правильно заполнить итог с начала года.');
     for (const k of ['base', 'vat', 'all']) if (!Number.isSafeInteger(r.totals[k]) || r.totals[k] < 0) throw new Error('Некорректные суммы КС-2.');
     if (r.totals.base + r.totals.vat !== r.totals.all) throw new Error('Суммы КС-2 не сходятся.');
+    if (r.cancelledAt !== undefined && (r.status !== 'draft' || !Number.isSafeInteger(r.cancelledAt) || r.cancelledAt <= 0)) throw new Error('Повреждена отметка отмены черновика КС.');
     return r;
+  }
+  /** Номер и следующий период берутся из сохранённых комплектов, а не из настроек участников. */
+  function nextCertificate(records, opts, today) {
+    validPeriod(today, today);
+    records.forEach(validateCertificate);
+    const same = records.filter((r) => r.contractKey === contractKey(opts));
+    const numbers = same.map((r) => Number((String(r.number).match(/^\d+/) || ['0'])[0])).filter(Number.isSafeInteger);
+    const lastNumber = Math.max(0, ...numbers);
+    if (!Number.isSafeInteger(lastNumber + 1)) throw new Error('Укажите номер КС вручную: закончился диапазон автоматической нумерации.');
+    const active = same.filter((r) => !r.cancelledAt);
+    const lastTo = active.length ? Math.max(...active.map((r) => r.to)) : null;
+    const now = new Date(today * 86400000);
+    const from = lastTo === null ? Math.round(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 86400000) : lastTo + 1;
+    const yearEnd = Math.round(Date.UTC(new Date(from * 86400000).getUTCFullYear() + 1, 0, 1) / 86400000) - 1;
+    const to = Math.min(Math.max(today, from), yearEnd);
+    validPeriod(from, to);
+    return { number: String(lastNumber + 1), from, to, lastTo };
   }
   function certificatePrevious(records, current) {
     validateCertificate(current);
     const ids = new Set();
     for (const r of records) { validateCertificate(r); if (ids.has(r.id)) throw new Error('Повтор записи в реестре КС.'); ids.add(r.id); }
-    const prior = records.filter((r) => r.status === 'issued' && r.contractKey === current.contractKey && r.id !== current.id);
-    if (prior.some((r) => String(r.number) === String(current.number))) throw new Error('КС-2 с этим номером уже предъявлена по договору.');
+    const active = records.filter((r) => !r.cancelledAt && r.contractKey === current.contractKey && r.id !== current.id);
+    if (active.some((r) => String(r.number) === String(current.number))) throw new Error('КС-2 с этим номером уже сохранена по договору. Откройте её в реестре; ошибочный черновик можно отменить.');
+    const overlappingDraft = active.find((r) => r.status === 'draft' && r.from <= current.to && r.to >= current.from);
+    if (overlappingDraft) throw new Error('За пересекающийся период уже сохранён черновик КС-2 № ' + overlappingDraft.number + '. Откройте его в реестре или отмените ошибочный черновик перед повторным формированием.');
+    const prior = active.filter((r) => r.status === 'issued');
     if (prior.some((r) => r.to >= current.from)) throw new Error('Есть предъявленная КС-2 за пересекающийся или более поздний период. Чтобы не задвоить объёмы, выберите следующий период.');
     return prior.sort((a, b) => a.to - b.to || String(a.number).localeCompare(String(b.number)));
   }
@@ -474,7 +495,9 @@
     const record = opts.certificate;
     const k = record ? { rows: record.rows, total: record.rows.reduce((t, r) => t + r.sum, 0), noPrice: [] } : ksRows(P, opts.from, opts.to);
     if (k.noPrice.length) throw new Error('Есть работы без цены. Заполните цены перед формированием КС.');
-    if (record) { validateCertificate(record); P = { project: record.projectSnapshot }; participants = record.participantsSnapshot; }
+    if (record) { validateCertificate(record); P = { project: record.projectSnapshot }; participants = record.participantsSnapshot;
+      opts = Object.assign({}, opts, { number: record.number, date: record.date, from: record.from, to: record.to, contractNo: record.contractNo,
+        contractDate: record.contractDate, vatRate: record.vatRate, vatIncluded: record.vatIncluded }); }
     const out = ksHeader(P, participants, opts, 'АКТ О ПРИЁМКЕ ВЫПОЛНЕННЫХ РАБОТ', 'Форма № КС-2');
     out.push({ p: [opts.vatRate == null ? 'Без НДС.' : opts.vatIncluded ? 'Цены и суммы включают НДС ' + opts.vatRate + '%.' : 'Цены и суммы без НДС; ставка НДС ' + opts.vatRate + '% учитывается в КС-3.'], size: 9 });
     if (opts.contractValue) out.push({ p: ['Сметная (договорная) стоимость в соответствии с договором подряда (субподряда): ', { t: rub(opts.contractValue) + ' руб.', u: true }], size: 10, after: 4 });
@@ -494,6 +517,8 @@
     if (!record || !record.ledger) throw new Error('КС-3 формируется только из сохранённой КС-2 и реестра предъявленных актов.');
     validateCertificate(record);
     P = { project: record.projectSnapshot }; participants = record.participantsSnapshot;
+    opts = Object.assign({}, opts, { number: record.number, date: record.date, from: record.from, to: record.to,
+      contractNo: record.contractNo, contractDate: record.contractDate });
     const k = record.ledger;
     const out = ksHeader(P, participants, opts, 'СПРАВКА О СТОИМОСТИ ВЫПОЛНЕННЫХ РАБОТ И ЗАТРАТ', 'Форма № КС-3');
     const h = (t) => ({ p: [{ t, b: true, size: 9 }], align: 'center' });
@@ -523,7 +548,7 @@
     return ('АОСР №' + act.number + ' от ' + (act.date ? dmy(act.date) : '') + (title ? ' — ' + title : '')).replace(/[\\/:*?"<>|]/g, '_').trim() + '.docx';
   }
 
-  const api = { contractKey, validateCertificate, certificate, certificatePrevious, certificateLedger, validateParticipants, validPeriod, ksRows, ks3Rows, ks2Blocks, ks3Blocks, vat, rub, ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
+  const api = { contractKey, validateCertificate, nextCertificate, certificate, certificatePrevious, certificateLedger, validateParticipants, validPeriod, ksRows, ks3Rows, ks2Blocks, ks3Blocks, vat, rub, ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabId = api;
 })(typeof window !== 'undefined' ? window : globalThis);

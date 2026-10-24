@@ -102,11 +102,25 @@
         if (!text) throw new Error('КС-2 не найдена. Обновите список.');
         const saved = JSON.parse(text);
         I.validateCertificate(saved);
+        if (saved.cancelledAt) throw new Error('Черновик отменён. Сформируйте новый комплект КС.');
         if (saved.status === 'issued') return saved;
         const all = await this.records('КС');
         const ledger = I.certificateLedger(all, saved);
         if (JSON.stringify(ledger) !== JSON.stringify(saved.ledger)) throw new Error('Накопление изменилось после формирования. Создайте новый комплект КС перед подачей.');
         saved.status = 'issued'; saved.issuedAt = Date.now();
+        await this.json(path, saved);
+        return saved;
+      });
+    }
+    async cancelCertificate(record) {
+      return this.run(async () => {
+        const path = this.path + '/КС/' + leaf(record.id) + '.json';
+        const text = await this.disk.getText(path);
+        if (!text) throw new Error('КС-2 не найдена. Обновите список.');
+        const saved = I.validateCertificate(JSON.parse(text));
+        if (saved.status !== 'draft') throw new Error('Предъявленную КС-2 нельзя отменить как черновик.');
+        if (saved.cancelledAt) return saved;
+        saved.cancelledAt = Date.now();
         await this.json(path, saved);
         return saved;
       });
