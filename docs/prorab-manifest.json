@@ -1,11 +1,11 @@
 {
-  "base_commit": "b48f53fbf95c50c2d56cc337211ab4b969dd8d52",
+  "base_commit": "560f04c2bdcf50f1daa7d31af309941752e182f6",
   "reviewed_pr_head": "488ba624a4a8c55f2e2900e018f6a58581b6d298",
   "files": [
     {
       "path": "app.py",
-      "sha256": "083314a5c9f1647dc664253a99f13034823a6414cee3d43a9b66d2e6686c323b",
-      "base_sha256": "e7ee7dae99765fc6475e21b686eb5bc32487e277e6c4be359b21d1f2beaec410"
+      "sha256": "336bdc6e584b297dfe8f1a84fba7f657e2fa3afdfbd7a09fb60e2a499168af1a",
+      "base_sha256": "083314a5c9f1647dc664253a99f13034823a6414cee3d43a9b66d2e6686c323b"
     },
     {
       "path": "prorab_anchor.py",
@@ -14,7 +14,7 @@
     },
     {
       "path": "prorab_transfer.py",
-      "sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68",
+      "sha256": "b68955edde85a96db9d420b6811baeb0bc283982d01f33241b1a6754ced925fa",
       "base_sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68"
     },
     {
@@ -24,8 +24,8 @@
     },
     {
       "path": "static/prorab/app.js",
-      "sha256": "ebd2db1c1533493440e86bb3351e87a0279b5083940ae3070cf8f332334fb7ef",
-      "base_sha256": "c4ae2264c958044ca2a736d37891a29596d0570515df989f6d7f77dc023b1a9e"
+      "sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd",
+      "base_sha256": "ebd2db1c1533493440e86bb3351e87a0279b5083940ae3070cf8f332334fb7ef"
     },
     {
       "path": "static/prorab/catalog.js",
@@ -34,8 +34,8 @@
     },
     {
       "path": "static/prorab/disk.js",
-      "sha256": "691392c29e79b79fcfff081662968feac343c215151ed8ed486c7f0f56c53c51",
-      "base_sha256": "ab0c561f794e5d5c1cc80664fe065b92ec79307607f415ea7f43c25c792c6844"
+      "sha256": "cd2f1430020719c9771889184a0fecbe7ee7ea06339ae68f6702dc44748f114c",
+      "base_sha256": "691392c29e79b79fcfff081662968feac343c215151ed8ed486c7f0f56c53c51"
     },
     {
       "path": "static/prorab/document-store.js",
@@ -159,7 +159,7 @@
     },
     {
       "path": "templates/prorab.html",
-      "sha256": "e91641fa3cc8c70ba23141a4c9c9c0bb91be0560accf29708fa9171d9baba423",
+      "sha256": "e0ebd996919afe53052cae187699a608634e20ccc817cbc27cbcfe84a112cc7b",
       "base_sha256": "e91641fa3cc8c70ba23141a4c9c9c0bb91be0560accf29708fa9171d9baba423"
     }
   ]

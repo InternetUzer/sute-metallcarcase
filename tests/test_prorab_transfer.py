@@ -62,8 +62,9 @@ def connection_mock(monkeypatch, replies):
             self.closed = False
             calls.append(self)
 
-        def request(self, method, target, headers):
+        def request(self, method, target, headers, body=None):
             self.method, self.target, self.headers = method, target, headers
+            self.body = b''.join(body) if body is not None else None
 
         def getresponse(self):
             return replies.pop(0)
@@ -136,3 +137,91 @@ def test_tls_uses_checked_ip_and_original_hostname(monkeypatch):
     connection._context = Context()
     connection.connect()
     assert calls == [('87.250.250.50', 443), (sock, 'downloader.disk.yandex.ru')]
+
+
+UPLOAD = 'https://uploader1d.dst.yandex.net:443/upload-target/signed-test?token=temporary'
+
+
+@pytest.mark.parametrize('url', [
+    'http://uploader1d.dst.yandex.net/upload-target/test',
+    'https://uploader1d.dst.yandex.net.evil.test/upload-target/test',
+    'https://uploader1d.evil.dst.yandex.net/upload-target/test',
+    'https://user:pass@uploader1d.dst.yandex.net/upload-target/test',
+    'https://uploader1d.dst.yandex.net:8080/upload-target/test',
+    'https://uploader1d.dst.yandex.net/upload-target/test#fragment',
+    'https://cloud-api.yandex.net/v1/disk',
+    'https://uploader1d.dst.yandex.net/other/test',
+    'https://uploader1d.dst.yandex.net/upload-target/',
+    'https://uploader1d.dst.yandex.net/upload-target/../other',
+    'https://uploader1d.dst.yandex.net/upload-target/%2e%2e/other',
+    'https://uploader1d.dst.yandex.net/upload-target/test\\other',
+    'https://127.0.0.1/upload-target/test', 'file:///etc/passwd',
+    'https://uploader1d.dst.yandex.net/upload-target/test\r\nInjected:header',
+])
+def test_upload_target_rejects_unrelated_or_ambiguous_urls(url):
+    with pytest.raises(transfer.TransferError):
+        transfer.checked_upload_url(url)
+
+
+@pytest.mark.parametrize('status', [200, 201, 202, 204])
+def test_upload_exact_binary_bytes_without_credentials_or_filename(monkeypatch, status):
+    reply = Reply(status)
+    calls = connection_mock(monkeypatch, [reply])
+    data = b'PK\x00\xff\r\n' + 'Журнал'.encode()
+    assert transfer.upload(UPLOAD, io.BytesIO(data)) == status
+    assert len(calls) == 1
+    c = calls[0]
+    assert c.host == 'uploader1d.dst.yandex.net' and c.method == 'PUT'
+    assert c.target == '/upload-target/signed-test?token=temporary'
+    assert c.body == data and c.headers['Content-Length'] == str(len(data))
+    assert set(c.headers) == {'Content-Length', 'Content-Type', 'Accept', 'Accept-Encoding'}
+    assert c.closed and reply.closed
+
+
+def test_upload_size_limit_is_checked_before_any_connection(monkeypatch):
+    monkeypatch.setattr(transfer, 'MAX_UPLOAD_BYTES', 8)
+    calls = connection_mock(monkeypatch, [])
+    with pytest.raises(transfer.TransferError) as error:
+        transfer.upload(UPLOAD, io.BytesIO(b'123456789'))
+    assert error.value.status == 413 and calls == []
+
+
+@pytest.mark.parametrize('status,body,code', [
+    (423, b'{"error":"DiskResourceLockedError"}', 'DiskResourceLocked'),
+    (423, b'{"error":"DiskUploadTrafficLimitExceeded","description":"signed-secret"}', 'UploadTrafficLimitExceeded'),
+    (423, b'<html>private error signed-secret</html>', 'DiskResourceLocked'),
+    (403, b'signed-secret', ''), (409, b'', ''), (429, b'', ''), (507, b'', ''),
+])
+def test_upload_error_preserves_status_but_not_raw_upstream_details(monkeypatch, status, body, code):
+    reply = Reply(status, body)
+    calls = connection_mock(monkeypatch, [reply])
+    with pytest.raises(transfer.TransferError) as error:
+        transfer.upload(UPLOAD, io.BytesIO(b'document'))
+    assert error.value.status == status and error.value.code == code
+    assert 'signed-secret' not in str(error.value) and UPLOAD not in str(error.value)
+    assert len(calls) == 1 and calls[0].closed and reply.closed
+
+
+@pytest.mark.parametrize('destination', ['https://evil.test/file', UPLOAD])
+def test_upload_never_follows_redirects_or_sends_data_twice(monkeypatch, destination):
+    calls = connection_mock(monkeypatch, [Reply(307, Location=destination)])
+    with pytest.raises(transfer.TransferError):
+        transfer.upload(UPLOAD, io.BytesIO(b'document'))
+    assert len(calls) == 1 and calls[0].closed
+
+
+def test_upload_network_error_is_safe_and_not_a_success(monkeypatch):
+    def failed(host):
+        raise OSError('failed ' + UPLOAD)
+    monkeypatch.setattr(transfer, 'public_address', failed)
+    with pytest.raises(transfer.TransferError) as error:
+        transfer.upload(UPLOAD, io.BytesIO(b'document'))
+    assert 'не подтверждено' in str(error.value) and 'signed-test' not in str(error.value)
+
+
+def test_upload_rejects_private_dns_before_connecting(monkeypatch):
+    monkeypatch.setattr(socket, 'getaddrinfo', lambda *a, **k: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 443))])
+    monkeypatch.setattr(transfer, 'PinnedHTTPSConnection', lambda *a: pytest.fail('Unexpected connection'))
+    with pytest.raises(transfer.TransferError, match='Недопустимый адрес'):
+        transfer.upload(UPLOAD, io.BytesIO(b'document'))
