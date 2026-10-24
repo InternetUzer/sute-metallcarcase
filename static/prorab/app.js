@@ -423,6 +423,8 @@
       if (c.project.dirty) { persist(c); scheduleSave(c, 0); }
       c.status = 'Сохранено в ' + time() + ' — телефон получит при синхронизации';
       setStatus(projName(c.path) + ': сохранено в ' + time());
+      // Фиксация не чаще раза в 30 минут; её ошибки не мешают сохранению
+      fixNow(c, false).then((msg) => { if (msg && msg.startsWith('Зафиксировано')) c.status += ' · ' + msg.toLowerCase(); }, () => {});
     } catch (e) {
       c.project.dirty = true;
       c.status = 'Не сохранилось: ' + e.message;
@@ -476,12 +478,13 @@
     extras: { title: 'Доп. работы', icon: '➕', view: (w, c) => extrasView(w, c) },
     acceptance: { title: 'Журнал приёмки', icon: '✅', view: (w, c) => acceptanceView(w, c) },
     id: { title: 'Исполнительная документация', icon: '📑', view: (w, c) => idView(w, c) },
+    fixation: { title: 'Фиксация данных', icon: '🔏', view: (w, c) => fixationView(w, c) },
     project: { title: 'Объект', icon: '🏗️', view: (w, c) => projectView(w, c) },
     economy: { title: 'Экономика', icon: '💼', view: () => economyView() },
     econ: { title: 'Экономика объекта', icon: '💼', view: (w, c) => econView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'explorer'];
+  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'fixation', 'explorer'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -1299,6 +1302,7 @@
       setStatus('Загружаю ' + file.name + ' на Диск…');
       await disk.mkdir(c.path + '/files');
       await disk.putBlob(target, bytes === src ? file : new Blob([bytes]), false);
+      fixFile(c, id + '.' + kind, bytes);
       bytesCache[target] = Promise.resolve(bytes.slice().buffer);
       P.addDrawing({ id, name, kind, file: id + '.' + kind, pages });
       changed(c);
@@ -1351,6 +1355,7 @@
     await disk.mkdir(c.path + '/files');
     if (bytes === src) { try { await disk.copy(full, target); } catch (e) { await disk.putBlob(target, new Blob([bytes]), false); } }
     else await disk.putBlob(target, new Blob([bytes]), false);
+    fixFile(c, file, bytes);
     bytesCache[target] = Promise.resolve(bytes === src ? buf : bytes.slice().buffer);
     P.addDrawing({ id, name, kind, file, pages });
     changed(c);
@@ -2667,6 +2672,176 @@
     document.body.append(el); el.click(); el.remove();
   }
 
+  // ───────── фиксация данных (защищённый журнал изменений) ─────────
+  // Цепочка этого устройства: «<объект>/.prorab-fixation/<устройство>/000001.json» + квитанции сервера «000001.anchor.json».
+  const F = window.ProrabFixation;
+  const FIX_EVERY_MS = 30 * 60 * 1000;
+  const fixDir = (c, device) => c.path + '/' + F.DIR + (device ? '/' + device : '');
+  const fixState = (c) => (c.fix = c.fix || { loaded: false, seals: [], leaves: null, anchored: new Set(), files: [], busy: false, lastAt: 0 });
+
+  /** Отпечаток файла, загруженного с этого устройства (фото, чертёж) — попадёт в следующую фиксацию. */
+  async function fixFile(c, name, data) {
+    try {
+      const bytes = data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+      fixState(c).files.push({ name, sha256: await F.sha256(bytes) });
+    } catch (e) { /* фиксация не должна мешать загрузке */ }
+  }
+
+  async function loadOwnChain(c) {
+    const st = fixState(c);
+    if (st.loaded) return st;
+    const items = (await disk.list(fixDir(c, me))) || [];
+    const seals = [];
+    for (const it of items.filter((i) => i.type === 'file' && /^\d{6}\.json$/.test(i.name))) {
+      const t = await disk.getText(fixDir(c, me) + '/' + it.name);
+      if (t !== null) seals.push(JSON.parse(t));
+    }
+    seals.sort((a, b) => a.seq - b.seq);
+    st.seals = seals;
+    st.leaves = F.replay(seals);
+    st.anchored = new Set(items.filter((i) => /^\d{6}\.anchor\.json$/.test(i.name)).map((i) => parseInt(i.name, 10)));
+    st.lastAt = seals.length ? seals[seals.length - 1].createdAt : 0;
+    st.loaded = true;
+    return st;
+  }
+
+  /** Квитанция сервера сайта (время + подпись); без сервера (предпросмотр) — false. */
+  async function anchorSeal(c, seal) {
+    const url = app.dataset.anchorUrl;
+    if (!url) return false;
+    try {
+      const r = await fetch(url, { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ hash: seal.hash, csrf_token: app.dataset.csrf || '' }) });
+      if (!r.ok) return false;
+      const a = await r.json();
+      if (a.hash !== seal.hash) return false;
+      await disk.putText(fixDir(c, me) + '/' + F.anchorName(seal.seq), JSON.stringify(Object.assign({ seq: seal.seq }, a), null, 1));
+      fixState(c).anchored.add(seal.seq);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /** Зафиксировать состояние объекта (force — не ждать 30 минут). Возвращает текст для статуса. */
+  async function fixNow(c, force) {
+    const st = fixState(c);
+    if (st.busy || !c.project) return null;
+    if (!force && st.loaded && Date.now() - st.lastAt < FIX_EVERY_MS) return null;
+    st.busy = true;
+    try {
+      await loadOwnChain(c);
+      if (!force && Date.now() - st.lastAt < FIX_EVERY_MS) return null;
+      // Сначала дослать квитанции, которые не получили раньше (нет связи с сайтом)
+      for (const s of st.seals) if (!st.anchored.has(s.seq)) await anchorSeal(c, s);
+      const prev = st.seals[st.seals.length - 1] || null;
+      const files = st.files.splice(0);
+      const res = await F.makeSeal(prev, st.leaves, c.project.state, { project: c.project.projectId, device: me, now: Date.now(), files });
+      if (!res) { st.lastAt = Date.now(); return 'Изменений с прошлой фиксации нет'; }
+      await disk.mkdir(fixDir(c)); await disk.mkdir(fixDir(c, me));
+      try { await disk.putBlob(fixDir(c, me) + '/' + F.name(res.seal.seq), new Blob([JSON.stringify(res.seal)], { type: 'application/json' }), false); }
+      catch (e) { st.files.unshift(...files); st.loaded = false; throw e; }
+      st.seals.push(res.seal); st.leaves = res.leaves; st.lastAt = res.seal.createdAt;
+      const ok = await anchorSeal(c, res.seal);
+      return 'Зафиксировано: № ' + res.seal.seq + ', записей изменено ' + res.seal.changes.length + (ok ? ', квитанция сервера получена' : ', квитанция будет получена позже');
+    } finally { st.busy = false; }
+  }
+
+  /** Все цепочки объекта (все устройства) с квитанциями. */
+  async function loadAllChains(c) {
+    const devices = ((await disk.list(fixDir(c))) || []).filter((i) => i.type === 'dir');
+    const chains = [];
+    for (const d of devices) {
+      const items = (await disk.list(fixDir(c, d.name))) || [];
+      const seals = [], anchors = new Map();
+      for (const it of items.filter((i) => i.type === 'file' && i.name.endsWith('.json'))) {
+        const t = await disk.getText(fixDir(c, d.name) + '/' + it.name);
+        if (t === null) continue;
+        const j = JSON.parse(t);
+        if (/\.anchor\.json$/.test(it.name)) anchors.set(j.seq, j); else seals.push(j);
+      }
+      chains.push({ device: d.name, seals, anchors, files: items });
+    }
+    return chains;
+  }
+
+  /** Подписи квитанций проверяет сервер сайта (ключ есть только у него). */
+  async function verifyAnchors(chains) {
+    const url = app.dataset.anchorUrl;
+    let valid = 0, invalid = 0;
+    if (!url) return { valid, invalid, checked: false };
+    for (const ch of chains) {
+      for (const a of ch.anchors.values()) {
+        try {
+          const r = await fetch(url + '/verify', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ hash: a.hash, time: a.time, sig: a.sig, csrf_token: app.dataset.csrf || '' }) });
+          const j = await r.json();
+          if (j.valid) valid++; else invalid++;
+        } catch (e) { return { valid, invalid, checked: false }; }
+      }
+    }
+    return { valid, invalid, checked: true };
+  }
+
+  function fixationView(w, c) {
+    const st = fixState(c);
+    if (!st.loaded && !st.loading) { st.loading = true; loadOwnChain(c).catch((e) => { w.fixError = e.message; }).finally(() => { st.loading = false; if (!modalOpen()) render(); }); }
+    const last = st.seals[st.seals.length - 1];
+    const rep = w.fixReport;
+    return h('main', null,
+      h('section', { class: 'pp-card' },
+        h('p', null, 'Кабинет сам фиксирует данные объекта после сохранения (не чаще раза в 30 минут): записи журнала, замечания, приёмку, финансы и остальное — с цифровыми отпечатками SHA-256. Каждая фиксация ссылается на предыдущую, а её отпечаток заверяется квитанцией сервера сайта со временем. Правка задним числом, удаление или подмена файла фиксации видны при проверке.'),
+        h('p', { class: 'pp-muted' }, 'Файлы фиксации — в папке объекта «' + F.DIR + '» (скрытая). Не удаляйте и не правьте их вручную.'),
+        w.fixError ? h('p', { class: 'pp-error' }, w.fixError) : null,
+        h('p', null, st.loading ? 'Загружаю…' : last ? 'Это устройство: фиксаций ' + st.seals.length + ', последняя ' + new Date(last.createdAt).toLocaleString('ru-RU') + ', с квитанцией сервера ' + st.anchored.size : 'С этого устройства фиксаций ещё не было.'),
+        h('div', { class: 'pp-row pp-wrap' },
+          button('🔏 Зафиксировать сейчас', async () => { try { setStatus('Фиксирую…'); setStatus(await fixNow(c, true) || 'Фиксация уже идёт'); } catch (e) { alert(e.message); } render(); }, 'pp-primary'),
+          button('✔ Проверить целостность', async () => { try { setStatus('Проверяю фиксации…'); w.fixReport = await fixReport(c); setStatus('Проверка завершена'); } catch (e) { alert(e.message); } render(); }),
+          button('⬇ Выгрузить для эксперта', () => exportFixation(c)))),
+      rep ? h('section', { class: 'pp-card' }, h('h3', null, rep.problems ? '⚠ Найдены нарушения' : '✓ Нарушений не найдено'),
+        h('div', { class: 'pp-table-wrap' }, h('table', { class: 'pp-table' },
+          h('thead', null, h('tr', null, ['Устройство', 'Фиксаций', 'Первая', 'Последняя', 'С квитанцией', 'Нарушения'].map((t) => h('th', null, t)))),
+          h('tbody', null, rep.chains.map((r) => h('tr', null, h('td', null, r.device), h('td', { class: 'pp-num' }, String(r.seals)), h('td', null, r.first ? new Date(r.first).toLocaleString('ru-RU') : ''),
+            h('td', null, r.last ? new Date(r.last).toLocaleString('ru-RU') : ''), h('td', { class: 'pp-num' }, String(r.anchored)),
+            h('td', { class: r.problems.length ? 'pp-error' : 'pp-plus' }, r.problems.length ? r.problems.join('; ') : 'нет')))))),
+        h('p', { class: rep.anchors.invalid ? 'pp-error' : 'pp-muted' }, rep.anchors.checked ? 'Подписи квитанций сервера: верных ' + rep.anchors.valid + (rep.anchors.invalid ? ', неверных ' + rep.anchors.invalid : '') : 'Подписи квитанций не проверены (нет связи с сайтом).')) : null);
+  }
+
+  async function fixReport(c) {
+    const chains = await loadAllChains(c);
+    const rows = [];
+    for (const ch of chains) rows.push(Object.assign(await F.verifyChain(ch.seals, ch.anchors), { device: ch.device }));
+    const anchors = await verifyAnchors(chains);
+    return { chains: rows, anchors, problems: rows.some((r) => r.problems.length) || anchors.invalid > 0, at: Date.now(), raw: chains };
+  }
+
+  async function exportFixation(c) {
+    try {
+      setStatus('Собираю архив фиксаций…');
+      const rep = await fixReport(c);
+      const enc = new TextEncoder();
+      const entries = [];
+      for (const ch of rep.raw) {
+        for (const s of ch.seals) entries.push({ name: F.DIR + '/' + ch.device + '/' + F.name(s.seq), text: enc.encode(JSON.stringify(s)) });
+        for (const a of ch.anchors.values()) {
+          entries.push({ name: F.DIR + '/' + ch.device + '/' + F.anchorName(a.seq), text: enc.encode(JSON.stringify(a, null, 1)) });
+          if (a.tsa) entries.push({ name: F.DIR + '/' + ch.device + '/' + String(a.seq).padStart(6, '0') + '.tsr', text: Uint8Array.from(atob(a.tsa), (ch2) => ch2.charCodeAt(0)) });
+        }
+      }
+      const p = c.project.project;
+      const lines = ['Отчёт о проверке фиксаций данных «Прораб+»', 'Объект: ' + (p.name || '') + (p.address ? ', ' + p.address : ''), 'Идентификатор объекта: ' + c.project.projectId,
+        'Проверено: ' + new Date(rep.at).toLocaleString('ru-RU'), 'Итог: ' + (rep.problems ? 'НАЙДЕНЫ НАРУШЕНИЯ' : 'нарушений не найдено'), '',
+        ...rep.chains.map((r) => 'Устройство ' + r.device + ': фиксаций ' + r.seals + (r.first ? ', с ' + new Date(r.first).toISOString() : '') + (r.last ? ' по ' + new Date(r.last).toISOString() : '') + ', с квитанцией сервера ' + r.anchored + (r.problems.length ? '\n  Нарушения: ' + r.problems.join('\n  ') : '')),
+        '', rep.anchors.checked ? 'Подписи квитанций сервера проверены: верных ' + rep.anchors.valid + ', неверных ' + rep.anchors.invalid : 'Подписи квитанций сервера не проверялись.'];
+      const readme = ['Как устроены фиксации', '', 'Каждый файл NNNNNN.json — фиксация: изменившиеся записи объекта полностью (row) и их отпечатки SHA-256 (h) от канонического JSON (ключи по алфавиту),',
+        'общий отпечаток состояния (root — SHA-256 строк «таблица/id:отпечаток» по алфавиту через перевод строки), отпечаток предыдущей фиксации (prev) и свой отпечаток (hash — SHA-256 канонического JSON фиксации без поля hash).',
+        'NNNNNN.anchor.json — квитанция сервера сайта: время UTC (time) и подпись HMAC-SHA256 (sig) строки «prorab-anchor-v1|hash|time»; проверяется сервером сайта (POST /prorab/anchor/verify).',
+        'NNNNNN.tsr — метка времени независимой службы (RFC 3161), если она была подключена: openssl ts -verify -digest <hash> -in NNNNNN.tsr -CAfile <сертификаты службы>.',
+        'Проверка без программы: пересчитать SHA-256 канонического JSON записей и фиксаций и сравнить с h, hash и prev следующей фиксации.'];
+      entries.push({ name: 'Отчёт о проверке.txt', text: enc.encode(lines.join('\r\n')) }, { name: 'Как проверить.txt', text: enc.encode(readme.join('\r\n')) });
+      const blob = new Blob([O.zip(entries)], { type: 'application/zip' });
+      const a = h('a', { href: URL.createObjectURL(blob), download: ('Фиксации ' + (p.name || 'объект') + ' ' + shortDate(today)).replace(/[\\/:*?"<>|]/g, '_') + '.zip' });
+      document.body.append(a); a.click(); a.remove();
+      setStatus('Архив фиксаций выгружен' + (rep.problems ? ' — есть нарушения, см. отчёт' : ''), rep.problems);
+    } catch (e) { alert(e.message); setStatus(''); }
+  }
+
   // ───────── позиция ведомости ─────────
   function boqForm(c, id, opts) {
     opts = opts || {};
@@ -2750,7 +2925,9 @@
           const data = await shrink(f);
           const file = S.newId() + '.jpg';
           await disk.mkdir(c.path + '/files');
-          await disk.putBlob(c.path + '/files/' + file, dataToBlob(data), false);
+          const blob = dataToBlob(data);
+          await disk.putBlob(c.path + '/files/' + file, blob, false);
+          fixFile(c, file, blob);
           hrefCache[c.path + '/files/' + file] = Promise.resolve(data);
           const item = { file };
           added.push(item);

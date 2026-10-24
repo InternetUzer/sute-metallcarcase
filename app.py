@@ -30,6 +30,7 @@ from messengers import public_links, validate_settings as validate_messengers
 from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
 from prorab_transfer import register_transfer
+from prorab_anchor import register_anchor
 
 ROOT = Path(__file__).resolve().parent
 
@@ -37,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net'
 # Место объекта для погоды по адресу — те же сервисы, что в приложении (OpenStreetMap и Open-Meteo)
 PRORAB_GEO = 'https://nominatim.openstreetmap.org https://geocoding-api.open-meteo.com'
-PRORAB_VERSION = '12'
+PRORAB_VERSION = '13'
 PRORAB_DEFAULT_ROOT = '/Прораб+'
 # Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
 # он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.
@@ -671,6 +672,7 @@ def create_app(test_config=None):
         return prorab_page(False)
 
     register_transfer(app, limited)
+    register_anchor(app, limited)
 
     @app.post('/admin/prorab/root')
     @protected(admin=True)

@@ -33,7 +33,7 @@ def test_only_owner_opens_journal(app):
     r = client.get('/admin/prorab')
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    for name in ['schema.js', 'sync.js', 'persistence.js', 'model.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'templates.js', 'disk.js', 'office.js', 'app.js', 'prorab.css']:
+    for name in ['schema.js', 'sync.js', 'persistence.js', 'model.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'templates.js', 'fixation.js', 'disk.js', 'office.js', 'app.js', 'prorab.css']:
         assert '/static/prorab/' + name in html
         assert (ROOT / 'static/prorab' / name).is_file()
     assert 'style=' not in html and '<script>' not in html  # без встроенных скриптов и стилей (CSP)
@@ -160,3 +160,55 @@ def test_drawing_viewer_files_are_served(app):
         r = client.get(f'/static/prorab/vendor/{name}')
         assert r.status_code == 200 and 'javascript' in r.mimetype
         assert b'sourceMappingURL' not in r.data
+
+
+def anchor_token(client):
+    client.get('/prorab')
+    with client.session_transaction() as session:
+        return session['csrf']
+
+
+def test_anchor_receipt_signed_logged_and_verifiable(app, monkeypatch):
+    """Квитанция фиксации: только отпечаток, CSRF, подпись сервера, журнал, проверка; без службы меток — без запроса наружу."""
+    import prorab_anchor
+    monkeypatch.delenv('PRORAB_TSA_URL', raising=False)
+    monkeypatch.setattr(prorab_anchor.requests, 'post', lambda *a, **k: (_ for _ in ()).throw(AssertionError('no TSA call')))
+    client = app.test_client()
+    digest = 'a' * 64
+    assert client.post('/prorab/anchor', data={'hash': digest}).status_code == 400  # без CSRF
+    token = anchor_token(client)
+    assert client.post('/prorab/anchor', data={'hash': 'xyz', 'csrf_token': token}).status_code == 400
+    r = client.post('/prorab/anchor', data={'hash': digest.upper(), 'csrf_token': token}).get_json()
+    assert r['hash'] == digest and r['tsa'] is None and len(r['sig']) == 64 and r['time'].endswith('Z')
+    log = (prorab_anchor.Path(app.config['DATABASE']).with_name('prorab-anchors.log')).read_text()
+    assert digest in log and r['time'] in log
+    ok = client.post('/prorab/anchor/verify', data={'hash': digest, 'time': r['time'], 'sig': r['sig'], 'csrf_token': token}).get_json()
+    assert ok['valid'] is True
+    bad = client.post('/prorab/anchor/verify', data={'hash': digest, 'time': '2020-01-01T00:00:00Z', 'sig': r['sig'], 'csrf_token': token}).get_json()
+    assert bad['valid'] is False
+
+
+def test_anchor_tsa_request_is_rfc3161(app, monkeypatch):
+    import prorab_anchor
+    req = prorab_anchor.tsa_request('ab' * 32, nonce=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+    # SEQUENCE { INTEGER 1, SEQUENCE { sha256, OCTET STRING(32) }, INTEGER nonce, BOOLEAN TRUE }
+    assert req.hex() == '3043020101' + '3031' + '300d06096086480165030402010500' + '0420' + 'ab' * 32 + '02080102030405060708' + '0101ff'
+    assert prorab_anchor.tsa_request('ab' * 32, nonce=b'\x80' + b'\x00' * 7)[-14:-3] == bytes.fromhex('0209' + '0080' + '00' * 7)
+    granted = bytes.fromhex('3009' + '3003020100' + '3002' + '0500')
+    assert prorab_anchor.tsa_status(granted) == 0
+    assert prorab_anchor.tsa_status(bytes.fromhex('30053003020102')) == 2
+    calls = []
+
+    class Reply:
+        status_code = 200
+        content = granted
+
+    def post(url, data, headers, timeout):
+        calls.append((url, data, headers))
+        return Reply()
+    monkeypatch.setenv('PRORAB_TSA_URL', 'https://tsa.example.test/tsp')
+    monkeypatch.setattr(prorab_anchor.requests, 'post', post)
+    client = app.test_client()
+    r = client.post('/prorab/anchor', data={'hash': 'c' * 64, 'csrf_token': anchor_token(client)}).get_json()
+    assert r['tsa'] and r['tsa_url'] == 'https://tsa.example.test/tsp'
+    assert calls[0][2]['Content-Type'] == 'application/timestamp-query'
