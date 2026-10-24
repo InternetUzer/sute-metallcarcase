@@ -133,3 +133,23 @@ test('несколько снимков без связи сохраняются
   assert.equal(receipts.size, 2); assert.equal(j.anchored.size, 2);
   assert.equal((await j.report(state(2))).incomplete, false);
 });
+
+test('снимок телефона 1.0.122 (v1, имя файла без папки) проверяется, файл ищется в files/', async () => {
+  const { journal: j, files, args } = setup();
+  const photo = new Uint8Array([7, 8, 9]);
+  files.set(args.path + '/files/ph.jpg', photo);
+  const r = await F.makeSeal(null, null, state(1), { project: 'p', device: 'phone-1', now, files: [] });
+  const seal = { ...r.seal, version: 1, files: [{ name: 'ph.jpg', sha256: await F.sha256(photo) }] };
+  delete seal.hash; seal.hash = await F.sealHash(seal);
+  files.set(args.path + '/' + F.DIR + '/phone-1/000001.json', JSON.stringify(seal));
+  const rep = await j.report(null);
+  assert.equal(rep.verifiedFiles, 1);
+  assert.equal(rep.fileCount, 1);
+  assert.deepEqual(rep.issues, []);
+  assert.deepEqual(rep.chains.find((c) => c.device === 'phone-1').problems, []);
+  // Путь с папкой в старом снимке по-прежнему проверяется строго
+  const bad = { ...seal, files: [{ name: '../x.jpg', sha256: seal.files[0].sha256 }] };
+  delete bad.hash; bad.hash = await F.sealHash(bad);
+  files.set(args.path + '/' + F.DIR + '/phone-1/000001.json', JSON.stringify(bad));
+  await assert.rejects(j.report(null), /Недопустимый путь/);
+});
