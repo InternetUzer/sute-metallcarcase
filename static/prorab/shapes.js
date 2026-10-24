@@ -23,6 +23,8 @@
     { hex: '#1C1C1E', title: 'Чёрный', aci: 7 },
   ];
   const kindOf = (code) => KINDS.find((k) => k.code === code) || KINDS[0];
+  const TOOLS = KINDS.concat([{ code: 'angle', title: 'Замер угла', min: 3, max: 3 }]);
+  const toolOf = (code) => TOOLS.find((k) => k.code === code) || KINDS[0];
   const colorOf = (hex) => COLORS.find((c) => c.hex.toLowerCase() === String(hex || '').toLowerCase()) || COLORS[0];
 
   function num(v) {
@@ -43,7 +45,7 @@
     }
     return out;
   }
-  const complete = (kind, pts) => { const k = kindOf(kind); return pts.length >= k.min && (k.max === null || pts.length <= k.max); };
+  const complete = (kind, pts) => { const k = toolOf(kind); return pts.length >= k.min && (k.max === null || pts.length <= k.max); };
   const rect = (a, b) => [a, [b[0], a[1]], b, [a[0], b[1]]];
   function segments(kind, pts) {
     if (kind === 'text') return [];
@@ -78,6 +80,7 @@
     if (v === null || v === undefined || !Number.isFinite(Number(v))) return null;
     if (s.kind === 'dim') return formatMeters(Number(v));
     if (s.kind === 'area') return Number(v) < 10000 ? comma(Number(v), 2) + ' м²' : comma(Number(v), 0) + ' м²';
+    if (s.kind === 'angle') return formatAngle(Number(v));
     return null;
   }
   function toSegment(x, y, a, b) {
@@ -105,6 +108,46 @@
     return best;
   }
   const ortho = (from, to) => (Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1]) ? [to[0], from[1]] : [from[0], to[1]]);
+  const ANGLE_STEPS = [15, 30, 45, 90];
+  const angleStep = (cfg) => {
+    if (!cfg || !['line', 'polyline', 'dim', 'area'].includes(cfg.kind)) return 0;
+    const step = Number(cfg.angleStep);
+    return ANGLE_STEPS.includes(step) ? step : cfg.ortho ? 90 : 0;
+  };
+  /** Project onto the nearest allowed direction from the last point, relative to drawing axes. */
+  function constrainAngle(from, to, step) {
+    if (!ANGLE_STEPS.includes(step)) return to.slice();
+    if (step === 90) return ortho(from, to);
+    const dx = to[0] - from[0], dy = to[1] - from[1], increment = step * Math.PI / 180;
+    const a = Math.round(Math.atan2(dy, dx) / increment) * increment;
+    const clean = (v) => Math.abs(v) < 1e-12 ? 0 : v;
+    const ux = clean(Math.cos(a)), uy = clean(Math.sin(a)), distance = dx * ux + dy * uy;
+    return [from[0] + distance * ux, from[1] + distance * uy];
+  }
+  function onAngle(from, to, step) {
+    const p = constrainAngle(from, to, step);
+    const tolerance = 1e-8 * Math.max(1, Math.hypot(to[0] - from[0], to[1] - from[1]));
+    return Math.hypot(p[0] - to[0], p[1] - to[1]) <= tolerance;
+  }
+  /** Three points: first arm, vertex, second arm. Returns the smaller angle (0–180°). */
+  function measureAngle(pts) {
+    if (pts.length !== 3) return null;
+    const [a, v, b] = pts, ax = a[0] - v[0], ay = a[1] - v[1], bx = b[0] - v[0], by = b[1] - v[1];
+    const al = Math.hypot(ax, ay), bl = Math.hypot(bx, by);
+    if (!(al > 1e-9) || !(bl > 1e-9)) return null;
+    const cross = ax / al * (by / bl) - ay / al * (bx / bl);
+    const dot = ax / al * (bx / bl) + ay / al * (by / bl);
+    return Math.atan2(Math.abs(cross), dot) * 180 / Math.PI;
+  }
+  const formatAngle = (degrees) => Number(degrees.toFixed(2)).toString().replace('.', ',') + '°';
+  function angleLabelPoint(pts) {
+    const [a, v, b] = pts, al = Math.hypot(a[0] - v[0], a[1] - v[1]), bl = Math.hypot(b[0] - v[0], b[1] - v[1]);
+    if (!al || !bl) return v.slice();
+    let x = (a[0] - v[0]) / al + (b[0] - v[0]) / bl, y = (a[1] - v[1]) / al + (b[1] - v[1]) / bl;
+    if (Math.hypot(x, y) < 1e-9) { x = -(a[1] - v[1]) / al; y = (a[0] - v[0]) / al; }
+    const r = Math.min(al, bl) * 0.3 / Math.hypot(x, y);
+    return [v[0] + x * r, v[1] + y * r];
+  }
   const center = (pts) => (pts.length ? [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length] : [0, 0]);
   /** Запись таблицы → фигура для расчётов и рисования. */
   const fromRow = (r) => ({ id: r.id, kind: kindOf(r.kind).code, points: decode(r.points), text: r.text || '', color: colorOf(r.color).hex, size: r.size === null || r.size === undefined ? null : Number(r.size), value: r.value === null || r.value === undefined ? null : Number(r.value), width: Number(r.width) || 2, page: r.page || 0 });
@@ -172,8 +215,9 @@
     return out.join('\n') + '\n';
   }
 
-  const api = { KINDS, COLORS, kindOf, colorOf, encode, decode, complete, rect, segments, length, area, value, label, formatMeters,
-    distance, pick, ortho, center, fromRow, metersPerUnit, dxf, defaultTextHeight, bounds };
+  const api = { KINDS, TOOLS, COLORS, kindOf, toolOf, colorOf, encode, decode, complete, rect, segments, length, area, value, label, formatMeters,
+    measureAngle, formatAngle, angleLabelPoint,
+    distance, pick, ortho, ANGLE_STEPS, angleStep, constrainAngle, onAngle, center, fromRow, metersPerUnit, dxf, defaultTextHeight, bounds };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabShapes = api;
 })(typeof window !== 'undefined' ? window : globalThis);

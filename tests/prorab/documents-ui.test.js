@@ -3,7 +3,7 @@ const test = require('node:test'), assert = require('node:assert/strict'), fs = 
 const S = require('../../static/prorab/sync.js'), M = require('../../static/prorab/model.js');
 const I = require('../../static/prorab/id.js'), DS = require('../../static/prorab/document-store.js');
 class Node {
-  constructor(tag) { this.tag = tag; this.nodeType = 1; this.children = []; this.events = {}; this.dataset = {}; this.value = ''; this.classList = { add() {}, remove() {} }; }
+  constructor(tag) { this.tag = tag; this.nodeType = 1; this.children = []; this.events = {}; this.dataset = {}; this.style = {}; this.value = ''; this.classList = { add() {}, remove() {} }; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   addEventListener(type, fn) { this.events[type] = fn; }
@@ -27,17 +27,17 @@ function setup() {
     else { data = { ...fields, version: 2, seq: Number(fields.seq), time: new Date().toISOString(), sig: 'mock-signature' }; anchors.set(data.chain + '/' + data.seq, data); }
     return { ok: true, json: async () => data };
   };
-  const window = { ProrabSync: S, ProrabModel: M, ProrabId: I, ProrabDocumentStore: DS, addEventListener() {},
+  const window = { ProrabSync: S, ProrabModel: M, ProrabId: I, ProrabDocumentStore: DS, ProrabGrid: require('../../static/prorab/grid.js'), ProrabShapes: require('../../static/prorab/shapes.js'), ProrabDxf: require('../../static/prorab/dxf.js'), addEventListener() {},
     open: (url) => opened.push(url), innerWidth: 1200 };
   for (const [name, file] of Object.entries({ ProrabPersistence: 'persistence', ProrabOffice: 'office', ProrabTemplates: 'templates', ProrabVault: 'vault', ProrabEconomy: 'economy', ProrabEconomyStore: 'economy-store', ProrabFixation: 'fixation', ProrabFixationStore: 'fixation-store' })) window[name] = require('../../static/prorab/' + file + '.js');
-  const ctx = { window, document: { body, createElement: (t) => new Node(t), getElementById: () => app, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
+  const ctx = { window, TextEncoder, TextDecoder, document: { body, createElement: (t) => new Node(t), getElementById: () => app, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
     navigator: {}, location: {}, history: {}, localStorage, fetch, AbortController, setTimeout: () => 1, setInterval: () => 1, clearTimeout() {}, clearInterval() {}, queueMicrotask, URLSearchParams, Blob, URL,
     prompt: (_, fallback) => options.number || fallback, confirm: () => true, alert: (msg) => alerts.push(msg), console };
   vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
   ctx.reviewOptions = options;
-  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => { reviewOptions.renderCount = (reviewOptions.renderCount || 0) + 1; }; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, makeOjr, repForm, orgForm, ksSettings, ojrSettings, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
+  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => { reviewOptions.renderCount = (reviewOptions.renderCount || 0) + 1; }; afterDocument = () => {}; fixFile = async () => {}; window.review = { loadDrawing, saveAngleMeasurement, saveGridDrawing, gridDrawingForm, drawBar, drawingsView, idView, dirsView, ksMake, makeOjr, repForm, orgForm, ksSettings, ojrSettings, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
   vm.runInNewContext(source, ctx);
   const p = new M.Project({}, window.PRORAB_SCHEMA, 'p', 'web-test', new S.Clock());
   p.put('projects', 'p', { name: 'Учебный объект' });
@@ -268,4 +268,102 @@ test('организация и титульный лист журнала по�
   assert.equal(modal.removed, undefined);
   assert.ok(form.textContent.includes('Диск не подтвердил сохранение'));
   assert.equal(body.children.some((n) => n.className === 'pp-notice' && !n.removed), false);
+});
+
+test('новый DXF и изменение осей сохраняют ID, пометки, свои линии и прежний файл', async () => {
+  const { api, c, files } = setup();
+  const G = require('../../static/prorab/grid.js');
+  await api.saveGridDrawing(c, null, 'grid-1', 'Оси', G.DEFAULTS);
+  const first = { ...c.project.get('drawings', 'grid-1') };
+  const path = c.path + '/files/' + first.file;
+  const firstBytes = files.get(path).slice();
+  assert.equal(G.read(firstBytes).length, 24);
+  c.project.put('drawing_notes', 'note-1', { projectId: 'p', drawingId: 'grid-1', x: 1000, y: 2000 });
+  const shape = c.project.addShape({ drawingId: 'grid-1', kind: 'line', points: [[1000, 2000], [3000, 4000]] });
+  const originalPoints = shape.points;
+  await api.saveGridDrawing(c, first, 'grid-1', 'Оси', { ...G.DEFAULTS, length: 30, width: 18 });
+  const second = c.project.get('drawings', 'grid-1');
+  assert.notEqual(second.file, first.file);
+  assert.deepEqual(files.get(path), firstBytes);
+  assert.equal(G.read(files.get(c.path + '/files/' + second.file)).length, 30);
+  assert.equal(c.project.get('drawing_notes', 'note-1').x, 1000);
+  assert.equal(c.project.get('drawing_shapes', shape.id).points, originalPoints);
+  assert.equal(c.project.drawings().length, 1);
+  await assert.rejects(api.saveGridDrawing(c, first, 'grid-1', 'Устаревшая правка', G.DEFAULTS), /изменился/);
+  assert.equal(c.project.get('drawings', 'grid-1').file, second.file);
+});
+
+test('ошибка загрузки/проверки DXF не создаёт запись и не подменяет прежний чертёж', async () => {
+  const { api, c, options } = setup();
+  options.failFolder = true;
+  await assert.rejects(api.saveGridDrawing(c, null, 'new-grid', 'Оси', {}), /423/);
+  assert.equal(c.project.get('drawings', 'new-grid'), null);
+  options.failFolder = false;
+  await api.saveGridDrawing(c, null, 'new-grid', 'Оси', {});
+  const original = { ...c.project.get('drawings', 'new-grid') };
+  const disk = c.id.storage.disk;
+  disk.getBytes = async () => new Uint8Array([0]);
+  await assert.rejects(api.saveGridDrawing(c, original, 'new-grid', 'Новые оси', { length: 40 }), /не подтвердил/);
+  assert.equal(c.project.get('drawings', 'new-grid').file, original.file);
+  assert.equal(c.gridSaving, false);
+});
+
+test('поля размеров допускают посимвольный ввод; угол выбирается без потери начатой фигуры', () => {
+  const { api, c, body, options } = setup();
+  api.gridDrawingForm(c);
+  const modal = body.children.at(-1), list = nodes(modal);
+  const length = list.find((n) => n.tag === 'input' && n.value === '24');
+  const before = options.renderCount || 0;
+  length.value = '3'; length.events.input(); length.value = '30'; length.events.input();
+  assert.equal(options.renderCount || 0, before);
+  assert.ok(modal.textContent.includes('7,5') || modal.textContent.includes('7.5'));
+  const calls = [], w = { drawCfg: { kind: 'line', angleStep: 0 }, viewer: { setDraw(cfg) { calls.push({ ...cfg }); } } };
+  const bar = api.drawBar(w, c, { id: 'd1', kind: 'dxf' }, []);
+  const angles = nodes(bar).find((n) => n.tag === 'select' && n['aria-label'] === 'Шаг угла');
+  assert.ok(angles);
+  assert.deepEqual(angles.children.map((n) => n.value), ['0', '15', '30', '45', '90']);
+  angles.value = '45'; angles.events.change();
+  assert.equal(calls.at(-1).angleStep, 45);
+  const rectBar = api.drawBar({ ...w, drawCfg: { kind: 'rect', angleStep: 90 } }, c, { id: 'd1', kind: 'dxf' }, []);
+  assert.equal(nodes(rectBar).find((n) => n['aria-label'] === 'Шаг угла').disabled, true);
+});
+
+test('сохранённый замер угла состоит из поддерживаемых телефоном линий и текста', () => {
+  const { api, c } = setup();
+  const points = [[100, 0], [0, 0], [0, 100]];
+  let cleared = false;
+  const w = { angleMeasure: { points, value: 90, page: 0, size: 10, color: '#FF3B30' }, viewer: { clearMeasurement() { cleared = true; } } };
+  api.saveAngleMeasurement(c, w, { id: 'd1' });
+  const rows = c.project.shapesOf('d1');
+  assert.deepEqual(rows.map((r) => r.kind), ['polyline', 'text']);
+  assert.equal(rows[1].text, '90°');
+  assert.equal(w.angleMeasure, null); assert.equal(cleared, true);
+});
+
+
+test('поздняя загрузка прежнего DXF не подменяет новую редакцию осей', async () => {
+  const { api, c } = setup();
+  const G = require('../../static/prorab/grid.js'), disk = c.id.storage.disk;
+  const pending = new Map();
+  disk.getBytes = (path) => new Promise((resolve) => pending.set(path, resolve));
+  c.project.addDrawing({ id: 'race-grid', name: 'Оси', file: 'old.dxf', kind: 'dxf' });
+  const w = { path: 'race-grid' }, oldLoad = api.loadDrawing(w, c);
+  c.project.addDrawing({ id: 'race-grid', name: 'Оси', file: 'new.dxf', kind: 'dxf' });
+  const newLoad = api.loadDrawing(w, c);
+  pending.get(c.path + '/files/new.dxf')(new TextEncoder().encode(G.dxf({ length: 36 })));
+  await newLoad;
+  assert.equal(w.grid.length, 36);
+  pending.get(c.path + '/files/old.dxf')(new TextEncoder().encode(G.dxf({ length: 24 })));
+  await oldLoad;
+  assert.equal(w.grid.length, 36); assert.equal(w.loadedFile, 'new.dxf');
+  assert.equal(w.load.state, 'ready');
+});
+
+test('закрытие формы сетки обновляет чертёж, загруженный из кеша под диалогом', () => {
+  const { api, c, body, options } = setup();
+  api.gridDrawingForm(c);
+  const cancel = nodes(body.children.at(-1)).find((n) => n.tag === 'button' && n.textContent === 'Отмена');
+  const before = options.renderCount || 0;
+  cancel.events.click();
+  assert.equal(options.renderCount, before + 1);
 });
