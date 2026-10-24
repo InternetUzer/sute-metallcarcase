@@ -5,6 +5,9 @@ const vm = require('node:vm');
 const S = require('../../static/prorab/sync.js');
 const M = require('../../static/prorab/model.js');
 const R = require('../../static/prorab/persistence.js');
+const V = require('../../static/prorab/vault.js');
+const E = require('../../static/prorab/economy.js');
+const ES = require('../../static/prorab/economy-store.js');
 
 function memory() {
   const data = new Map();
@@ -80,11 +83,11 @@ test('quota and corrupt drafts are reported, never silently discarded', () => {
 // API, tokens, DOM, or production records are used. Only rendering and timers are stubbed.
 function application() {
   const raw = memory();
-  const window = { ProrabSync: S, ProrabModel: M, ProrabPersistence: R,
+  const window = { ProrabSync: S, ProrabModel: M, ProrabPersistence: R, ProrabVault: V, ProrabEconomy: E, ProrabEconomyStore: ES,
     ProrabDisk: { normalize: (p) => p }, addEventListener() {} };
   const root = { dataset: {}, classList: { remove() {} } };
   const ctx = { window, localStorage: raw, navigator: {}, location: {}, history: {},
-    document: { getElementById: (id) => id === 'prorab' ? root : null, querySelector: () => null, addEventListener() {} },
+    document: { getElementById: (id) => id === 'prorab' ? root : null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {}, queueMicrotask,
     URLSearchParams, console };
   vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
@@ -92,6 +95,7 @@ function application() {
   source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, `
     render = () => {};
     window.review = { save, refreshCtx, persistAll, changed, takeTokenFromUrl, beginYandexLogin,
+      changedEcon, saveEcon, lockEcon, econ,
       setup(c, fakeDisk) {
         disk = fakeDisk; me = 'web-test';
         store = R.accountStorage(rawStorage, PREFIX, 'test-account');
@@ -159,4 +163,21 @@ test('OAuth callback requires a recent state created by this browser, preserves 
   api.takeTokenFromUrl();
   assert.equal(raw.getItem('prorab.token'), 'requested-token');
   assert.equal(raw.getItem('prorab.oauth-state'), null);
+});
+
+test('actual app: an accepted finance edit survives immediate lock before autosave runs', async () => {
+  const { api, raw } = application();
+  const store = R.accountStorage(raw, 'prorab.', 'owner');
+  const fakeDisk = { getText: async () => { throw new Error('offline'); } };
+  const session = new ES.Session(fakeDisk, store, '/economy/economy.prorab.json');
+  await session.initialize((await V.create('only-a-test-code', { iterations: 1000 })).vault);
+  api.econ.session = session;
+  await api.changedEcon((data) => E.setFields(data, 'p', { note: 'accepted before timer' }));
+  await api.saveEcon(); // network fails; the UI cannot discard the edit on lock
+  await api.lockEcon('Closed');
+  assert.equal(api.econ.session, null); assert.equal(api.econ.vault, null);
+  assert.ok(session.pending());
+  const restored = new ES.Session(fakeDisk, store, '/economy/economy.prorab.json');
+  await restored.unlock('only-a-test-code');
+  assert.equal(restored.data.projects.p.note, 'accepted before timer');
 });

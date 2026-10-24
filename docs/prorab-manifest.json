@@ -1,11 +1,26 @@
 {
-  "base_commit": "96fc99c6958bd6000cf540d70393adf684ad0961",
-  "reviewed_pr_head": "f708c2287b69ca9e1d065f844de49575e3745ded",
+  "base_commit": "6530821ffc6800faabbe25ecaf1e3c7e1c3cd3a8",
+  "reviewed_pr_head": "541cb79dc6f98b832b626729e690db19185d31d4",
   "files": [
     {
+      "path": "app.py",
+      "sha256": "87742e2d787edfbadccf17afd75612bcf370027450d50450bc54670bc364e7cf",
+      "base_sha256": "d68302574838c1599058d37d82712b49b1673925d56e729c2af12f0b615522bd"
+    },
+    {
+      "path": "prorab_transfer.py",
+      "sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68",
+      "base_sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68"
+    },
+    {
+      "path": "seo_panel.py",
+      "sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b",
+      "base_sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b"
+    },
+    {
       "path": "static/prorab/app.js",
-      "sha256": "57a27497792562989a5a16cb6a588cd0ebac0577789ef10370ff1ccfb0c35cbb",
-      "base_sha256": "a7f84dac14ab1cd9c6fc5523a92961bb417fc7988d2bfcc9002724d3fb3e88a9"
+      "sha256": "ac194040910ba70162a8db7ceb1248dbaec7e27677230baff4b85f00fd8fac0b",
+      "base_sha256": "57a27497792562989a5a16cb6a588cd0ebac0577789ef10370ff1ccfb0c35cbb"
     },
     {
       "path": "static/prorab/catalog.js",
@@ -15,12 +30,22 @@
     {
       "path": "static/prorab/disk.js",
       "sha256": "ab0c561f794e5d5c1cc80664fe065b92ec79307607f415ea7f43c25c792c6844",
-      "base_sha256": "c490fab829189ecec562ed7d06842488ae49a62ecb62c70bf69a011e27e57197"
+      "base_sha256": "ab0c561f794e5d5c1cc80664fe065b92ec79307607f415ea7f43c25c792c6844"
     },
     {
       "path": "static/prorab/dxf.js",
       "sha256": "27687c19ddbe4e94abe680c05b7efe4c89e657231d99ddc2fbdf7e01536de5db",
       "base_sha256": "27687c19ddbe4e94abe680c05b7efe4c89e657231d99ddc2fbdf7e01536de5db"
+    },
+    {
+      "path": "static/prorab/economy-store.js",
+      "sha256": "cd73764c49a43eee45e8a960f2d35fa55f33204ae86c592bc503410cbea8cbe6",
+      "base_sha256": null
+    },
+    {
+      "path": "static/prorab/economy.js",
+      "sha256": "51e9036601d506e997a2fd8fe86317586a9f687aaa0ae995aeea9683e18f0e57",
+      "base_sha256": null
     },
     {
       "path": "static/prorab/model.js",
@@ -39,7 +64,7 @@
     },
     {
       "path": "static/prorab/prorab.css",
-      "sha256": "ee027f626b21d6cf9558e3296adee2946195bbfed2d5ba47dc0d68c890118a5e",
+      "sha256": "1664bef7054751af32c6a39cbec33934613f061f3f8d9fa27116a5d7ed094088",
       "base_sha256": "ee027f626b21d6cf9558e3296adee2946195bbfed2d5ba47dc0d68c890118a5e"
     },
     {
@@ -51,6 +76,11 @@
       "path": "static/prorab/sync.js",
       "sha256": "65ad44bc739f64b68dd8798c3e83a0c18afc77cdcbba9296c297c24c8c8eeba0",
       "base_sha256": "65ad44bc739f64b68dd8798c3e83a0c18afc77cdcbba9296c297c24c8c8eeba0"
+    },
+    {
+      "path": "static/prorab/vault.js",
+      "sha256": "8df32ad30c851ffd510545efc1e0a06299f7615c8a811700d6d46a8dbaf7c097",
+      "base_sha256": null
     },
     {
       "path": "static/prorab/vendor/PDFJS-LICENSE.txt",
@@ -99,23 +129,8 @@
     },
     {
       "path": "templates/prorab.html",
-      "sha256": "65359fa43f95df844ffd5c11fa1eda4e4145ca6b4f88b23be45181b12de4dfd5",
-      "base_sha256": "e6e9f3d5cef4de832c7226ad536cfa739bd0b735ea37f06de3094e6e0f87a943"
-    },
-    {
-      "path": "prorab_transfer.py",
-      "sha256": "962845014f7cf199f1fe5e4907f80ad21800e2009d289de287ff41e5f2440a68",
-      "base_sha256": null
-    },
-    {
-      "path": "app.py",
-      "sha256": "d68302574838c1599058d37d82712b49b1673925d56e729c2af12f0b615522bd",
-      "base_sha256": "66a35526180569626c3a4b8e31dbd58dfe657b7953cad2325e950de500a0ddc0"
-    },
-    {
-      "path": "seo_panel.py",
-      "sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b",
-      "base_sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b"
+      "sha256": "b741bb5d8ede7c3c5f68d875a5588e2e442074df429bbfd8a60bf898e3f5fdf9",
+      "base_sha256": "65359fa43f95df844ffd5c11fa1eda4e4145ca6b4f88b23be45181b12de4dfd5"
     }
   ]
 }
