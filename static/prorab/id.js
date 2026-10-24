@@ -27,8 +27,23 @@
   const roleTitle = (list, k) => (list.find((r) => r[0] === k) || [k, k])[1];
 
   const emptyParticipants = () => ({ version: 1, orgs: [], reps: [], defaults: {} });
-  let seq = 0;
-  const stamp = () => Date.now() * 1000 + (seq = (seq + 1) % 1000);
+  let clock = 0;
+  const stamp = () => (clock = Math.max(Date.now() * 1000, clock + 1));
+  function validateParticipants(d) {
+    if (!d || d.version !== 1 || !Array.isArray(d.orgs) || !Array.isArray(d.reps) || !d.defaults || typeof d.defaults !== 'object' || Array.isArray(d.defaults)) throw new Error('Повреждён файл участников. Запись остановлена, прежний файл сохранён.');
+    for (const rows of [d.orgs, d.reps]) {
+      const ids = new Set();
+      for (const r of rows) {
+        if (!r || typeof r.id !== 'string' || ids.has(r.id) || !Number.isSafeInteger(r.updatedAt) || r.updatedAt < 0) throw new Error('Повреждены записи участников. Запись остановлена.');
+        ids.add(r.id); clock = Math.max(clock, r.updatedAt);
+      }
+    }
+    if (d.defaultsAt !== undefined) {
+      if (!Number.isSafeInteger(d.defaultsAt) || d.defaultsAt < 0) throw new Error('Повреждены настройки участников.');
+      clock = Math.max(clock, d.defaultsAt);
+    }
+    return d;
+  }
   /** Действующие записи (удалённые хранятся пометкой — чтобы не «воскресали» при объединении версий). */
   const orgs = (d, role) => d.orgs.filter((o) => !o.deleted && (!role || o.role === role));
   const reps = (d, role) => d.reps.filter((r) => !r.deleted && (!role || r.role === role));
@@ -86,7 +101,7 @@
     entries.sort((a, b) => a.date - b.date);
     const qty = entries.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0);
     const unit = item ? names.units[item.unitId] || '' : entries[0] ? names.units[entries[0].unitId] || '' : '';
-    const title = item ? P.itemName(item.id) : entries[0] ? (entries[0].name || 'Работы') : '';
+    const title = entries.length ? (item ? P.itemName(item.id) : entries[0].name || 'Работы') : '';
     const notes = Array.from(new Set(entries.map((v) => s(v.note)).filter(Boolean)));
     const works = title ? title + (qty ? ' — ' + num(qty) + (unit ? ' ' + unit : '') : '') + (notes.length ? ' (' + notes.join('; ') + ')' : '') : '';
     // Последующие работы — следующая позиция ведомости
@@ -104,7 +119,7 @@
     const p = P.project;
     return {
       id: null, number: null, date: opts.today, place: d.place || placeOf(p.address), itemId: item ? item.id : null, entryIds: entries.map((v) => v.id),
-      works, project: d.project || '', materials: '', documents: d.documents || 'Исполнительная схема', norms: d.norms || '', next,
+      works, project: d.project || '', materials: '', documents: d.documents || '', norms: d.norms || '', next,
       start: entries.length ? entries[0].date : null, end: entries.length ? entries[entries.length - 1].date : null,
       extra: '', copies: d.copies || 3, annexes: '', performerId: performer ? performer.id : null, repIds: defaultReps(participants, performer ? performer.id : null), signed: false,
     };
@@ -155,14 +170,14 @@
     const performer = org('performer', act.performerId);
     const signers = act.repIds.map((id) => reps(participants).find((r) => r.id === id)).filter(Boolean);
     const field = (value, caption) => [
-      { p: [{ t: value || ' ', u: !!value }], size: 11, after: 0 },
+      { p: [{ t: value || ' ', u: !!value }], size: 11, after: 0, keepNext: true },
       { p: [{ t: '(' + caption + ')', i: true, size: 8 }], align: 'center', after: 4 },
     ];
     const out = [];
-    out.push({ p: [{ t: 'Объект капитального строительства', b: true }], size: 10, after: 0 });
+    out.push({ p: [{ t: 'Объект капитального строительства', b: true }], size: 10, after: 0, keepNext: true });
     out.push(...field([project.name, project.address].filter(Boolean).join(', '), 'наименование, почтовый или строительный адрес объекта капитального строительства'));
     for (const [role, title] of ORG_ROLES) {
-      out.push({ p: [{ t: title, b: true }], size: 10, after: 0 });
+      out.push({ p: [{ t: title, b: true }], size: 10, after: 0, keepNext: true });
       out.push(...field(orgLine(role === 'performer' ? performer : org(role)), 'наименование, ОГРН, ИНН, место нахождения, телефон; для членов СРО — наименование, ОГРН, ИНН саморегулируемой организации'));
     }
     out.push({ p: [{ t: 'АКТ', b: true, size: 14 }], align: 'center', before: 8, after: 0 });
@@ -173,14 +188,14 @@
       const list = signers.filter((r) => r.role === role);
       if (!list.length) continue;
       for (const r of list) {
-        out.push({ p: [{ t: title, b: true }], size: 10, after: 0 });
+        out.push({ p: [{ t: title, b: true }], size: 10, after: 0, keepNext: true });
         out.push(...field(repLine(r, participants.orgs.find((o) => o.id === r.orgId)), 'должность, фамилия, инициалы' + (REP_ROLES.find((x) => x[0] === role)[2] ? ', идентификационный номер в национальном реестре специалистов в области строительства' : '') + ', реквизиты распорядительного документа, подтверждающего полномочия'));
       }
     }
     out.push({ p: ['произвели осмотр работ, выполненных ', { t: performer ? performer.name : '________________', u: !!performer }], size: 11, after: 0 });
     out.push({ p: [{ t: '(наименование лица, выполнившего работы, подлежащие освидетельствованию)', i: true, size: 8 }], align: 'center', after: 2 });
     out.push({ p: ['и составили настоящий акт о нижеследующем:'], size: 11, after: 4 });
-    const item = (n, label, value, caption) => [{ p: [{ t: n + '. ' + label, b: true }], size: 11, after: 0 }, ...field(value, caption)];
+    const item = (n, label, value, caption) => [{ p: [{ t: n + '. ' + label, b: true }], size: 11, after: 0, keepNext: true }, ...field(value, caption)];
     out.push(...item(1, 'К освидетельствованию предъявлены следующие работы:', act.works, 'наименование скрытых работ'));
     out.push(...item(2, 'Работы выполнены по проектной документации:', act.project, 'номер, другие реквизиты чертежа, наименование проектной и (или) рабочей документации, сведения о лицах, осуществляющих подготовку раздела'));
     out.push(...item(3, 'При выполнении работ применены:', act.materials, 'наименование строительных материалов (изделий) со ссылкой на сертификаты или другие документы, подтверждающие их качество и безопасность'));
@@ -273,7 +288,7 @@
     head(1, 'Список инженерно-технического персонала лица, осуществляющего строительство, занятого при строительстве объекта капитального строительства');
     const staff = ['builder', 'builderControl', 'performer'].flatMap((role) => reps(participants, role)).map((r, i) => {
       const o = participants.orgs.find((x) => x.id === r.orgId) || org('builder') || {};
-      return [i + 1, o.name || '', r.fio + (r.nrs ? ', НРС ' + r.nrs : ''), r.position || '', roleTitle(REP_ROLES, r.role), p.startDate ? dmy(p.startDate) : '', '', r.order || ''];
+      return [i + 1, o.name || '', r.fio + (r.nrs ? ', НРС ' + r.nrs : ''), r.position || '', roleTitle(REP_ROLES, r.role), '', '', r.order || ''];
     });
     table(['№ п/п', 'Наименование лица, осуществляющего строительство (подрядчика)', 'Фамилия, инициалы, идентификационный номер в НРС', 'Должность', 'Роль на объекте', 'Дата начала работ на объекте', 'Дата окончания работ', 'Документ о полномочиях'],
       [700, 2700, 2700, 1800, 2400, 1300, 1300, 2000], staff);
@@ -287,7 +302,7 @@
     table(['№ п/п', 'Дата выполнения работ', 'Наименование работ, их объём и место выполнения', 'Условия производства работ (погода)', 'Исполнитель работ', 'Людей на объекте', 'Представитель лица, осуществляющего строительство (ФИО, подпись)'],
       [700, 1300, 6000, 2200, 2100, 1000, 1600], works.map((r, i) => [i + 1, dmy(r.day), r.works, r.weather, r.who, r.people || '', '']), 5);
 
-    head(4, 'Сведения о строительном контроле застройщика (технического заказчика) в процессе строительства');
+    head(4, 'Сведения о строительном контроле в процессе строительства');
     const ctrlRows = ojrControlRows(P, opts.from, opts.to);
     table(['№ п/п', 'Дата', 'Выявленные недостатки и замечания', 'Кто устраняет', 'Срок устранения', 'Дата устранения, что сделано', 'Представитель строительного контроля (ФИО, подпись)'],
       [700, 1300, 5200, 2100, 1400, 2400, 1800], ctrlRows.map((r, i) => [i + 1, dmy(r.day), r.text, r.who, r.due ? dmy(r.due) : '', r.done ? dmy(r.done) + (r.doneNote ? ' — ' + r.doneNote : '') : '', '']), 5);
@@ -295,7 +310,7 @@
     head(5, 'Перечень исполнительной документации');
     const acts = registry(opts.acts || []).filter((a) => (!opts.from || !a.date || a.date >= opts.from) && (!opts.to || !a.date || a.date <= opts.to));
     table(['№ п/п', 'Наименование исполнительной документации', 'Дата подписания', 'Отметка о подписании', 'Примечание'],
-      [700, 8200, 1800, 1800, 2400], acts.map((a, i) => [i + 1, 'Акт освидетельствования скрытых работ № ' + a.number + ': ' + String(a.works || '').split('\n')[0], a.date ? dmy(a.date) : '', a.signed ? 'подписан' : 'не подписан', a.next ? 'далее: ' + a.next : '']), 3);
+      [700, 8200, 1800, 1800, 2400], acts.map((a, i) => [i + 1, 'Акт освидетельствования скрытых работ № ' + a.number + ': ' + String(a.works || '').split('\n')[0], a.signed && a.date ? dmy(a.date) : '', a.signed ? 'подписан' : 'не подписан', a.next ? 'далее: ' + a.next : '']), 3);
 
     head(6, 'Сведения о государственном строительном надзоре при строительстве объекта капитального строительства');
     table(['№ п/п', 'Дата проверки', 'Сведения о проверке, выявленные нарушения', 'Срок устранения', 'Должностное лицо органа государственного строительного надзора (ФИО, подпись)'],
@@ -307,13 +322,25 @@
   /** Деньги: копейки → «1 234 567,89». */
   const rub = (cents) => (Math.round(cents) / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u00a0/g, ' ');
   /** Сумма в копейках: количество × цена (копейки), с округлением до копейки. */
-  const cost = (qty, priceCents) => Math.round(Number(qty) * Number(priceCents));
+  const cost = (qty, priceCents) => {
+    const units = Math.round(Number(qty) * 1e6), price = Number(priceCents);
+    if (!Number.isSafeInteger(units) || !Number.isSafeInteger(price) || price < 0) throw new Error('Недопустимые объём или цена в ведомости.');
+    const n = BigInt(units) * BigInt(price);
+    const value = Number(n < 0n ? -((-n + 500000n) / 1000000n) : (n + 500000n) / 1000000n);
+    if (!Number.isSafeInteger(value)) throw new Error('Сумма выходит за допустимый диапазон.');
+    return value;
+  };
+  function validPeriod(from, to) {
+    const day = (d) => Number.isSafeInteger(d) && d >= 0 && d <= 2932896;
+    if ((from != null && !day(from)) || !day(to) || (from != null && from > to)) throw new Error('Проверьте период: начало должно быть не позже окончания.');
+  }
 
   /**
    * Строки КС-2: позиции ведомости с ценой и объёмом за период (из журнала). Позиции без цены
    * возвращаются отдельно (noPrice) — их нельзя включить в акт, пока не задана цена.
    */
   function ksRows(P, from, to) {
+    validPeriod(from, to);
     const names = P.names();
     const ok = (d) => (from === null || from === undefined || d >= from) && (to === null || to === undefined || d <= to);
     const items = P.rows('boq_items').sort((a, b) => (a.position || 0) - (b.position || 0));
@@ -322,19 +349,27 @@
       const qty = Math.round(P.rows('volumes').filter((v) => v.itemId === i.id && ok(v.date)).reduce((sum, v) => sum + (Number(v.quantity) || 0), 0) * 1e6) / 1e6;
       if (!qty) return;
       const row = { itemId: i.id, pos: k + 1, name: P.itemName(i.id, names), unit: names.units[i.unitId] || '', qty, price: Number(i.priceCents) || 0 };
-      if (!row.price) { noPrice.push(row); return; }
+      if (i.priceCents === null || i.priceCents === undefined || i.priceCents === '' || !Number.isSafeInteger(Number(i.priceCents)) || Number(i.priceCents) < 0) { noPrice.push(row); return; }
       row.sum = cost(qty, row.price);
       rows.push(row);
     });
-    return { rows, noPrice, total: rows.reduce((sum, r) => sum + r.sum, 0) };
+    const ids = new Set(items.map((i) => i.id));
+    if (P.rows('volumes').some((v) => ok(v.date) && Number(v.quantity) && !ids.has(v.itemId))) throw new Error('В журнале есть объёмы без действующей позиции ведомости. Свяжите их с ведомостью перед формированием КС.');
+    const total = rows.reduce((sum, r) => sum + r.sum, 0);
+    if (!Number.isSafeInteger(total)) throw new Error('Сумма выходит за допустимый диапазон.');
+    return { rows, noPrice, total };
   }
 
-  /** НДС: rate — 22, 20, 10, 0 или null (без НДС, УСН); included — цены ведомости уже с НДС. */
+  /** НДС: явная ставка или null (без НДС); included — цены ведомости уже с НДС. */
   function vat(total, rate, included) {
+    if (rate != null && ![0, 5, 7, 10, 20, 22].includes(rate)) throw new Error('Выберите ставку НДС.');
+    if (!Number.isSafeInteger(total)) throw new Error('Недопустимая сумма.');
     if (!rate) return { base: total, vat: 0, all: total };
-    if (included) { const v = Math.round(total * rate / (100 + rate)); return { base: total - v, vat: v, all: total }; }
-    const v = Math.round(total * rate / 100);
-    return { base: total, vat: v, all: total + v };
+    const denom = BigInt(included ? 100 + rate : 100), n = BigInt(total) * BigInt(rate);
+    const v = Number(n < 0n ? -((-n + denom / 2n) / denom) : (n + denom / 2n) / denom);
+    const all = included ? total : total + v;
+    if (!Number.isSafeInteger(all)) throw new Error('Сумма с НДС выходит за допустимый диапазон.');
+    return { base: included ? total - v : total, vat: v, all };
   }
 
   /** КС-3: стоимость выполненного с начала работ, с начала года и за период (по ценам ведомости). */
@@ -343,10 +378,60 @@
     const yearStart = Math.round(Date.UTC(year, 0, 1) / 86400000);
     const all = ksRows(P, null, to);
     const byId = (r) => Object.fromEntries(r.rows.map((x) => [x.itemId, x.sum]));
-    const a = byId(all), y = byId(ksRows(P, yearStart, to)), p = byId(ksRows(P, from, to));
-    const rows = all.rows.map((r) => ({ name: r.name, total: a[r.itemId] || 0, year: y[r.itemId] || 0, period: p[r.itemId] || 0 }));
+    const yearly = ksRows(P, yearStart, to), period = ksRows(P, from, to);
+    const a = byId(all), y = byId(yearly), p = byId(period);
+    const combined = Array.from(new Map([...all.rows, ...yearly.rows, ...period.rows].map((r) => [r.itemId, r])).values());
+    const rows = combined.map((r) => ({ name: r.name, total: a[r.itemId] || 0, year: y[r.itemId] || 0, period: p[r.itemId] || 0 }));
     const sum = (k) => rows.reduce((t, r) => t + r[k], 0);
-    return { rows, total: sum('total'), year: sum('year'), period: sum('period'), noPrice: all.noPrice };
+    return { rows, total: sum('total'), year: sum('year'), period: sum('period'), noPrice: Array.from(new Map([...all.noPrice, ...yearly.noPrice, ...period.noPrice].map((r) => [r.itemId, r])).values()) };
+  }
+
+  // КС-3 строится из сохранённых предъявленных КС-2. Журнал не переписывает прошлые суммы.
+  const contractKey = (opts) => JSON.stringify([s(opts.contractNo), opts.contractDate || null]);
+  function validateCertificate(r) {
+    if (!r || r.version !== 1 || typeof r.id !== 'string' || !r.id || /[\\/\x00-\x1f]/.test(r.id) || !s(r.number) || !['draft', 'issued'].includes(r.status) || !Array.isArray(r.rows) || !r.totals || typeof r.contractKey !== 'string') throw new Error('Повреждён реестр КС. Формирование остановлено.');
+    validPeriod(r.from, r.to);
+    if (r.from == null) throw new Error('Укажите начало отчётного периода.');
+    validPeriod(r.date, r.date);
+    if (new Date(r.from * 86400000).getUTCFullYear() !== new Date(r.to * 86400000).getUTCFullYear()) throw new Error('Разделите КС-2 на периоды по календарным годам, чтобы правильно заполнить итог с начала года.');
+    for (const k of ['base', 'vat', 'all']) if (!Number.isSafeInteger(r.totals[k]) || r.totals[k] < 0) throw new Error('Некорректные суммы КС-2.');
+    if (r.totals.base + r.totals.vat !== r.totals.all) throw new Error('Суммы КС-2 не сходятся.');
+    return r;
+  }
+  function certificatePrevious(records, current) {
+    validateCertificate(current);
+    const ids = new Set();
+    for (const r of records) { validateCertificate(r); if (ids.has(r.id)) throw new Error('Повтор записи в реестре КС.'); ids.add(r.id); }
+    const prior = records.filter((r) => r.status === 'issued' && r.contractKey === current.contractKey && r.id !== current.id);
+    if (prior.some((r) => String(r.number) === String(current.number))) throw new Error('КС-2 с этим номером уже предъявлена по договору.');
+    if (prior.some((r) => r.to >= current.from)) throw new Error('Есть предъявленная КС-2 за пересекающийся или более поздний период. Чтобы не задвоить объёмы, выберите следующий период.');
+    return prior.sort((a, b) => a.to - b.to || String(a.number).localeCompare(String(b.number)));
+  }
+  function certificate(P, participants, opts) {
+    validPeriod(opts.from, opts.to);
+    if (opts.from == null) throw new Error('Укажите начало отчётного периода.');
+    if (new Date(opts.from * 86400000).getUTCFullYear() !== new Date(opts.to * 86400000).getUTCFullYear()) throw new Error('Разделите КС-2 на периоды по календарным годам, чтобы правильно заполнить итог с начала года.');
+    if (!s(opts.contractNo)) throw new Error('Сначала укажите номер договора.');
+    if (opts.vatRate === undefined) throw new Error('Сначала выберите НДС в настройках договора.');
+    const k = ksRows(P, opts.from, opts.to);
+    if (k.noPrice.length) throw new Error('Есть работы без цены. Заполните цены перед формированием КС.');
+    if (!k.rows.length) throw new Error('Нет работ за выбранный период.');
+    const parts = k.rows.map((row) => vat(row.sum, opts.vatRate, opts.vatIncluded));
+    const base = opts.vatIncluded ? parts.reduce((sum, v) => sum + v.base, 0) : k.total;
+    const totals = opts.vatIncluded ? { base, vat: k.total - base, all: k.total } : vat(k.total, opts.vatRate, false);
+    return validateCertificate({ version: 1, id: newId(), number: s(opts.number), status: 'draft', from: opts.from, to: opts.to, date: opts.date,
+      contractKey: contractKey(opts), contractNo: opts.contractNo, contractDate: opts.contractDate || null, vatRate: opts.vatRate, vatIncluded: !!opts.vatIncluded,
+      rows: JSON.parse(JSON.stringify(k.rows)), totals, participantsSnapshot: JSON.parse(JSON.stringify(participants)), projectSnapshot: JSON.parse(JSON.stringify(P.project)) });
+  }
+  function certificateLedger(records, current) {
+    const previous = certificatePrevious(records, current);
+    const year = new Date(current.to * 86400000).getUTCFullYear();
+    const zero = () => ({ base: 0, vat: 0, all: 0 });
+    const sum = (rows) => rows.reduce((t, r) => { for (const k of ['base', 'vat', 'all']) { t[k] += r.totals[k]; if (!Number.isSafeInteger(t[k])) throw new Error('Накопленная сумма выходит за допустимый диапазон.'); } return t; }, zero());
+    const prior = sum(previous), period = Object.assign({}, current.totals);
+    const total = sum(previous.concat([current]));
+    const byYear = previous.concat([current]).filter((r) => new Date(r.to * 86400000).getUTCFullYear() === year);
+    return { previousIds: previous.map((r) => r.id), previousNumbers: previous.map((r) => r.number), prior, period, total, year: sum(byYear) };
   }
 
   /** Шапка КС-2/КС-3: инвестор, заказчик, подрядчик, стройка, объект, договор. */
@@ -360,7 +445,7 @@
     const out = [];
     out.push({ p: [{ t: subtitle, size: 8, i: true }], align: 'right', after: 2 });
     out.push({ borders: true, widths: [2600, 9200, 1400, 1500], table: [
-      [small('Инвестор'), cell(line(opts.investor === 'none' ? null : customer)), small('по ОКПО'), cell(opts.investor === 'none' ? '' : (customer && customer.okpo) || '')],
+      [small('Инвестор'), cell(''), small('по ОКПО'), cell('')],
       [small('Заказчик (генподрядчик)'), cell(line(customer)), small('по ОКПО'), cell((customer && customer.okpo) || '')],
       [small('Подрядчик (субподрядчик)'), cell(line(builder)), small('по ОКПО'), cell((builder && builder.okpo) || '')],
       [small('Стройка'), cell(opts.stroyka || p.name || ''), small(''), cell('')],
@@ -386,12 +471,16 @@
 
   /** КС-2 «Акт о приёмке выполненных работ» (унифицированная форма). opts: { number, date, from, to, contractNo, contractDate, stroyka, contractValue, signFrom, signTo }. */
   function ks2Blocks(P, participants, opts) {
-    const k = ksRows(P, opts.from, opts.to);
-    const out = ksHeader(P, participants, opts, 'АКТ О ПРИЁМКЕ ВЫПОЛНЕННЫХ РАБОТ', 'Унифицированная форма № КС-2');
+    const record = opts.certificate;
+    const k = record ? { rows: record.rows, total: record.rows.reduce((t, r) => t + r.sum, 0), noPrice: [] } : ksRows(P, opts.from, opts.to);
+    if (k.noPrice.length) throw new Error('Есть работы без цены. Заполните цены перед формированием КС.');
+    if (record) { validateCertificate(record); P = { project: record.projectSnapshot }; participants = record.participantsSnapshot; }
+    const out = ksHeader(P, participants, opts, 'АКТ О ПРИЁМКЕ ВЫПОЛНЕННЫХ РАБОТ', 'Форма № КС-2');
+    out.push({ p: [opts.vatRate == null ? 'Без НДС.' : opts.vatIncluded ? 'Цены и суммы включают НДС ' + opts.vatRate + '%.' : 'Цены и суммы без НДС; ставка НДС ' + opts.vatRate + '% учитывается в КС-3.'], size: 9 });
     if (opts.contractValue) out.push({ p: ['Сметная (договорная) стоимость в соответствии с договором подряда (субподряда): ', { t: rub(opts.contractValue) + ' руб.', u: true }], size: 10, after: 4 });
     const h = (t) => ({ p: [{ t, b: true, size: 9 }], align: 'center' });
     const c = (t, align) => ({ p: [{ t: String(t), size: 9 }], align: align || 'left' });
-    const rows = [[h('№ по порядку'), h('№ позиции по смете'), h('Наименование работ'), h('№ единичной расценки'), h('Единица измерения'), h('Выполнено работ: количество'), h('цена за единицу, руб.'), h('стоимость, руб.')]];
+    const rows = [[h('№ п/п'), h('№ позиции по смете'), h('Наименование работ'), h('№ единичной расценки'), h('Единица измерения'), h('Выполнено работ: количество'), h('цена за единицу, руб.'), h('стоимость, руб.')]];
     k.rows.forEach((r, i) => rows.push([c(i + 1, 'center'), c(r.pos, 'center'), c(r.name), c(''), c(r.unit, 'center'), c(num(r.qty), 'right'), c(rub(r.price), 'right'), c(rub(r.sum), 'right')]));
     rows.push([c(''), c(''), { p: [{ t: 'Итого', b: true, size: 9 }], align: 'right' }, c(''), c(''), c(''), c(''), { p: [{ t: rub(k.total), b: true, size: 9 }], align: 'right' }]);
     out.push({ borders: true, header: true, widths: [800, 1100, 6400, 1300, 1200, 1400, 1500, 1600], table: rows });
@@ -401,22 +490,24 @@
 
   /** КС-3 «Справка о стоимости выполненных работ и затрат». opts как у КС-2 + vatRate, vatIncluded. */
   function ks3Blocks(P, participants, opts) {
-    const k = ks3Rows(P, opts.from, opts.to);
-    const out = ksHeader(P, participants, opts, 'СПРАВКА О СТОИМОСТИ ВЫПОЛНЕННЫХ РАБОТ И ЗАТРАТ', 'Унифицированная форма № КС-3');
+    const record = opts.certificate;
+    if (!record || !record.ledger) throw new Error('КС-3 формируется только из сохранённой КС-2 и реестра предъявленных актов.');
+    validateCertificate(record);
+    P = { project: record.projectSnapshot }; participants = record.participantsSnapshot;
+    const k = record.ledger;
+    const out = ksHeader(P, participants, opts, 'СПРАВКА О СТОИМОСТИ ВЫПОЛНЕННЫХ РАБОТ И ЗАТРАТ', 'Форма № КС-3');
     const h = (t) => ({ p: [{ t, b: true, size: 9 }], align: 'center' });
-    const c = (t, align, b) => ({ p: [{ t: String(t), size: 9, b: !!b }], align: align || 'left' });
-    const rows = [[h('№ по порядку'), h('Наименование пусковых комплексов, этапов, объектов, видов выполненных работ, оборудования, затрат'), h('Код'),
-      h('Стоимость выполненных работ и затрат, руб.: с начала проведения работ'), h('с начала года'), h('в том числе за отчётный период')]];
-    rows.push([c(''), c('Всего работ и затрат, включаемых в стоимость работ', 'left', true), c(''), c(rub(k.total), 'right', true), c(rub(k.year), 'right', true), c(rub(k.period), 'right', true)]);
-    rows.push([c(''), c('в том числе:'), c(''), c(''), c(''), c('')]);
-    k.rows.forEach((r, i) => rows.push([c(i + 1, 'center'), c(r.name), c(''), c(rub(r.total), 'right'), c(rub(r.year), 'right'), c(rub(r.period), 'right')]));
-    const tv = vat(k.total, opts.vatRate, opts.vatIncluded), yv = vat(k.year, opts.vatRate, opts.vatIncluded), pv = vat(k.period, opts.vatRate, opts.vatIncluded);
-    rows.push([c(''), c('Итого', 'right', true), c(''), c(rub(tv.base), 'right', true), c(rub(yv.base), 'right', true), c(rub(pv.base), 'right', true)]);
-    rows.push([c(''), c(opts.vatRate ? 'Сумма НДС (' + opts.vatRate + '%)' : 'Без НДС', 'right'), c(''), c(opts.vatRate ? rub(tv.vat) : '—', 'right'), c(opts.vatRate ? rub(yv.vat) : '—', 'right'), c(opts.vatRate ? rub(pv.vat) : '—', 'right')]);
-    rows.push([c(''), c('Всего с учётом НДС', 'right', true), c(''), c(rub(tv.all), 'right', true), c(rub(yv.all), 'right', true), c(rub(pv.all), 'right', true)]);
-    out.push({ borders: true, header: true, widths: [800, 7000, 900, 2300, 2000, 2300], table: rows });
+    const c = (t, bold) => ({ p: [{ t: String(t), size: 9, b: !!bold }] });
+    const rows = [[h('№'), h('Наименование работ и затрат'), h('Код'), h('С начала проведения работ, включая текущий период'), h('С начала года'), h('В том числе за отчётный период')]];
+    rows.push([c(1), c(P.project.name || 'Работы по договору'), c(''), c(rub(k.total.base)), c(rub(k.year.base)), c(rub(k.period.base))]);
+    rows.push([c(''), c('Итого', true), c(''), c(rub(k.total.base), true), c(rub(k.year.base), true), c(rub(k.period.base), true)]);
+    rows.push([c(''), c(record.vatRate === null ? 'Без НДС (текущий период)' : 'НДС (текущий период ' + record.vatRate + '%)'), c(''), c(rub(k.total.vat)), c(rub(k.year.vat)), c(rub(k.period.vat))]);
+    rows.push([c(''), c('Всего', true), c(''), c(rub(k.total.all), true), c(rub(k.year.all), true), c(rub(k.period.all), true)]);
+    out.push({ borders: true, header: true, widths: [700, 6300, 600, 2500, 2200, 2500], table: rows });
+    out.push({ p: ['Ранее предъявлено по КС-2: ' + rub(k.prior.all) + ' руб. Текущая КС-2 № ' + record.number + ': ' + rub(k.period.all) + ' руб. Накоплено с текущей: ' + rub(k.total.all) + ' руб.'], size: 10 });
+    out.push({ p: ['Основание накопления: ' + (k.previousNumbers.length ? 'ранее предъявленные КС-2 № ' + k.previousNumbers.join(', ') : 'ранее предъявленных КС-2 нет') + '; текущая КС-2 № ' + record.number + '.'], size: 9 });
     ksSigns(out, 'Заказчик', opts.signTo, 'Подрядчик', opts.signFrom);
-    return { blocks: out, ks: k, vat: pv };
+    return { blocks: out, ks: k, vat: k.period };
   }
 
   /** Строки реестра актов (для Excel). */
@@ -432,7 +523,7 @@
     return ('АОСР №' + act.number + ' от ' + (act.date ? dmy(act.date) : '') + (title ? ' — ' + title : '')).replace(/[\\/:*?"<>|]/g, '_').trim() + '.docx';
   }
 
-  const api = { ksRows, ks3Rows, ks2Blocks, ks3Blocks, vat, rub, ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
+  const api = { contractKey, validateCertificate, certificate, certificatePrevious, certificateLedger, validateParticipants, validPeriod, ksRows, ks3Rows, ks2Blocks, ks3Blocks, vat, rub, ojrBlocks, ojrWorkRows, ojrControlRows, weatherLine, orgLine, repLine, longDate, ORG_ROLES, REP_ROLES, roleTitle, emptyParticipants, orgs, reps, setDefaults, saveOrg, saveRep, remove, mergeParticipants, draft, defaultReps, nextNumber, missing, blocks, registry, fileName, placeOf, dmy };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabId = api;
 })(typeof window !== 'undefined' ? window : globalThis);

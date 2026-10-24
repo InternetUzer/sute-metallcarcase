@@ -149,8 +149,13 @@ test('КС-2 и КС-3: объёмы за период по ценам ведо�
   assert.deepEqual(I.vat(500, null), { base: 500, vat: 0, all: 500 });
   assert.equal(I.rub(123456789), '1 234 567,89');
   const d = participants();
+  assert.throws(() => I.ks2Blocks(p, d, { from: 20470, to: 20490 }), /без цены/);
+  p.put('boq_items', 'b', { priceCents: 0 }); // явно бесплатная работа
   const text = Buffer.from(O.richDocx(I.ks2Blocks(p, d, { number: 4, date: 20491, from: 20470, to: 20490, contractNo: '17/26' }).blocks, { landscape: true })).toString('utf8');
   for (const s of ['АКТ О ПРИЁМКЕ ВЫПОЛНЕННЫХ РАБОТ', 'КС-2', '13 001,00', '6 500,50', '№ 17/26', 'Итого']) assert.ok(text.includes(s), s);
-  const t3 = Buffer.from(O.richDocx(I.ks3Blocks(p, d, { number: 4, date: 20491, from: 20470, to: 20490, vatRate: 22 }).blocks, { landscape: true })).toString('utf8');
-  for (const s of ['СПРАВКА О СТОИМОСТИ', 'Сумма НДС (22%)', '15 861,22', 'с начала года']) assert.ok(t3.includes(s), s);
+  const opts = { number: '4', date: 20491, from: 20470, to: 20490, contractNo: '17/26', vatRate: 22 };
+  opts.certificate = I.certificate(p, d, opts);
+  opts.certificate.ledger = I.certificateLedger([], opts.certificate);
+  const t3 = Buffer.from(O.richDocx(I.ks3Blocks(p, d, opts).blocks, { landscape: true })).toString('utf8');
+  for (const s of ['СПРАВКА О СТОИМОСТИ', 'НДС (текущий период 22%)', '15 861,22', 'С начала года']) assert.ok(t3.includes(s), s);
 });

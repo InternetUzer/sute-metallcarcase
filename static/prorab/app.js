@@ -424,7 +424,7 @@
       c.status = 'Сохранено в ' + time() + ' — телефон получит при синхронизации';
       setStatus(projName(c.path) + ': сохранено в ' + time());
       // Фиксация не чаще раза в 30 минут; её ошибки не мешают сохранению
-      fixNow(c, false).then((msg) => { if (msg && msg.startsWith('Зафиксировано')) c.status += ' · ' + msg.toLowerCase(); }, () => {});
+      fixNow(c, false).then((msg) => { if (msg && msg.startsWith('Зафиксировано')) c.status += ' · ' + msg.toLowerCase(); }, (e) => { c.fixWarning = e.message; });
     } catch (e) {
       c.project.dirty = true;
       c.status = 'Не сохранилось: ' + e.message;
@@ -1302,7 +1302,7 @@
       setStatus('Загружаю ' + file.name + ' на Диск…');
       await disk.mkdir(c.path + '/files');
       await disk.putBlob(target, bytes === src ? file : new Blob([bytes]), false);
-      fixFile(c, id + '.' + kind, bytes);
+      await fixFile(c, id + '.' + kind, bytes);
       bytesCache[target] = Promise.resolve(bytes.slice().buffer);
       P.addDrawing({ id, name, kind, file: id + '.' + kind, pages });
       changed(c);
@@ -1355,7 +1355,7 @@
     await disk.mkdir(c.path + '/files');
     if (bytes === src) { try { await disk.copy(full, target); } catch (e) { await disk.putBlob(target, new Blob([bytes]), false); } }
     else await disk.putBlob(target, new Blob([bytes]), false);
-    fixFile(c, file, bytes);
+    await fixFile(c, file, bytes);
     bytesCache[target] = Promise.resolve(bytes === src ? buf : bytes.slice().buffer);
     P.addDrawing({ id, name, kind, file, pages });
     changed(c);
@@ -1822,7 +1822,7 @@
       rc.notes.map((n) => h('button', { type: 'button', class: 'pp-line', onclick: closeAnd(() => openDrawing(c, n.drawingId, { noteId: n.id })) }, h('span', null, 'Ч№' + n.number + ' — ' + (n.text || 'без текста')), h('strong', { class: n.status === 'DONE' ? 'pp-plus' : 'pp-error' }, n.status === 'DONE' ? 'устранено' : 'открыто'))),
       h('div', { class: 'pp-row pp-wrap' }, button('+ Замечание', closeAnd(() => remarkForm(c, null, { acceptanceId: a.id, text: '' }))),
         a.result === 'REJECTED' && !rc.open ? button('Замечания устранены — предъявить снова', closeAnd(() => { P.resubmitAcceptance(a.id, today); changed(c); }), 'pp-primary') : null,
-        button('📑 Оформить АОСР', closeAnd(() => { openWindow('id', c.path); aosrForm(c, null, { itemId: a.itemId }); }))),
+        button('📑 Оформить АОСР', closeAnd(() => { openWindow('id', c.path); aosrForm(c, null, { itemId: a.itemId, entryIds: a.entryId ? [a.entryId] : null, to: a.readyDate }); }))),
       history.length ? h('details', null, h('summary', null, 'Раньше по этой работе (' + history.length + ')'), history.map((x) => h('div', { class: 'pp-line' },
         h('span', null, 'закончено ' + shortDate(x.readyDate) + (x.acceptedBy ? ' · ' + x.acceptedBy : '')), h('strong', { class: ACCEPT[x.result][1] }, ACCEPT[x.result][0])))) : null), () => {
       if (cancelled) return;
@@ -2186,6 +2186,7 @@
   // ───────── исполнительная документация (АОСР) ─────────
   // Лежит в папке объекта: «Исполнительная документация/участники.json», «…/АОСР/<id>.json» и документы Word рядом.
   const I = window.ProrabId;
+  const DS = window.ProrabDocumentStore;
   const ID_DIR = 'Исполнительная документация';
   const idDir = (c) => c.path + '/' + ID_DIR;
   const idActs = (c) => idDir(c) + '/АОСР';
@@ -2193,18 +2194,14 @@
   /** Участники и акты объекта (загружаются при первом открытии окна). */
   function idState(c) {
     if (c.id) return c.id;
-    const st = c.id = { loading: true, error: null, participants: I.emptyParticipants(), acts: [], templates: [] };
+    const st = c.id = { loading: true, error: null, participants: I.emptyParticipants(), acts: [], certificates: [], templates: [], storage: new DS.Store(disk, idDir(c)), root: ROOT };
+    st.storage.onVerified = (path, bytes) => fixFile(c, path.slice(c.path.length + 1), bytes);
     (async () => {
       try {
-        const text = await disk.getText(idDir(c) + '/участники.json');
-        if (text !== null) st.participants = JSON.parse(text);
-        const items = (await disk.list(idActs(c))) || [];
-        const acts = [];
-        for (const it of items.filter((i) => i.type === 'file' && i.name.endsWith('.json'))) {
-          const t = await disk.getText(idActs(c) + '/' + it.name);
-          if (t !== null) { try { acts.push(JSON.parse(t)); } catch (e) { /* повреждённый — пропускаем */ } }
-        }
-        st.acts = acts;
+        const text = await st.storage.disk.getText(idDir(c) + '/участники.json');
+        if (text !== null) st.participants = I.validateParticipants(JSON.parse(text));
+        st.acts = await st.storage.records('АОСР');
+        st.certificates = (await st.storage.records('КС')).map(I.validateCertificate);
         st.templates = await listTemplates(c);
       } catch (e) { st.error = e.message; }
       st.loading = false;
@@ -2213,28 +2210,23 @@
     return st;
   }
 
-  async function saveParticipants(c) {
+  async function saveParticipants(c, value) {
     const st = c.id;
-    await disk.mkdir(idDir(c));
-    // Другой компьютер мог изменить участников — объединяем
-    const text = await disk.getText(idDir(c) + '/участники.json');
-    if (text !== null) { try { st.participants = I.mergeParticipants(JSON.parse(text), st.participants); } catch (e) { /* свой файл главнее повреждённого */ } }
-    await disk.putText(idDir(c) + '/участники.json', JSON.stringify(st.participants, null, 1));
+    const saved = await st.storage.participants(value || st.participants);
+    st.participants = saved;
+    afterDocument(c);
   }
 
-  /** Сохранить акт: данные (JSON) и документ Word; старый документ при смене имени — в корзину. */
-  async function saveAct(c, act, filled) {
+  async function saveAct(c, act, filled, participants) {
     const st = c.id;
-    await disk.mkdir(idDir(c)); await disk.mkdir(idActs(c));
-    const name = I.fileName(act);
-    const bytes = filled || O.richDocx(I.blocks(act, st.participants, c.project.project));
-    await disk.putBlob(idActs(c) + '/' + name, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), true);
-    if (act.docx && act.docx !== name) { try { await disk.remove(idActs(c) + '/' + act.docx); } catch (e) { /* уже нет */ } }
-    act.docx = name;
-    act.updatedAt = Date.now();
-    await disk.putText(idActs(c) + '/' + act.id + '.json', JSON.stringify(act, null, 1));
-    st.acts = st.acts.filter((a) => a.id !== act.id).concat([act]);
-    return name;
+    const d = participants || act.participantsSnapshot || st.participants;
+    const project = act.projectSnapshot || c.project.project;
+    const bytes = filled || O.richDocx(I.blocks(act, d, project));
+    const saved = await st.storage.act(act, d, project, bytes);
+    st.acts = st.acts.filter((a) => a.id !== saved.id).concat([saved]);
+    Object.assign(act, saved);
+    afterDocument(c);
+    return saved.docx;
   }
 
   function idView(w, c) {
@@ -2278,11 +2270,11 @@
           }),
           h('small', { class: 'pp-muted' }, 'Для представителей по строительному контролю нужен идентификационный номер в национальном реестре специалистов (НРС). Реквизиты документа о полномочиях — например «приказ № 12 от 10.01.2026».')));
     }
-    return h('main', null, h('div', { class: 'pp-tabs' }, tabs.map(([k, t]) => h('button', { type: 'button', class: 'pp-tab' + (w.tab === k ? ' pp-active' : ''), onclick: () => { w.tab = k; render(); } }, t))), body);
+    return h('main', null, h('div', { class: 'pp-row pp-wrap' }, button('📁 Открыть файлы на Диске', () => window.open(D.webFolder(idDir(c)), '_blank', 'noopener')), button('⟳ Обновить', () => { if (st.storage.busy || st.generating) return; c.id = null; render(); })), h('div', { class: 'pp-tabs' }, tabs.map(([k, t]) => h('button', { type: 'button', class: 'pp-tab' + (w.tab === k ? ' pp-active' : ''), onclick: () => { w.tab = k; render(); } }, t))), body);
   }
 
   function orgForm(c, o) {
-    const d = c.id.participants;
+    const d = JSON.parse(JSON.stringify(c.id.participants));
     const role = h('select', null, I.ORG_ROLES.map(([k, t]) => h('option', { value: k }, t)));
     role.value = o ? o.role : 'performer';
     const inp = (v, ph) => h('input', { value: v || '', placeholder: ph || '' });
@@ -2295,13 +2287,13 @@
       h('div', { class: 'pp-row pp-wrap' }, field('ОГРН / ОГРНИП', ogrn), field('ИНН', inn), field('ОКПО', okpo, 'для КС-2 и КС-3')), field('Адрес (место нахождения)', address), field('Телефон', phone),
       h('h3', null, 'Саморегулируемая организация (если член СРО)'), field('Наименование СРО', sro), h('div', { class: 'pp-row pp-wrap' }, field('ОГРН СРО', sroOgrn), field('ИНН СРО', sroInn))), async () => {
       I.saveOrg(d, { id: o ? o.id : null, role: role.value, name: name.value, ogrn: ogrn.value.replace(/\s/g, ''), inn: inn.value.replace(/\s/g, ''), okpo: okpo.value.replace(/\s/g, ''), address: address.value, phone: phone.value, sro: sro.value, sroOgrn: sroOgrn.value.replace(/\s/g, ''), sroInn: sroInn.value.replace(/\s/g, '') });
-      await saveParticipants(c);
+      await saveParticipants(c, d);
       render();
-    }, { extra: o ? button('Удалить', async () => { if (!confirm('Удалить организацию «' + o.name + '»? В уже сохранённых актах она останется.')) return; I.remove(d, 'orgs', o.id); await saveParticipants(c); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
+    }, { extra: o ? button('Удалить', async () => { if (!confirm('Удалить организацию «' + o.name + '»? В уже сохранённых актах она останется.')) return; I.remove(d, 'orgs', o.id); await saveParticipants(c, d); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
   }
 
   function repForm(c, r) {
-    const d = c.id.participants;
+    const d = JSON.parse(JSON.stringify(c.id.participants));
     const role = h('select', null, I.REP_ROLES.map(([k, t]) => h('option', { value: k }, t)));
     role.value = r ? r.role : 'builder';
     const org = h('select', null, h('option', { value: '' }, '—'), I.orgs(d).map((o) => h('option', { value: o.id }, o.name)));
@@ -2312,17 +2304,18 @@
       h('div', { class: 'pp-row pp-wrap' }, field('Фамилия, инициалы', fio), field('Должность', position)),
       field('Идентификационный номер в НРС', nrs, 'для представителей по строительному контролю'), field('Документ о полномочиях', order)), async () => {
       I.saveRep(d, { id: r ? r.id : null, role: role.value, orgId: org.value || null, fio: fio.value, position: position.value, nrs: nrs.value, order: order.value });
-      await saveParticipants(c);
+      await saveParticipants(c, d);
       render();
-    }, { extra: r ? button('Удалить', async () => { if (!confirm('Удалить представителя ' + r.fio + '? В уже сохранённых актах он останется.')) return; I.remove(d, 'reps', r.id); await saveParticipants(c); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
+    }, { extra: r ? button('Удалить', async () => { if (!confirm('Удалить представителя ' + r.fio + '? В уже сохранённых актах он останется.')) return; I.remove(d, 'reps', r.id); await saveParticipants(c, d); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
   }
 
   /** Форма АОСР. a — сохранённый акт или null (новый); opts.itemId — из позиции ведомости / приёмки. */
   function aosrForm(c, a, opts) {
     const st = idState(c);
     if (st.loading) { setStatus('Загружаю исполнительную документацию…'); const t = setInterval(() => { if (!st.loading) { clearInterval(t); aosrForm(c, a, opts); } }, 200); return; }
-    const P = c.project, d = st.participants;
-    const act = a ? JSON.parse(JSON.stringify(a)) : Object.assign(I.draft(P, d, { itemId: opts.itemId, today }), { id: S.newId(), number: I.nextNumber(st.acts) });
+    if (st.error) { alert(st.error); return; }
+    const P = c.project, d = JSON.parse(JSON.stringify(a && a.participantsSnapshot || st.participants));
+    const act = a ? JSON.parse(JSON.stringify(a)) : Object.assign(I.draft(P, d, { itemId: opts.itemId, entryIds: opts.entryIds, to: opts.to, today }), { id: S.newId(), number: I.nextNumber(st.acts) });
     const items = P.boq();
     const itemSel = h('select', null, h('option', { value: '' }, '— не из ведомости —'), items.map((r) => h('option', { value: r.id }, r.name + (r.fact ? ' (сделано ' + num(r.fact) + ' ' + r.unit + ')' : ''))));
     itemSel.value = act.itemId || '';
@@ -2344,7 +2337,7 @@
     const fill = () => {
       const dr = I.draft(P, d, { itemId: itemSel.value || null, from: from.value ? inputToDay(from.value) : null, to: to.value ? inputToDay(to.value) : null, today });
       if (!dr.works) return alert('В журнале нет записей по этой позиции за выбранные даты.');
-      works.value = dr.works; if (dr.next) next.value = dr.next;
+      works.value = dr.works; act.entryIds = dr.entryIds; if (dr.next) next.value = dr.next;
       from.value = dr.start ? dayToInput(dr.start) : ''; to.value = dr.end ? dayToInput(dr.end) : '';
       if (dr.performerId) { performer.value = dr.performerId; repBoxes.forEach(([r, b]) => { if (r.role === 'performer') b.checked = r.orgId === dr.performerId; }); }
     };
@@ -2362,6 +2355,7 @@
     const warn = h('p', { class: 'pp-error' });
     const showMissing = () => { try { const m = I.missing(collect(), d); warn.textContent = m.length ? 'Не заполнено: ' + m.join('; ') + '. Акт можно сохранить черновиком.' : ''; } catch (e) { warn.textContent = e.message; } };
     const dlg = asyncDialog((a ? 'АОСР № ' + a.number : 'Новый АОСР') + ' · ' + projName(c.path), h('div', { class: 'pp-aosr' },
+      a && a.docx ? button('Открыть сохранённый документ Word', () => window.open(D.webEdit(idActs(c) + '/' + a.docx), '_blank', 'noopener')) : null,
       h('div', { class: 'pp-row pp-wrap' }, field('№ акта', number), field('Дата акта', date), field('Место составления', place)),
       field('Форма документа', form, forms.length ? 'свои шаблоны — во вкладке «Свои шаблоны»' : 'можно загрузить свою форму во вкладке «Свои шаблоны»'),
       h('h3', null, 'Откуда работы'),
@@ -2378,23 +2372,29 @@
       act.template = form.value || null;
       let filled = null, missingLabels = [];
       if (act.template) {
-        const buf = await disk.getBytes(act.template);
+        const buf = await st.storage.disk.getBytes(act.template);
         if (!buf) bad('Шаблон не найден на Диске: ' + act.template);
         const res = await T.fill(new Uint8Array(buf), T.values(P, d, act, today), 'docx');
         filled = res.bytes; missingLabels = res.missing;
       }
-      const name = await saveAct(c, act, filled);
+      const missing = I.missing(act, d);
+      if (act.signed && (missing.length || missingLabels.length)) bad('Проверьте обязательные поля и метки перед отметкой о подписании: ' + missing.concat(missingLabels).join('; '));
+      const name = await saveAct(c, act, filled, d);
       // Запомнить общие значения для следующих актов
       I.setDefaults(d, { place: act.place, project: act.project, norms: act.norms, documents: act.documents, copies: act.copies, aosrTemplate: act.template });
-      await saveParticipants(c);
+      await saveParticipants(c, d).catch(() => {}); // акт уже подтверждён; настройки следующих актов вторичны
       setStatus('Акт сохранён: ' + ID_DIR + '/АОСР/' + name + (missingLabels.length ? ' · в шаблоне незнакомые метки: ' + missingLabels.join(', ') : ''), missingLabels.length > 0);
       window.open(D.webEdit(idActs(c) + '/' + name), '_blank', 'noopener');
       render();
-    }, { okText: 'Сохранить и открыть в Word', busyText: 'Сохраняю на Диск…', extra: a ? button('Удалить акт', async () => {
+    }, { okText: 'Сохранить и открыть в Word', busyText: 'Сохраняю на Диск…', extra: a && !a.signed ? button('Удалить черновик', async () => {
       if (!confirm('Удалить АОСР № ' + a.number + '? Документ Word уйдёт в корзину Яндекс Диска.')) return;
       try {
-        await disk.remove(idActs(c) + '/' + a.id + '.json');
-        if (a.docx) await disk.remove(idActs(c) + '/' + a.docx).catch(() => {});
+        await st.storage.run(async () => {
+          const latest = (await st.storage.records('АОСР')).find((x) => x.id === a.id);
+          if (!latest || latest.signed || latest.updatedAt !== a.updatedAt) throw new Error('Акт изменился. Обновите список.');
+          await st.storage.disk.remove(idActs(c) + '/' + a.id + '.json');
+          if (a.docx) await st.storage.disk.remove(idActs(c) + '/' + a.docx);
+        });
         st.acts = st.acts.filter((x) => x.id !== a.id);
         dlg.remove(); render();
       } catch (e) { alert(e.message); }
@@ -2414,39 +2414,42 @@
     const to = h('input', { type: 'date', value: dayToInput(w.ks.to) });
     const apply = () => { w.ks.from = from.value ? inputToDay(from.value) : null; w.ks.to = to.value ? inputToDay(to.value) : today; render(); };
     from.addEventListener('change', apply); to.addEventListener('change', apply);
-    const k = I.ksRows(P, w.ks.from, w.ks.to);
-    const vat = I.vat(k.total, set.vatRate === undefined ? 22 : set.vatRate, !!set.vatIncluded);
+    let k;
+    try { k = I.ksRows(P, w.ks.from, w.ks.to); } catch (e) { k = { rows: [], noPrice: [], total: 0, error: e.message }; }
+    const vat = I.vat(k.total, set.vatRate === undefined ? null : set.vatRate, !!set.vatIncluded);
     return h('div', null,
       h('section', { class: 'pp-card' },
-        h('p', null, 'КС-2 — выполненные за период объёмы позиций ведомости (из журнала) по ценам ведомости. КС-3 — стоимость с начала работ, с начала года и за период, НДС. Организации — из «Участников строительства», подписи — из представителей.'),
+        h('p', null, 'КС-2 — объёмы за период из журнала по ценам ведомости. КС-3 — сохранённые суммы ранее предъявленных КС-2 и текущего акта. Прежние суммы не меняются при редактировании журнала или цен. Перед подачей проверьте комплект у ПТО и бухгалтера.'),
         h('div', { class: 'pp-row pp-wrap' }, field('Отчётный период с', from), field('по', to),
           button('Этот месяц', () => { w.ks = { from: monthStart(today), to: today }; render(); }),
           button('Прошлый месяц', () => { const e = monthStart(today) - 1; w.ks = { from: monthStart(e), to: e }; render(); })),
-        h('div', { class: 'pp-row pp-wrap' }, button('⚙ Договор и НДС', () => ksSettings(c)), button('📑 Сформировать КС-2 и КС-3', () => ksMake(c, w), 'pp-primary'), button('⬇ КС-2 в Excel', () => ksExcel(c, w))),
+        h('div', { class: 'pp-row pp-wrap' }, button('⚙ Договор и НДС', () => ksSettings(c)), button('📑 Сформировать КС-2 и КС-3', () => ksMake(c, w), 'pp-primary'), button('⬇ Объёмы КС-2 в Excel', () => ksExcel(c, w))),
         h('small', { class: 'pp-muted' }, (set.contractNo ? 'Договор № ' + set.contractNo + (set.contractDate ? ' от ' + shortDate(set.contractDate) : '') : 'Номер договора не указан') + ' · ' +
-          (set.vatRate === null ? 'без НДС' : 'НДС ' + (set.vatRate === undefined ? 22 : set.vatRate) + '%' + (set.vatIncluded ? ' (в ценах)' : ' сверху')))),
-      k.noPrice.length ? h('section', { class: 'pp-card' }, h('p', { class: 'pp-error' }, 'Нет цены — в акт не попадут (укажите цену в ведомости):'),
+          (set.vatRate === undefined ? 'НДС ещё не выбран' : set.vatRate === null ? 'без НДС' : 'НДС ' + (set.vatRate === undefined ? null : set.vatRate) + '%' + (set.vatIncluded ? ' (в ценах)' : ' сверху')))),
+      k.error ? h('p', { class: 'pp-error' }, k.error) : null,
+      ksRegistry(c),
+      k.noPrice.length ? h('section', { class: 'pp-card' }, h('p', { class: 'pp-error' }, 'Нет цены — формирование остановлено до заполнения цен:'),
         k.noPrice.map((r) => h('button', { type: 'button', class: 'pp-line', onclick: () => boqForm(c, r.itemId) }, h('span', null, r.name), h('strong', null, num(r.qty) + ' ' + r.unit)))) : null,
       h('section', { class: 'pp-card' }, h('h3', null, 'За период'),
         k.rows.length ? h('div', { class: 'pp-table-wrap' }, h('table', { class: 'pp-table' },
           h('thead', null, h('tr', null, ['№', 'Работа', 'Кол-во', 'Ед.', 'Цена', 'Стоимость'].map((t) => h('th', null, t)))),
           h('tbody', null, k.rows.map((r, i) => h('tr', null, h('td', null, String(i + 1)), h('td', null, r.name), h('td', { class: 'pp-num' }, num(r.qty)), h('td', null, r.unit), h('td', { class: 'pp-num' }, money(r.price)), h('td', { class: 'pp-num' }, money(r.sum))))),
           h('tfoot', null, h('tr', null, h('td', null, ''), h('th', null, 'Итого'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('th', { class: 'pp-num' }, money(k.total))),
-            vat.vat ? h('tr', null, h('td', null, ''), h('td', null, 'НДС'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('td', { class: 'pp-num' }, money(vat.vat))) : null,
+            vat.vat ? h('tr', null, h('td', null, ''), h('td', null, set.vatIncluded ? 'В том числе НДС' : 'НДС сверху'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('td', { class: 'pp-num' }, money(vat.vat))) : null,
             vat.vat ? h('tr', null, h('td', null, ''), h('th', null, 'Всего с НДС'), h('td', null, ''), h('td', null, ''), h('td', null, ''), h('th', { class: 'pp-num' }, money(vat.all))) : null))) :
           h('p', { class: 'pp-muted' }, 'За этот период в журнале нет работ по позициям с ценой.')));
   }
 
   function ksSettings(c) {
-    const d = c.id.participants, P = c.project;
+    const d = JSON.parse(JSON.stringify(c.id.participants)), P = c.project;
     const set = (d.defaults && d.defaults.ks) || {};
     const cardNo = (P.fields().find((f) => T.norm(f.name) === 'НОМЕР ДОГОВОРА') || {}).value || '';
     const no = h('input', { value: set.contractNo || cardNo });
     const date = h('input', { type: 'date', value: set.contractDate ? dayToInput(set.contractDate) : '' });
     const stroyka = h('input', { value: set.stroyka || '', placeholder: 'если отличается от названия объекта' });
     const value = h('input', { inputmode: 'decimal', value: set.contractValue ? String(set.contractValue / 100).replace('.', ',') : '', placeholder: 'необязательно' });
-    const rate = h('select', null, [['22', 'НДС 22%'], ['20', 'НДС 20%'], ['10', 'НДС 10%'], ['0', 'НДС 0%'], ['', 'Без НДС (УСН)']].map(([v, t]) => h('option', { value: v }, t)));
-    rate.value = set.vatRate === null ? '' : String(set.vatRate === undefined ? 22 : set.vatRate);
+    const rate = h('select', null, [['choose', 'Выберите режим НДС'], ['22', 'НДС 22%'], ['20', 'НДС 20%'], ['10', 'НДС 10%'], ['7', 'НДС 7%'], ['5', 'НДС 5%'], ['0', 'НДС 0%'], ['', 'Без НДС']].map(([v, t]) => h('option', { value: v }, t)));
+    rate.value = set.vatRate === undefined ? 'choose' : set.vatRate === null ? '' : String(set.vatRate);
     const incl = h('input', { type: 'checkbox' }); incl.checked = !!set.vatIncluded;
     const reps = I.reps(d);
     const sel = (role, value) => { const s2 = h('select', null, h('option', { value: '' }, '—'), reps.map((r) => h('option', { value: r.id }, r.fio + ' — ' + I.roleTitle(I.REP_ROLES, r.role).toLowerCase()))); s2.value = value || ((reps.find((r) => r.role === role) || {}).id || ''); return s2; };
@@ -2456,11 +2459,12 @@
       h('div', { class: 'pp-row pp-wrap' }, field('НДС', rate), h('label', { class: 'pp-check' }, incl, ' Цены в ведомости уже с НДС')),
       h('p', { class: 'pp-muted' }, 'Ставку НДС проверьте у бухгалтера: с 2026 года основная ставка — 22%.'),
       h('div', { class: 'pp-row pp-wrap' }, field('Сдал (подрядчик)', from), field('Принял (заказчик)', toR))), async () => {
+      if (rate.value === 'choose') bad('Выберите НДС по вашему договору.');
       const v = parseMoney(value.value);
       if (Number.isNaN(v)) bad('Стоимость — число');
       I.setDefaults(d, { ks: Object.assign({}, set, { contractNo: no.value.trim(), contractDate: date.value ? inputToDay(date.value) : null, stroyka: stroyka.value.trim(), contractValue: v,
         vatRate: rate.value === '' ? null : Number(rate.value), vatIncluded: incl.checked, signFrom: from.value || null, signTo: toR.value || null }) });
-      await saveParticipants(c);
+      await saveParticipants(c, d);
       render();
     });
   }
@@ -2469,39 +2473,97 @@
     const d = c.id.participants, set = (d.defaults && d.defaults.ks) || {};
     const rep = (id) => I.reps(d).find((r) => r.id === id) || null;
     return { number, date: today, from: w.ks.from, to: w.ks.to, contractNo: set.contractNo, contractDate: set.contractDate, stroyka: set.stroyka, contractValue: set.contractValue,
-      vatRate: set.vatRate === undefined ? 22 : set.vatRate, vatIncluded: !!set.vatIncluded,
+      vatRate: set.vatRate === undefined ? null : set.vatRate, vatIncluded: !!set.vatIncluded,
       signFrom: rep(set.signFrom) || I.reps(d, 'builder')[0] || null, signTo: rep(set.signTo) || I.reps(d, 'customerControl')[0] || null };
   }
 
   async function ksMake(c, w) {
-    const st = c.id, d = st.participants, P = c.project;
+    const st = c.id, P = c.project;
+    if (st.storage.busy || st.generating) return;
+    const d = JSON.parse(JSON.stringify(st.participants));
     const set = (d.defaults && d.defaults.ks) || {};
-    if (!I.ksRows(P, w.ks.from, w.ks.to).rows.length) return alert('За этот период нет работ по позициям с ценой.');
-    const n = (prompt('Номер КС-2 и КС-3', String((set.lastNumber || 0) + 1)) || '').trim();
+    if (set.vatRate === undefined || !set.contractNo) { alert('Сначала заполните договор и выберите НДС.'); ksSettings(c); return; }
+    const n = (prompt('Номер новой КС-2 и КС-3', String((set.lastNumber || 0) + 1)) || '').trim();
     if (!n) return;
+    st.generating = true;
     try {
       setStatus('Собираю КС-2 и КС-3…');
       const opts = ksOpts(c, w, n);
-      const period = (w.ks.from ? shortDate(w.ks.from) + '–' : 'по ') + shortDate(w.ks.to);
-      const dir = idDir(c) + '/КС';
-      await disk.mkdir(idDir(c)); await disk.mkdir(dir);
-      const type = { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
-      const n2 = ('КС-2 №' + n + ' за ' + period).replace(/[\\/:*?"<>|]/g, '_') + '.docx', n3 = ('КС-3 №' + n + ' за ' + period).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
-      await disk.putBlob(dir + '/' + n2, new Blob([O.richDocx(I.ks2Blocks(P, d, opts).blocks, { landscape: true })], type), true);
-      await disk.putBlob(dir + '/' + n3, new Blob([O.richDocx(I.ks3Blocks(P, d, opts).blocks, { landscape: true })], type), true);
-      I.setDefaults(d, { ks: Object.assign({}, set, { lastNumber: parseInt(n, 10) || set.lastNumber || 0 }) });
-      await saveParticipants(c);
-      setStatus('Сохранено: ' + ID_DIR + '/КС/' + n2 + ' и ' + n3);
-      window.open(D.webEdit(dir + '/' + n2), '_blank', 'noopener');
-    } catch (e) { alert(e.message); setStatus(''); }
+      const record = I.certificate(P, d, opts);
+      const existing = await st.storage.records('КС');
+      record.ledger = I.certificateLedger(existing, record);
+      opts.certificate = record;
+      const period = shortDate(record.from) + '–' + shortDate(record.to);
+      const suffix = ' — ' + record.id;
+      const safe = (name) => name.replace(/[\\/:*?"<>|]/g, '_');
+      record.docx = safe('КС-2 №' + n + ' за ' + period + suffix) + '.docx';
+      record.ks3 = safe('КС-3 №' + n + ' за ' + period + suffix) + '.docx';
+      const files = [
+        { name: record.docx, bytes: O.richDocx(I.ks2Blocks(P, d, opts).blocks, { landscape: true }) },
+        { name: record.ks3, bytes: O.richDocx(I.ks3Blocks(P, d, opts).blocks, { landscape: true }) },
+      ];
+      await st.storage.generated('КС', files, record);
+      st.certificates = existing.concat([record]);
+      I.setDefaults(d, { ks: Object.assign({}, set, { lastNumber: Math.max(parseInt(n, 10) || 0, set.lastNumber || 0) }) });
+      await saveParticipants(c, d).catch(() => {});
+      setStatus('КС-2 и КС-3 сохранены. После фактической подачи отметьте КС-2 как предъявленную в реестре.');
+      render();
+      window.open(D.webEdit(idDir(c) + '/КС/' + record.docx), '_blank', 'noopener');
+    } catch (e) { alert(e.message); setStatus('Документы не завершены: ' + e.message, true); }
+    finally { st.generating = false; }
+  }
+
+  function ksRegistry(c) {
+    const st = c.id;
+    return h('section', { class: 'pp-card' }, h('div', { class: 'pp-row pp-between pp-wrap' }, h('h3', null, 'Реестр КС-2'), button('+ Ранее предъявленная КС-2', () => importCertificate(c))),
+      h('p', { class: 'pp-muted' }, 'В накопление входят только предъявленные КС-2 по этому договору. Суммы сохранены на дату формирования. Отметка не отправляет документы заказчику. КС-3 показывает ранее предъявленное, текущую сумму и общий итог. Если меняли суммы в Word, внесите окончательные суммы через «Ранее предъявленная КС-2», оставив исходный комплект черновиком.'),
+      st.certificates.length ? st.certificates.slice().sort((a, b) => a.to - b.to).map((r) => h('div', { class: 'pp-line' },
+        h('span', null, 'КС-2 № ' + r.number + ' · ' + shortDate(r.from) + '–' + shortDate(r.to)),
+        h('strong', null, money(r.totals.all)), h('small', null, r.status === 'issued' ? 'предъявлена' : 'черновик'),
+        h('span', { class: 'pp-row pp-wrap' },
+          r.docx ? button('КС-2', () => window.open(D.webEdit(idDir(c) + '/КС/' + r.docx), '_blank', 'noopener')) : null,
+          r.ks3 ? button('КС-3', () => window.open(D.webEdit(idDir(c) + '/КС/' + r.ks3), '_blank', 'noopener')) : null,
+          r.status === 'draft' ? button('Отметить предъявленной', async () => {
+            if (!confirm('КС-2 № ' + r.number + ' на ' + money(r.totals.all) + ' уже подана заказчику? Она войдёт в накопление следующих КС-3.')) return;
+            try {
+              const saved = await st.storage.issue(r);
+              st.certificates = st.certificates.map((x) => x.id === saved.id ? saved : x);
+              afterDocument(c);
+              setStatus('КС-2 № ' + saved.number + ' учтена как предъявленная.'); render();
+            } catch (e) { alert(e.message); }
+          }) : null))) : h('p', { class: 'pp-muted' }, 'Предыдущие КС-2 ещё не внесены. Если подавали их раньше — добавьте перед формированием новой КС.'));
+  }
+
+  function importCertificate(c) {
+    const st = c.id, settings = st.participants.defaults.ks || {};
+    if (!settings.contractNo) { alert('Сначала укажите договор в настройках КС.'); return; }
+    const number = h('input'), from = h('input', { type: 'date' }), to = h('input', { type: 'date' }), date = h('input', { type: 'date', value: dayToInput(today) });
+    const amount = h('input', { inputmode: 'decimal' }), tax = h('input', { inputmode: 'decimal', value: '0' });
+    asyncDialog('Ранее предъявленная КС-2', h('div', null,
+      h('p', null, 'Вносите прежние КС-2 по порядку: от первой к последней. Перенесите суммы из документа по договору № ' + settings.contractNo + '. Эти суммы не будут пересчитываться из журнала.'),
+      field('Номер КС-2', number), field('Дата КС-2', date), field('Период с', from), field('Период по', to),
+      field('Всего с НДС, ₽', amount), field('В том числе НДС, ₽', tax, 'точная сумма из прежней КС; при освобождении — 0')), async () => {
+      const all = parseMoney(amount.value), vat = parseMoney(tax.value);
+      if (!number.value.trim() || all == null || !Number.isSafeInteger(all) || !Number.isSafeInteger(vat) || vat < 0 || vat > all) bad('Проверьте номер и суммы.');
+      const record = { version: 1, id: S.newId(), number: number.value.trim(), status: 'issued', imported: true, issuedAt: Date.now(),
+        date: inputToDay(date.value), from: inputToDay(from.value), to: inputToDay(to.value), contractKey: I.contractKey(settings), contractNo: settings.contractNo,
+        rows: [], totals: { base: all - vat, vat, all } };
+      if (!from.value || !to.value || !date.value) bad('Укажите даты и период.');
+      I.validateCertificate(record);
+      const existing = await st.storage.records('КС');
+      I.certificatePrevious(existing, record);
+      await st.storage.generated('КС', [], record);
+      st.certificates = existing.concat([record]); afterDocument(c); render();
+    }, { okText: 'Внести в накопление' });
   }
 
   function ksExcel(c, w) {
-    const k = I.ksRows(c.project, w.ks.from, w.ks.to);
+    let k;
+    try { k = I.ksRows(c.project, w.ks.from, w.ks.to); if (k.noPrice.length) throw new Error('Сначала заполните цены всех работ.'); } catch (e) { alert(e.message); return; }
     const rows = [['№ по порядку', '№ позиции', 'Наименование работ', 'Ед. изм.', 'Количество', 'Цена за ед., ₽', 'Стоимость, ₽']]
       .concat(k.rows.map((r, i) => [i + 1, r.pos, r.name, r.unit, r.qty, r.price / 100, r.sum / 100]), [[null, null, 'Итого', null, null, null, k.total / 100]]);
     const bytes = O.book([{ name: 'КС-2', header: true, widths: [8, 10, 60, 10, 12, 16, 18], rows }]);
-    const a = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: ('КС-2 ' + (c.project.project.name || '') + ' ' + shortDate(w.ks.to)).replace(/[\\/:*?"<>|]/g, '_') + '.xlsx' });
+    const a = h('a', { href: URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), download: ('Расшифровка КС-2 ' + (c.project.project.name || '') + ' ' + shortDate(w.ks.to)).replace(/[\\/:*?"<>|]/g, '_') + '.xlsx' });
     document.body.append(a); a.click(); a.remove();
   }
 
@@ -2519,7 +2581,7 @@
     return h('div', null,
       h('section', { class: 'pp-card' },
         h('p', null, 'Общий журнал собирается из того, что уже ведётся: титульный лист — из карточки объекта и участников строительства; раздел 3 (выполнение работ) — из журнала по дням с объёмами, погодой и исполнителями; раздел 4 (строительный контроль) — из замечаний и пометок на чертежах; раздел 5 — из АОСР.'),
-        h('p', { class: 'pp-muted' }, 'Структура — по форме общего журнала работ (приказ Минстроя России № 1026/пр); перед сдачей сверьте с действующей редакцией. Документ Word, альбомная страница, можно дописать и распечатать.'),
+        h('p', { class: 'pp-muted' }, 'Заполняемая заготовка общего журнала: титульный лист и разделы 1–6. Перед сдачей ПТО должен проверить состав и форму по действующей редакции приказа № 1026/пр. Документ можно дописать в Word и распечатать.'),
         h('div', { class: 'pp-row pp-wrap' }, field('С', from, 'пусто — с начала'), field('По', to), button('Весь срок', () => { w.ojr = { from: null, to: today }; render(); })),
         h('div', { class: 'pp-row pp-wrap' }, button('⚙ Титульный лист и специальные журналы', () => ojrSettings(c), ''), button('📑 Сформировать общий журнал (Word)', () => makeOjr(c, w), 'pp-primary')),
         h('small', { class: 'pp-muted' }, 'В разделе 3 за выбранный период дней с работами: ' + rows.length + (set.number ? ' · журнал № ' + set.number : '') + (set.permit ? '' : ' · разрешение на строительство не указано'))),
@@ -2527,7 +2589,7 @@
   }
 
   function ojrSettings(c) {
-    const d = c.id.participants;
+    const d = JSON.parse(JSON.stringify(c.id.participants));
     const set = (d.defaults && d.defaults.ojr) || {};
     const number = h('input', { value: set.number || '' });
     const permit = h('input', { value: set.permit || '', placeholder: '№ 16-RU…-2026 от 10.01.2026, кем выдано' });
@@ -2548,7 +2610,7 @@
       h('h3', null, 'Раздел 2. Специальные журналы'), list, button('+ Журнал', () => { journals.push({ name: '', keeper: '', date: null }); draw(); }),
       h('p', { class: 'pp-muted' }, 'Объект, адрес, застройщик, генподрядчик, проектировщик и строительный контроль берутся из карточки объекта и участников строительства.')), async () => {
       I.setDefaults(d, { ojr: { number: number.value.trim(), permit: permit.value.trim(), expertise: expertise.value.trim(), journals: journals.filter((j) => String(j.name || '').trim()) } });
-      await saveParticipants(c);
+      await saveParticipants(c, d);
       render();
     });
   }
@@ -2557,25 +2619,26 @@
     const st = c.id, d = st.participants;
     const set = (d.defaults && d.defaults.ojr) || {};
     try {
+      I.validPeriod(w.ojr.from, w.ojr.to || today);
       setStatus('Собираю общий журнал…');
       const bytes = O.richDocx(I.ojrBlocks(c.project, d, { from: w.ojr.from, to: w.ojr.to || today, today, settings: set, acts: st.acts }), { landscape: true });
-      const name = ('Общий журнал работ' + (set.number ? ' № ' + set.number : '') + ' на ' + shortDate(w.ojr.to || today)).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
-      await disk.mkdir(idDir(c));
-      await disk.putBlob(idDir(c) + '/' + name, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), true);
-      setStatus('Общий журнал сохранён: ' + ID_DIR + '/' + name);
-      window.open(D.webEdit(idDir(c) + '/' + name), '_blank', 'noopener');
+      const name = ('Общий журнал работ' + (set.number ? ' № ' + set.number : '') + ' на ' + shortDate(w.ojr.to || today) + ' — ' + S.newId()).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
+      await st.storage.generated('Общий журнал', [{ name, bytes }]);
+      afterDocument(c);
+      setStatus('Общий журнал сохранён: ' + ID_DIR + '/Общий журнал/' + name);
+      window.open(D.webEdit(idDir(c) + '/Общий журнал/' + name), '_blank', 'noopener');
     } catch (e) { alert(e.message); setStatus(''); }
   }
 
   // ───────── свои шаблоны документов ─────────
   const T = window.ProrabTemplates;
   const TPL = 'Шаблоны';
-  const tplDirs = (c) => [[idDir(c) + '/' + TPL, 'object'], [ROOT + '/' + TPL, 'common']];
+  const tplDirs = (c) => [[idDir(c) + '/' + TPL, 'object'], [(c.id ? c.id.root : ROOT) + '/' + TPL, 'common']];
 
   async function listTemplates(c) {
     const out = [];
     for (const [dir, scope] of tplDirs(c)) {
-      const items = (await disk.list(dir)) || [];
+      const items = (await c.id.storage.disk.list(dir)) || [];
       for (const it of items) {
         const kind = it.type === 'file' ? T.kindOf(it.name) : null;
         if (kind && !it.name.startsWith('~$')) out.push({ name: it.name, title: it.name.replace(/\.(docx|xlsx)$/i, ''), path: dir + '/' + it.name, scope, kind });
@@ -2608,19 +2671,22 @@
   }
 
   async function uploadTemplates(c, scope, files) {
-    const st = c.id;
+    const st = c.id, disk = st.storage.disk;
     const known = new Set(T.values(c.project, st.participants, I.draft(c.project, st.participants, { today }), today).map((v) => T.norm(v.key)));
     const notes = [];
     for (const f of files) {
       const kind = T.kindOf(f.name);
       if (!kind) { notes.push(f.name + ': нужен .docx или .xlsx (старые .doc/.xls сохраните в новом формате)'); continue; }
       try {
+        if (f.size > 20 * 1024 * 1024) throw new Error('Шаблон должен быть не больше 20 МБ.');
         const bytes = new Uint8Array(await f.arrayBuffer());
         const labels = await T.labelsIn(bytes, kind);
         const unknown = labels.filter((l) => !known.has(T.norm(l.slice(1, -1))));
         const dir = tplDirs(c).find(([, s2]) => s2 === scope)[0];
-        await disk.mkdir(scope === 'object' ? idDir(c) : ROOT); await disk.mkdir(dir);
-        await disk.putBlob(dir + '/' + f.name, f, true);
+        await st.storage.run(async () => {
+          await disk.mkdir(scope === 'object' ? idDir(c) : st.root); await disk.mkdir(dir);
+          await st.storage.file(dir + '/' + DS.leaf(f.name), bytes);
+        });
         notes.push(f.name + ': меток ' + labels.length + (unknown.length ? ', незнакомые (проверьте написание): ' + unknown.join(', ') : ', все знакомые ✓'));
       } catch (e) { notes.push(f.name + ': ' + e.message); }
     }
@@ -2630,7 +2696,7 @@
   }
 
   async function fromTemplate(c, t) {
-    const st = c.id;
+    const st = c.id, disk = st.storage.disk;
     const base = t.title + ' ' + shortDate(today);
     const name = (prompt('Название документа', base) || '').trim();
     if (!name) return;
@@ -2641,9 +2707,9 @@
       if (!buf) throw new Error('Шаблон не найден на Диске');
       const res = await T.fill(new Uint8Array(buf), T.values(c.project, st.participants, null, today), t.kind);
       const dir = idDir(c) + '/Документы';
-      await disk.mkdir(idDir(c)); await disk.mkdir(dir);
       const file = dir + '/' + name + '.' + t.kind;
-      await disk.putBlob(file, new Blob([res.bytes]), false);
+      await st.storage.generated('Документы', [{ name: name + '.' + t.kind, bytes: res.bytes }]);
+      afterDocument(c);
       setStatus('Документ создан: ' + ID_DIR + '/Документы/' + name + '.' + t.kind + (res.missing.length ? ' · не заполнены метки: ' + res.missing.join(', ') : ''), res.missing.length > 0);
       window.open(D.webEdit(file), '_blank', 'noopener');
     } catch (e) { alert(e.message); setStatus(''); }
@@ -2672,179 +2738,82 @@
     document.body.append(el); el.click(); el.remove();
   }
 
-  // ───────── фиксация данных (защищённый журнал изменений) ─────────
-  // Цепочка этого устройства: «<объект>/.prorab-fixation/<устройство>/000001.json» + квитанции сервера «000001.anchor.json».
-  const F = window.ProrabFixation;
-  const FIX_EVERY_MS = 30 * 60 * 1000;
-  const fixDir = (c, device) => c.path + '/' + F.DIR + (device ? '/' + device : '');
-  const fixState = (c) => (c.fix = c.fix || { loaded: false, seals: [], leaves: null, anchored: new Set(), files: [], busy: false, lastAt: 0 });
-
-  /** Отпечаток файла, загруженного с этого устройства (фото, чертёж) — попадёт в следующую фиксацию. */
+  // ───────── фиксация данных ─────────
+  const F = window.ProrabFixation, FS = window.ProrabFixationStore;
+  function fixState(c) {
+    if (!c.fix) c.fix = new FS.Journal({ disk, path: c.path, device: me, project: c.project.projectId, storage: store,
+      request: async (suffix, fields) => {
+        const url = app.dataset.anchorUrl;
+        if (!url) throw new Error('Сервер квитанций не подключён.');
+        const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+        try {
+          const r = await fetch(url + suffix, { method: 'POST', credentials: 'same-origin', signal: controller.signal, body: new URLSearchParams({ ...fields, csrf_token: app.dataset.csrf || '' }) });
+          const value = await r.json();
+          if (!r.ok) throw new Error(value.error || 'Сервер квитанций недоступен (' + r.status + ')');
+          return value;
+        } finally { clearTimeout(timer); }
+      } });
+    return c.fix;
+  }
   async function fixFile(c, name, data) {
     try {
       const bytes = data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-      fixState(c).files.push({ name, sha256: await F.sha256(bytes) });
-    } catch (e) { /* фиксация не должна мешать загрузке */ }
+      await fixState(c).queueFile(name.startsWith('files/') || name.startsWith(ID_DIR + '/') ? name : 'files/' + name, bytes);
+    } catch (e) { c.fixWarning = e.message; }
   }
-
-  async function loadOwnChain(c) {
-    const st = fixState(c);
-    if (st.loaded) return st;
-    const items = (await disk.list(fixDir(c, me))) || [];
-    const seals = [];
-    for (const it of items.filter((i) => i.type === 'file' && /^\d{6}\.json$/.test(i.name))) {
-      const t = await disk.getText(fixDir(c, me) + '/' + it.name);
-      if (t !== null) seals.push(JSON.parse(t));
-    }
-    seals.sort((a, b) => a.seq - b.seq);
-    st.seals = seals;
-    st.leaves = F.replay(seals);
-    st.anchored = new Set(items.filter((i) => /^\d{6}\.anchor\.json$/.test(i.name)).map((i) => parseInt(i.name, 10)));
-    st.lastAt = seals.length ? seals[seals.length - 1].createdAt : 0;
-    st.loaded = true;
-    return st;
-  }
-
-  /** Квитанция сервера сайта (время + подпись); без сервера (предпросмотр) — false. */
-  async function anchorSeal(c, seal) {
-    const url = app.dataset.anchorUrl;
-    if (!url) return false;
-    try {
-      const r = await fetch(url, { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ hash: seal.hash, csrf_token: app.dataset.csrf || '' }) });
-      if (!r.ok) return false;
-      const a = await r.json();
-      if (a.hash !== seal.hash) return false;
-      await disk.putText(fixDir(c, me) + '/' + F.anchorName(seal.seq), JSON.stringify(Object.assign({ seq: seal.seq }, a), null, 1));
-      fixState(c).anchored.add(seal.seq);
-      return true;
-    } catch (e) { return false; }
-  }
-
-  /** Зафиксировать состояние объекта (force — не ждать 30 минут). Возвращает текст для статуса. */
   async function fixNow(c, force) {
-    const st = fixState(c);
-    if (st.busy || !c.project) return null;
-    if (!force && st.loaded && Date.now() - st.lastAt < FIX_EVERY_MS) return null;
-    st.busy = true;
-    try {
-      await loadOwnChain(c);
-      if (!force && Date.now() - st.lastAt < FIX_EVERY_MS) return null;
-      // Сначала дослать квитанции, которые не получили раньше (нет связи с сайтом)
-      for (const s of st.seals) if (!st.anchored.has(s.seq)) await anchorSeal(c, s);
-      const prev = st.seals[st.seals.length - 1] || null;
-      const files = st.files.splice(0);
-      const res = await F.makeSeal(prev, st.leaves, c.project.state, { project: c.project.projectId, device: me, now: Date.now(), files });
-      if (!res) { st.lastAt = Date.now(); return 'Изменений с прошлой фиксации нет'; }
-      await disk.mkdir(fixDir(c)); await disk.mkdir(fixDir(c, me));
-      try { await disk.putBlob(fixDir(c, me) + '/' + F.name(res.seal.seq), new Blob([JSON.stringify(res.seal)], { type: 'application/json' }), false); }
-      catch (e) { st.files.unshift(...files); st.loaded = false; throw e; }
-      st.seals.push(res.seal); st.leaves = res.leaves; st.lastAt = res.seal.createdAt;
-      const ok = await anchorSeal(c, res.seal);
-      return 'Зафиксировано: № ' + res.seal.seq + ', записей изменено ' + res.seal.changes.length + (ok ? ', квитанция сервера получена' : ', квитанция будет получена позже');
-    } finally { st.busy = false; }
+    if (!c.project) return null;
+    try { const result = await fixState(c).capture(c.project.state, { force }); c.fixWarning = null; return result; }
+    catch (e) { c.fixWarning = e.message; throw e; }
   }
-
-  /** Все цепочки объекта (все устройства) с квитанциями. */
-  async function loadAllChains(c) {
-    const devices = ((await disk.list(fixDir(c))) || []).filter((i) => i.type === 'dir');
-    const chains = [];
-    for (const d of devices) {
-      const items = (await disk.list(fixDir(c, d.name))) || [];
-      const seals = [], anchors = new Map();
-      for (const it of items.filter((i) => i.type === 'file' && i.name.endsWith('.json'))) {
-        const t = await disk.getText(fixDir(c, d.name) + '/' + it.name);
-        if (t === null) continue;
-        const j = JSON.parse(t);
-        if (/\.anchor\.json$/.test(it.name)) anchors.set(j.seq, j); else seals.push(j);
-      }
-      chains.push({ device: d.name, seals, anchors, files: items });
-    }
-    return chains;
-  }
-
-  /** Подписи квитанций проверяет сервер сайта (ключ есть только у него). */
-  async function verifyAnchors(chains) {
-    const url = app.dataset.anchorUrl;
-    let valid = 0, invalid = 0;
-    if (!url) return { valid, invalid, checked: false };
-    for (const ch of chains) {
-      for (const a of ch.anchors.values()) {
-        try {
-          const r = await fetch(url + '/verify', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ hash: a.hash, time: a.time, sig: a.sig, csrf_token: app.dataset.csrf || '' }) });
-          const j = await r.json();
-          if (j.valid) valid++; else invalid++;
-        } catch (e) { return { valid, invalid, checked: false }; }
-      }
-    }
-    return { valid, invalid, checked: true };
-  }
-
+  function afterDocument(c) { fixNow(c, false).catch((e) => { c.fixWarning = e.message; }); }
   function fixationView(w, c) {
     const st = fixState(c);
-    if (!st.loaded && !st.loading) { st.loading = true; loadOwnChain(c).catch((e) => { w.fixError = e.message; }).finally(() => { st.loading = false; if (!modalOpen()) render(); }); }
-    const last = st.seals[st.seals.length - 1];
-    const rep = w.fixReport;
+    if (!st.loaded && !st.loading && !st.loadFailed) { st.loading = true; st.load().catch((e) => { st.loadFailed = true; c.fixWarning = e.message; }).finally(() => { st.loading = false; if (!modalOpen()) render(); }); }
+    const last = st.seals.at(-1), rep = w.fixReport;
+    const result = (r) => r.problems ? '⚠ Найдены расхождения' : r.incomplete ? 'Проверка не завершена' : '✓ Проверка завершена, расхождений не найдено';
     return h('main', null,
       h('section', { class: 'pp-card' },
-        h('p', null, 'Кабинет сам фиксирует данные объекта после сохранения (не чаще раза в 30 минут): записи журнала, замечания, приёмку, финансы и остальное — с цифровыми отпечатками SHA-256. Каждая фиксация ссылается на предыдущую, а её отпечаток заверяется квитанцией сервера сайта со временем. Правка задним числом, удаление или подмена файла фиксации видны при проверке.'),
-        h('p', { class: 'pp-muted' }, 'Файлы фиксации — в папке объекта «' + F.DIR + '» (скрытая). Не удаляйте и не правьте их вручную.'),
-        w.fixError ? h('p', { class: 'pp-error' }, w.fixError) : null,
-        h('p', null, st.loading ? 'Загружаю…' : last ? 'Это устройство: фиксаций ' + st.seals.length + ', последняя ' + new Date(last.createdAt).toLocaleString('ru-RU') + ', с квитанцией сервера ' + st.anchored.size : 'С этого устройства фиксаций ещё не было.'),
+        h('p', null, 'После сохранения кабинет делает снимок данных объекта не чаще раза в 30 минут. Можно зафиксировать изменения сразу. В снимке — записи журнала, приёмка, замечания, финансы объекта и отпечатки файлов, загруженных или созданных в этом кабинете после обновления.'),
+        h('p', { class: 'pp-muted' }, 'Снимки лежат в папке объекта «' + F.DIR + '». На сервер передаются только отпечатки и номера, без текстов, сумм и изображений. Серверный реестр позволяет заметить удаление последних подтверждённых снимков и целой цепочки.'),
+        h('p', { class: 'pp-muted' }, 'Квитанция подтверждает время получения отпечатка этим сайтом. Независимая служба времени и электронная подпись автора не подключены. Кабинет также проверяет цепочки телефона. Для старого протокола телефона проверка полноты ограничена — это будет указано в отчёте.'),
+        c.fixWarning ? h('p', { class: 'pp-error' }, c.fixWarning) : null,
+        h('p', null, st.loading ? 'Загружаю…' : last ? 'Это устройство: снимков ' + st.seals.length + ', последняя фиксация ' + new Date(last.createdAt).toLocaleString('ru-RU') + ', квитанций ' + st.anchored.size : 'С этого устройства фиксаций ещё не было.'),
         h('div', { class: 'pp-row pp-wrap' },
-          button('🔏 Зафиксировать сейчас', async () => { try { setStatus('Фиксирую…'); setStatus(await fixNow(c, true) || 'Фиксация уже идёт'); } catch (e) { alert(e.message); } render(); }, 'pp-primary'),
-          button('✔ Проверить целостность', async () => { try { setStatus('Проверяю фиксации…'); w.fixReport = await fixReport(c); setStatus('Проверка завершена'); } catch (e) { alert(e.message); } render(); }),
+          button('🔏 Зафиксировать сейчас', async () => { try { setStatus('Фиксирую…'); setStatus(await fixNow(c, true)); w.fixReport = null; } catch (e) { setStatus(e.message, true); alert(e.message); } render(); }, 'pp-primary'),
+          button('✔ Проверить целостность', async () => { w.fixReport = null; try { setStatus('Проверяю снимки, квитанции и файлы…'); w.fixReport = await st.report(c.project.state); setStatus(result(w.fixReport), w.fixReport.problems || w.fixReport.incomplete); } catch (e) { c.fixWarning = e.message; setStatus('Проверка не завершена: ' + e.message, true); } render(); }),
           button('⬇ Выгрузить для эксперта', () => exportFixation(c)))),
-      rep ? h('section', { class: 'pp-card' }, h('h3', null, rep.problems ? '⚠ Найдены нарушения' : '✓ Нарушений не найдено'),
+      rep ? h('section', { class: 'pp-card' }, h('h3', null, result(rep)),
         h('div', { class: 'pp-table-wrap' }, h('table', { class: 'pp-table' },
-          h('thead', null, h('tr', null, ['Устройство', 'Фиксаций', 'Первая', 'Последняя', 'С квитанцией', 'Нарушения'].map((t) => h('th', null, t)))),
-          h('tbody', null, rep.chains.map((r) => h('tr', null, h('td', null, r.device), h('td', { class: 'pp-num' }, String(r.seals)), h('td', null, r.first ? new Date(r.first).toLocaleString('ru-RU') : ''),
-            h('td', null, r.last ? new Date(r.last).toLocaleString('ru-RU') : ''), h('td', { class: 'pp-num' }, String(r.anchored)),
-            h('td', { class: r.problems.length ? 'pp-error' : 'pp-plus' }, r.problems.length ? r.problems.join('; ') : 'нет')))))),
-        h('p', { class: rep.anchors.invalid ? 'pp-error' : 'pp-muted' }, rep.anchors.checked ? 'Подписи квитанций сервера: верных ' + rep.anchors.valid + (rep.anchors.invalid ? ', неверных ' + rep.anchors.invalid : '') : 'Подписи квитанций не проверены (нет связи с сайтом).')) : null);
+          h('thead', null, h('tr', null, ['Устройство', 'Снимков', 'Последний', 'Квитанций', 'Расхождения'].map((t) => h('th', null, t)))),
+          h('tbody', null, rep.chains.map((r) => h('tr', null, h('td', null, r.label), h('td', null, String(r.seals)), h('td', null, r.last ? new Date(r.last).toLocaleString('ru-RU') : ''), h('td', null, String(r.anchored)), h('td', null, r.problems.join('; ') || 'нет')))))),
+        rep.issues.map((t) => h('p', { class: 'pp-error' }, t)), rep.notes.map((t) => h('p', { class: 'pp-error' }, t)),
+        h('p', null, 'Файлов с совпадающим отпечатком: ' + rep.verifiedFiles + ' из ' + rep.fileCount + '. Подписей квитанций проверено: ' + rep.anchors.valid + ', неверных: ' + rep.anchors.invalid + (rep.anchors.checked ? '.' : '. Серверная проверка не завершена.'))) : null);
   }
-
-  async function fixReport(c) {
-    const chains = await loadAllChains(c);
-    const rows = [];
-    // Подпись устройства: телефон пишет в фиксации свою модель, вкладки кабинета — «web-…»
-    const label = (ch) => {
-      const named = (ch.seals.find((s) => s && s.deviceName) || {}).deviceName;
-      return ch.device === me ? 'Это устройство' : named ? 'Телефон ' + named : /^web-/.test(ch.device) ? 'Кабинет' : 'Устройство ' + ch.device.slice(0, 8);
-    };
-    for (const ch of chains) rows.push(Object.assign(await F.verifyChain(ch.seals, ch.anchors), { device: label(ch), folder: ch.device }));
-    const anchors = await verifyAnchors(chains);
-    return { chains: rows, anchors, problems: rows.some((r) => r.problems.length) || anchors.invalid > 0, at: Date.now(), raw: chains };
-  }
-
   async function exportFixation(c) {
     try {
       setStatus('Собираю архив фиксаций…');
-      const rep = await fixReport(c);
-      const enc = new TextEncoder();
-      const entries = [];
+      const rep = await fixState(c).report(c.project.state), entries = [];
       for (const ch of rep.raw) {
-        for (const s of ch.seals) entries.push({ name: F.DIR + '/' + ch.device + '/' + F.name(s.seq), text: enc.encode(JSON.stringify(s)) });
-        for (const a of ch.anchors.values()) {
-          entries.push({ name: F.DIR + '/' + ch.device + '/' + F.anchorName(a.seq), text: enc.encode(JSON.stringify(a, null, 1)) });
-          if (a.tsa) entries.push({ name: F.DIR + '/' + ch.device + '/' + String(a.seq).padStart(6, '0') + '.tsr', text: Uint8Array.from(atob(a.tsa), (ch2) => ch2.charCodeAt(0)) });
-        }
+        for (const seal of ch.seals) entries.push({ name: F.DIR + '/' + ch.device + '/' + F.name(seal.seq), text: JSON.stringify(seal) });
+        for (const a of ch.anchors.values()) entries.push({ name: F.DIR + '/' + ch.device + '/' + F.anchorName(a.seq), text: JSON.stringify(a, null, 1) });
       }
-      const p = c.project.project;
-      const lines = ['Отчёт о проверке фиксаций данных «Прораб+»', 'Объект: ' + (p.name || '') + (p.address ? ', ' + p.address : ''), 'Идентификатор объекта: ' + c.project.projectId,
-        'Проверено: ' + new Date(rep.at).toLocaleString('ru-RU'), 'Итог: ' + (rep.problems ? 'НАЙДЕНЫ НАРУШЕНИЯ' : 'нарушений не найдено'), '',
-        ...rep.chains.map((r) => r.device + ' (папка ' + r.folder + '): фиксаций ' + r.seals + (r.first ? ', с ' + new Date(r.first).toISOString() : '') + (r.last ? ' по ' + new Date(r.last).toISOString() : '') + ', с квитанцией сервера ' + r.anchored + (r.problems.length ? '\n  Нарушения: ' + r.problems.join('\n  ') : '')),
-        '', rep.anchors.checked ? 'Подписи квитанций сервера проверены: верных ' + rep.anchors.valid + ', неверных ' + rep.anchors.invalid : 'Подписи квитанций сервера не проверялись.'];
-      const readme = ['Как устроены фиксации', '', 'Каждый файл NNNNNN.json — фиксация: изменившиеся записи объекта полностью (row) и их отпечатки SHA-256 (h) от канонического JSON (ключи по алфавиту),',
-        'общий отпечаток состояния (root — SHA-256 строк «таблица/id:отпечаток» по алфавиту через перевод строки), отпечаток предыдущей фиксации (prev) и свой отпечаток (hash — SHA-256 канонического JSON фиксации без поля hash).',
-        'NNNNNN.anchor.json — квитанция сервера сайта: время UTC (time) и подпись HMAC-SHA256 (sig) строки «prorab-anchor-v1|hash|time»; проверяется сервером сайта (POST /prorab/anchor/verify).',
-        'NNNNNN.tsr — метка времени независимой службы (RFC 3161), если она была подключена: openssl ts -verify -digest <hash> -in NNNNNN.tsr -CAfile <сертификаты службы>.',
-        'Проверка без программы: пересчитать SHA-256 канонического JSON записей и фиксаций и сравнить с h, hash и prev следующей фиксации.'];
-      entries.push({ name: 'Отчёт о проверке.txt', text: enc.encode(lines.join('\r\n')) }, { name: 'Как проверить.txt', text: enc.encode(readme.join('\r\n')) });
-      const blob = new Blob([O.zip(entries)], { type: 'application/zip' });
-      const a = h('a', { href: URL.createObjectURL(blob), download: ('Фиксации ' + (p.name || 'объект') + ' ' + shortDate(today)).replace(/[\\/:*?"<>|]/g, '_') + '.zip' });
-      document.body.append(a); a.click(); a.remove();
-      setStatus('Архив фиксаций выгружен' + (rep.problems ? ' — есть нарушения, см. отчёт' : ''), rep.problems);
-    } catch (e) { alert(e.message); setStatus(''); }
+      const summary = rep.problems ? 'Есть расхождения' : rep.incomplete ? 'Проверка не завершена' : 'Проверка завершена, расхождений не найдено';
+      const lines = ['Архив фиксаций Прораб+', 'Объект: ' + c.project.project.name, 'Проверка: ' + new Date(rep.at).toISOString(), summary,
+        ...rep.chains.map((r) => r.label + ' (папка ' + r.device + '): снимков ' + r.seals + ', квитанций ' + r.anchored + '. ' + r.problems.join('; ')), ...rep.issues, ...rep.notes,
+        'Файлы: совпало ' + rep.verifiedFiles + ' из ' + rep.fileCount + '. Проверено квитанций: ' + rep.anchors.valid + ', неверных: ' + rep.anchors.invalid + '.',
+        'Отсутствие расхождений не подтверждает достоверность описанных работ или авторство записей. Квитанции выданы сервером сайта, независимой метки времени нет.'];
+      const readme = ['Фиксации v2: hash — SHA-256 канонического JSON снимка без hash; prev — предыдущий hash. Ключи объектов сортируются, массивы сохраняют порядок.',
+        'changes содержит строки row и их SHA-256 (h); removed=true исключает строку из состояния. root — SHA-256 строк таблица/id:отпечаток, отсортированных по ключу и разделённых переводами строки.',
+        'files содержит пути относительно папки объекта и SHA-256. Исходные фото, чертежи и документы нужно отдельно сохранить с Диска; в архиве только их отпечатки.',
+        'Квитанции HMAC-SHA256 v2 проверяются сервером POST /prorab/anchor/verify (receipts — JSON-массив до 100, csrf_token). Подписаны format, version, project, chain, seq, prev, hash, time, alg, key в каноническом JSON.',
+        'Полнота сверяется с приватным серверным реестром POST /prorab/anchor/heads. Локальная цепочка сама по себе не доказывает отсутствие удалённых последних снимков.',
+        'Квитанция означает получение отпечатка сервером в указанное время, не подпись автора и не независимую метку времени. Ключ и серверный реестр нужно сохранять в резервных копиях.'];
+      entries.push({ name: 'Отчёт о проверке.txt', text: lines.join('\r\n') }, { name: 'Как проверить.txt', text: readme.join('\r\n') });
+      const a = h('a', { href: URL.createObjectURL(new Blob([O.zip(entries)], { type: 'application/zip' })), download: ('Фиксации ' + c.project.project.name + ' ' + shortDate(today)).replace(/[\\/:*?"<>|]/g, '_') + '.zip' });
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      setStatus('Архив выгружен. ' + summary, rep.problems || rep.incomplete);
+    } catch (e) { alert(e.message); setStatus('Архив не завершён: ' + e.message, true); }
   }
 
   // ───────── позиция ведомости ─────────
@@ -2932,7 +2901,7 @@
           await disk.mkdir(c.path + '/files');
           const blob = dataToBlob(data);
           await disk.putBlob(c.path + '/files/' + file, blob, false);
-          fixFile(c, file, blob);
+          await fixFile(c, file, blob);
           hrefCache[c.path + '/files/' + file] = Promise.resolve(data);
           const item = { file };
           added.push(item);
@@ -3464,7 +3433,7 @@
   window.addEventListener('pagehide', persistAll);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistAll(); });
   window.addEventListener('beforeunload', (e) => {
-    const busy = Object.values(ctxs).some((c) => c.project && (c.project.dirty || c.saving)) || econ.operation ||
+    const busy = Object.values(ctxs).some((c) => (c.project && (c.project.dirty || c.saving)) || (c.id && (c.id.generating || c.id.storage.busy)) || (c.fix && c.fix.busy)) || econ.operation ||
       (econ.session && econ.session.editing) || (econ.vault && document.querySelector('.pp-modal[data-econ]'));
     if (busy) { persistAll(); if (!leaving) { e.preventDefault(); e.returnValue = ''; } }
   });

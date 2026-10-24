@@ -14,30 +14,59 @@
   const dec = new TextDecoder(), enc = new TextEncoder();
 
   // ───── чтение zip (docx и xlsx — это zip) ─────
-  async function inflate(data) {
-    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+  const MAX_FILE = 20 * 1024 * 1024, MAX_TOTAL = 80 * 1024 * 1024, MAX_ENTRIES = 4000;
+  async function inflate(data, expected) {
+    const reader = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+    const chunks = []; let size = 0;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > expected || size > MAX_TOTAL) { await reader.cancel(); throw new Error('Распакованный шаблон слишком большой или повреждён.'); }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const out = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+    return out;
   }
   async function unzip(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length > MAX_FILE) throw new Error('Шаблон должен быть не больше 20 МБ.');
     const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const check = (start, size) => { if (start < 0 || size < 0 || start + size > bytes.length) throw new Error('Файл шаблона повреждён'); };
     let end = -1;
-    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (v.getUint32(i, true) === 0x06054b50) { end = i; break; }
+    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (v.getUint32(i, true) === 0x06054b50 && i + 22 + v.getUint16(i + 20, true) === bytes.length) { end = i; break; }
     if (end < 0) throw new Error('Это не документ Word или Excel (повреждён или старый формат .doc/.xls — сохраните как .docx/.xlsx).');
     const count = v.getUint16(end + 10, true);
     let p = v.getUint32(end + 16, true);
-    const out = [];
+    if (v.getUint16(end + 4, true) || v.getUint16(end + 6, true) || v.getUint16(end + 8, true) !== count || count > MAX_ENTRIES || p + v.getUint32(end + 12, true) !== end) throw new Error('Слишком сложный или повреждённый шаблон. Пересохраните документ.');
+    const out = [], names = new Set(); let total = 0;
     for (let k = 0; k < count; k++) {
+      check(p, 46);
       if (v.getUint32(p, true) !== 0x02014b50) throw new Error('Файл шаблона повреждён');
       const method = v.getUint16(p + 10, true), csize = v.getUint32(p + 20, true);
+      const size = v.getUint32(p + 24, true), crc = v.getUint32(p + 16, true);
       const nameLen = v.getUint16(p + 28, true), extraLen = v.getUint16(p + 30, true), commentLen = v.getUint16(p + 32, true);
       const local = v.getUint32(p + 42, true);
+      check(p + 46, nameLen + extraLen + commentLen); check(local, 30);
+      if (v.getUint16(p + 8, true) & 1) throw new Error('Снимите пароль с файла шаблона перед загрузкой.');
+      total += size;
+      if (size > MAX_TOTAL || total > MAX_TOTAL) throw new Error('Распакованный шаблон больше 80 МБ. Уменьшите изображения.');
       const name = dec.decode(bytes.subarray(p + 46, p + 46 + nameLen));
+      if (!name || names.has(name) || name.startsWith('/') || name.includes('\\') || name.split('/').includes('..')) throw new Error('Недопустимые имена файлов в шаблоне.');
+      names.add(name);
       const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+      check(start, csize);
+      if (v.getUint32(local, true) !== 0x04034b50 || v.getUint16(local + 8, true) !== method || start + csize > v.getUint32(end + 16, true) || dec.decode(bytes.subarray(local + 30, local + 30 + v.getUint16(local + 26, true))) !== name) throw new Error('Файл шаблона повреждён');
       const raw = bytes.subarray(start, start + csize);
       if (method !== 0 && method !== 8) throw new Error('Неизвестное сжатие в шаблоне');
-      out.push({ name, data: method === 8 ? await inflate(raw) : raw.slice() });
+      const data = method === 8 ? await inflate(raw, size) : raw.slice();
+      if (data.length !== size || O.crc32(data) !== crc) throw new Error('Файл шаблона повреждён: контрольная сумма не совпала.');
+      out.push({ name, data });
       p += 46 + nameLen + extraLen + commentLen;
     }
+    if (p !== end) throw new Error('Файл шаблона повреждён');
     return out;
   }
 

@@ -80,7 +80,7 @@
     const paraXml = (bl) => {
       const runs = (Array.isArray(bl.p) ? bl.p : [bl.p]).map((r) => runXml(r, bl)).join('');
       const jc = { left: 'left', center: 'center', right: 'right', both: 'both' }[bl.align || 'left'];
-      return '<w:p><w:pPr><w:spacing w:before="' + Math.round((bl.before || 0) * 20) + '" w:after="' + Math.round((bl.after === undefined ? 2 : bl.after) * 20) + '" w:line="240" w:lineRule="auto"/>' +
+      return '<w:p><w:pPr>' + (bl.keepNext ? '<w:keepNext/>' : '') + '<w:spacing w:before="' + Math.round((bl.before || 0) * 20) + '" w:after="' + Math.round((bl.after === undefined ? 2 : bl.after) * 20) + '" w:line="240" w:lineRule="auto"/>' +
         (bl.indent ? '<w:ind w:firstLine="' + Math.round(bl.indent * 20) + '"/>' : '') + '<w:jc w:val="' + jc + '"/></w:pPr>' + runs + '</w:p>';
     };
     const cellXml = (cell, width, borders) => {
@@ -89,7 +89,9 @@
       return '<w:tc><w:tcPr><w:tcW w:w="' + width + '" w:type="dxa"/>' + (c.span > 1 ? '<w:gridSpan w:val="' + c.span + '"/>' : '') + b + '</w:tcPr>' + paraXml(Object.assign({ after: 0 }, c)) + '</w:tc>';
     };
     const tableXml = (bl) => {
-      const widths = bl.widths;
+      const available = opts.landscape ? 14853 : 10205;
+      const original = bl.widths.reduce((a, w) => a + w, 0);
+      const widths = bl.widths.map((w) => Math.floor(w * Math.min(1, available / original)));
       const grid = '<w:tblGrid>' + widths.map((w) => '<w:gridCol w:w="' + w + '"/>').join('') + '</w:tblGrid>';
       const rows = bl.table.map((row, ri) => {
         let col = 0;

@@ -9,6 +9,7 @@ const S = require('../../static/prorab/sync.js');
 const M = require('../../static/prorab/model.js');
 const I = require('../../static/prorab/id.js');
 const T = require('../../static/prorab/templates.js');
+const O = require('../../static/prorab/office.js');
 
 const ctx = { window: {} };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../static/prorab/schema.js'), 'utf8'), ctx);
@@ -26,6 +27,21 @@ function people() {
 }
 const fixture = (n) => new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', n)));
 const textOf = async (bytes, part) => new TextDecoder().decode((await T.unzip(bytes)).find((e) => e.name === part).data);
+
+test('повреждённые и слишком большие ZIP-шаблоны отклоняются до заполнения', async () => {
+  await assert.rejects(T.unzip(new Uint8Array([1, 2, 3])), /документ/);
+  await assert.rejects(T.unzip(new Uint8Array(20 * 1024 * 1024 + 1)), /20 МБ/);
+  const bytes = O.zip([{ name: 'word/document.xml', text: 'test' }]);
+  const corrupt = bytes.slice(); corrupt[30 + 'word/document.xml'.length] ^= 1;
+  await assert.rejects(T.unzip(corrupt), /контрольная сумма/);
+  const oversized = bytes.slice();
+  const view = new DataView(oversized.buffer);
+  const central = view.getUint32(oversized.length - 6, true);
+  view.setUint32(central + 24, 90 * 1024 * 1024, true);
+  await assert.rejects(T.unzip(oversized), /80 МБ/);
+  await assert.rejects(T.unzip(O.zip([{ name: '../evil', text: 'x' }])), /имена/);
+  await assert.rejects(T.unzip(O.zip([{ name: 'word/a', text: 'a' }, { name: 'word/a', text: 'b' }])), /имена/);
+});
 
 test('Word (файл из LibreOffice, сжатый): метки заполняются, регистр и подчёркивания не важны, неизвестные остаются', async () => {
   const d = people();

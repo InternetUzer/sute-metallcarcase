@@ -58,3 +58,19 @@ test('проверка ловит правку задним числом, уда
   r = await F.verifyChain([one.seal], new Map([[1, { hash: one.seal.hash, time: new Date(1000 - 3600 * 1000).toISOString() }]]));
   assert.ok(r.problems.some((p) => p.includes('раньше времени фиксации')));
 });
+
+test('снимок не меняется при последующем изменении строки; физическое удаление записано явно', async () => {
+  const state = { volumes: { a: row('a', { quantity: 5 }) } };
+  const pending = F.makeSeal(null, null, state, info(1000));
+  state.volumes.a.values.quantity = 99;
+  const first = await pending;
+  assert.equal(first.seal.changes[0].row.quantity, 5);
+  delete state.volumes.a;
+  const second = await F.makeSeal(first.seal, first.leaves, state, info(2000));
+  assert.equal(second.seal.changes[0].removed, true);
+  assert.equal(F.replay([first.seal, second.seal]).size, 0);
+  assert.deepEqual((await F.verifyChain([first.seal, second.seal])).problems, []);
+  assert.ok((await F.verifyChain([first.seal], new Map([[2, { hash: second.seal.hash }]]))).problems.length);
+  assert.ok((await F.verifyChain([{}])).problems.length);
+  for (const name of ['../secret', 'files/../secret', '/files/a', 'files/a\\b']) assert.throws(() => F.filePath(name));
+});

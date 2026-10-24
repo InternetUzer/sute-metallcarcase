@@ -2,8 +2,8 @@
  * «Прораб+» — фиксация данных объекта (защищённый журнал изменений).
  * Каждое устройство ведёт свою цепочку файлов фиксации: «<объект>/.prorab-fixation/<устройство>/000001.json», …
  * В файле — записи, изменившиеся с прошлой фиксации (полностью, с отпечатком SHA-256), отпечаток всего состояния
- * объекта и отпечаток предыдущего файла. Правка задним числом, удаление или подмена файла рвёт цепочку — это видно
- * при проверке. Время подтверждается квитанцией сервера сайта (и меткой времени независимой службы, если настроена)
+ * объекта и отпечаток предыдущего файла. Полнота цепочки сверяется с отдельным серверным реестром.
+ * Время получения отпечатка подтверждается квитанцией сайта, не независимой меткой времени.
  * — файл «000001.anchor.json» рядом.
  * Без DOM — проверяется тестами в Node (crypto.subtle).
  */
@@ -47,13 +47,15 @@
    * Возвращает { seal, leaves } или null, если с прошлой фиксации ничего не изменилось.
    */
   async function makeSeal(prev, prevLeaves, state, info) {
+    state = JSON.parse(JSON.stringify(state)); // immutable snapshot before the first asynchronous hash
     const cur = await leaves(state);
     const changes = [];
     for (const [k, v] of cur) if (!prevLeaves || !prevLeaves.has(k) || prevLeaves.get(k) !== v.h) changes.push({ t: v.t, id: v.id, h: v.h, row: v.row });
-    const files = (info.files || []).filter((f) => f && f.name && /^[0-9a-f]{64}$/.test(f.sha256));
+    if (prevLeaves) for (const k of prevLeaves.keys()) if (!cur.has(k)) changes.push({ t: k.slice(0, k.indexOf('/')), id: k.slice(k.indexOf('/') + 1), removed: true });
+    const files = (info.files || []).map((f) => { filePath(f.name); if (!/^[0-9a-f]{64}$/.test(f.sha256)) throw new Error('Некорректный отпечаток файла.'); return { name: f.name, sha256: f.sha256 }; });
     if (prev && !changes.length && !files.length) return null;
     const seal = {
-      format: FORMAT, version: 1, project: info.project, device: info.device, seq: prev ? prev.seq + 1 : 1, prev: prev ? prev.hash : null,
+      format: FORMAT, version: 2, project: info.project, device: info.device, seq: prev ? prev.seq + 1 : 1, prev: prev ? prev.hash : null,
       createdAt: info.now, count: cur.size, root: await rootOf(cur), changes, files,
     };
     seal.hash = await sealHash(seal);
@@ -64,7 +66,7 @@
   /** Состояние после цепочки фиксаций одного устройства (Map t/id → h) — для следующей фиксации. */
   function replay(seals) {
     const map = new Map();
-    for (const s of seals) for (const c of s.changes) map.set(c.t + '/' + c.id, c.h);
+    for (const s of seals) for (const c of s.changes) { const k = c.t + '/' + c.id; if (c.removed) map.delete(k); else map.set(k, c.h); }
     return map;
   }
 
@@ -74,17 +76,21 @@
    */
   async function verifyChain(seals, anchors) {
     const problems = [];
+    if (!Array.isArray(seals) || seals.some((s) => !s || typeof s !== 'object' || !Array.isArray(s.changes) || !Array.isArray(s.files) || !Number.isSafeInteger(s.seq) || s.seq < 1 || !Number.isFinite(s.createdAt))) return { device: '', seals: (seals && seals.length) || 0, first: null, last: null, anchored: 0, problems: ['Повреждён формат цепочки.'] };
     const list = seals.slice().sort((a, b) => a.seq - b.seq);
     const map = new Map();
     let prev = null, anchored = 0;
     for (const s of list) {
       const where = 'фиксация № ' + s.seq + (s.createdAt ? ' от ' + new Date(s.createdAt).toLocaleString('ru-RU') : '');
-      if (s.format !== FORMAT) { problems.push(where + ': неизвестный формат'); continue; }
+      if (s.format !== FORMAT || ![1, 2].includes(s.version)) { problems.push(where + ': неизвестный формат'); continue; }
+      if (prev && (s.project !== prev.project || s.device !== prev.device)) problems.push(where + ': другой объект или устройство');
       if (s.seq !== (prev ? prev.seq + 1 : 1)) problems.push('Пропущены фиксации перед № ' + s.seq + ' — файлы удалены или не загружены');
       if (s.hash !== await sealHash(s)) problems.push(where + ': содержимое изменено после фиксации (отпечаток не совпадает)');
       if (prev && s.prev !== prev.hash) problems.push(where + ': не связана с предыдущей (цепочка разорвана)');
       if (!prev && s.prev !== null && s.seq === 1) problems.push(where + ': первая фиксация ссылается на несуществующую');
       for (const c of s.changes) {
+        if (!c || typeof c.t !== 'string' || typeof c.id !== 'string') { problems.push(where + ': повреждена запись'); continue; }
+        if (c.removed) { if (s.version !== 2) problems.push(where + ': неизвестный формат удаления'); map.delete(c.t + '/' + c.id); continue; }
         if (c.h !== await sha256(canonical(c.row))) problems.push(where + ': запись ' + c.t + '/' + c.id + ' изменена (отпечаток не совпадает)');
         map.set(c.t + '/' + c.id, c.h);
       }
@@ -98,6 +104,7 @@
       }
       prev = s;
     }
+    if (anchors) for (const seq of anchors.keys()) if (!list.some((s) => s.seq === seq)) problems.push('Есть квитанция, но отсутствует фиксация № ' + seq);
     return { device: list[0] ? list[0].device : '', seals: list.length, first: list[0] ? list[0].createdAt : null, last: prev ? prev.createdAt : null, anchored, problems };
   }
 
@@ -115,8 +122,14 @@
 
   const name = (seq) => String(seq).padStart(6, '0') + '.json';
   const anchorName = (seq) => String(seq).padStart(6, '0') + '.anchor.json';
+  function filePath(name) {
+    if (typeof name !== 'string' || name.startsWith('/') || /[\\\x00-\x1f]/.test(name) || name.split('/').some((p) => !p || p === '.' || p === '..') || !/^(files|Исполнительная документация)\//.test(name)) throw new Error('Недопустимый путь файла фиксации.');
+    return name;
+  }
+  const projectKey = (id) => sha256('prorab-project-v2|' + id);
+  const chainKey = async (project, device) => sha256('prorab-chain-v2|' + await projectKey(project) + '|' + device);
 
-  const api = { DIR, canonical, sha256, leaves, makeSeal, replay, verifyChain, history, sealHash, name, anchorName };
+  const api = { DIR, canonical, sha256, leaves, makeSeal, replay, verifyChain, history, sealHash, name, anchorName, filePath, projectKey, chainKey, rootOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.ProrabFixation = api;
 })(typeof window !== 'undefined' ? window : globalThis);

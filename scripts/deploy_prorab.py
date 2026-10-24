@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 import shutil
 import sqlite3
@@ -80,6 +81,13 @@ def main():
         live.backup(snapshot)
     shutil.copy2(config_file, backup / 'hosting.json')
     shutil.copy2(webroot / 'passenger_wsgi.py', backup / 'passenger_wsgi.py')
+    anchor_db = production / 'instance/prorab-anchors.sqlite3'
+    if anchor_db.is_file():
+        with sqlite3.connect(anchor_db) as live, sqlite3.connect(backup / anchor_db.name) as snapshot:
+            live.backup(snapshot)
+    anchor_key = production / 'instance/prorab-anchor.key'
+    if anchor_key.is_file():
+        shutil.copy2(anchor_key, backup / anchor_key.name)
     originals = []
     for index, (_, target, _) in enumerate(targets):
         saved = backup / 'source' / str(index)
@@ -123,16 +131,40 @@ assert 'no-store' in journal.headers['Cache-Control']
 assert b'/static/prorab/persistence.js' in journal.data
 assert b'/admin/prorab' in client.get('/admin',base_url=base).data
 assert b'Disallow: /prorab' in client.get('/robots.txt',base_url=base).data
-for name in ['app.js', 'persistence.js', 'vault.js', 'economy.js', 'economy-store.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/libredwg/libredwg-web.js']:
+for name in ['app.js', 'persistence.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'document-store.js', 'templates.js', 'fixation.js', 'fixation-store.js', 'office.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/libredwg/libredwg-web.js']:
     response=client.get('/static/prorab/'+name,base_url=base)
     assert response.status_code==200 and 'javascript' in response.mimetype, (name,response.status_code,response.mimetype)
 response=client.get('/static/prorab/vendor/libredwg/libredwg-web.wasm',base_url=base)
 assert response.status_code==200 and len(response.data)==10810696
 assert 'wasm-unsafe-eval' not in client.get('/',base_url=base).headers['Content-Security-Policy']
 assert b'messenger-links' in client.get('/',base_url=base).data
-print('Isolated database, public/admin routes, Prorab headers and all viewer assets passed.')
+with client.session_transaction(base_url=base) as session:
+    csrf=session['csrf']
+fields=dict(csrf_token=csrf,project='a'*64,chain='b'*64,seq='1',prev='',hash='c'*64)
+r=client.post('/prorab/anchor',base_url=base,data=fields)
+assert r.status_code==200, r.status_code
+receipt=r.get_json()
+import json
+verified=client.post('/prorab/anchor/verify',base_url=base,data=dict(csrf_token=csrf,receipts=json.dumps([receipt])))
+assert verified.get_json()['valid']==[True]
+assert len(client.post('/prorab/anchor/heads',base_url=base,data=dict(csrf_token=csrf,project='a'*64)).get_json()['heads'])==1
+print('Isolated database, public/admin routes, Prorab assets and receipt endpoints passed.')
 '''
     subprocess.run([str(python), '-c', check], cwd=source, env=env, check=True)
+    if not os.environ.get('PRORAB_ANCHOR_KEY') and not config.get('PRORAB_ANCHOR_KEY'):
+        if not anchor_key.exists():
+            if anchor_db.is_file():
+                with sqlite3.connect(anchor_db) as db:
+                    if any(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone() and db.execute('SELECT 1 FROM ' + t + ' LIMIT 1').fetchone() for t in ('receipts', 'legacy_receipts')):
+                        raise RuntimeError('Receipt key is missing; restore the original key from backup.')
+            descriptor = os.open(anchor_key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, 'w') as stream:
+                stream.write(secrets.token_hex(32))
+                stream.flush()
+                os.fsync(stream.fileno())
+        if len(anchor_key.read_bytes().strip()) < 32:
+            raise RuntimeError('Receipt key is incomplete; restore the existing key from backup.')
+        shutil.copy2(anchor_key, backup / anchor_key.name)
     installed = []
     try:
         for release, target, _ in targets:
