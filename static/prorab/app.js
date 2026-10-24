@@ -1947,7 +1947,15 @@
         },
         onShapeText: (x, y, page, size) => shapeTextForm(c, w, d, { x, y, page, size }),
         onMeasure: (value) => { const had = w.angleMeasure; w.angleMeasure = value; if (value || had) render(); },
-        onShapePick: (id) => { w.shapeSel = id; render(); },
+        onShapePick: (id) => { w.shapeSel = id; if (w.shapeEdit) { w.shapeEdit = null; w.viewer.setEdit(null); } render(); },
+        onShapeEdit: (e) => {
+          try {
+            if (e.op === 'copy') { const s2 = P.copyShape(e.id, e.points, e.value); w.shapeSel = s2.id; }
+            else P.updateShape(e.id, { points: e.points, value: e.value });
+            w.shapeEdit = null; changed(c);
+          } catch (x) { alert(x.message); }
+        },
+        onEditInfo: (msg) => { w.shapeEditMsg = msg || null; render(); },
         onDrawChange: (info) => {
           w.drawInfo = info;
           const el = document.querySelector('.pp-win[data-key="' + CSS.escape(w.key) + '"] .pp-draw-hint');
@@ -2068,19 +2076,77 @@
     notify('Замер ' + SHP.formatAngle(m.value) + ' добавлен линиями и подписью. Отправляю на Диск…');
   }
 
+  const EDIT_HINTS = {
+    move: ['Щёлкните точку, за которую берёте фигуру (угол, конец)', 'Щёлкните, куда перенести'],
+    copy: ['Щёлкните точку, за которую берёте фигуру (угол, конец)', 'Щёлкните, где поставить копию'],
+    vertex: ['Щёлкните точку фигуры, которую нужно сдвинуть', 'Щёлкните новое место этой точки'],
+  };
   function shapeSide(w, c, d, shapes) {
     const P = c.project;
     const sel = w.shapeSel ? shapes.find((x) => x.id === w.shapeSel) : null;
     if (!sel) return shapes.length ? h('aside', { class: 'pp-plan-side pp-shape-side' }, h('h3', null, 'Линии (' + shapes.length + ')'), h('small', { class: 'pp-muted' }, 'Щёлкните линию на чертеже, чтобы изменить или удалить.')) : null;
     const sh = SHP.fromRow(sel);
     const info = sh.kind === 'text' ? sh.text : sh.kind === 'dim' || sh.kind === 'area' ? (SHP.label(sh) || 'без значения (масштаб не был задан)') : 'точек: ' + sh.points.length;
+    const ed = w.shapeEdit && w.viewer ? w.viewer.editing : null;
+    if (w.shapeEdit && !ed) w.shapeEdit = null;
+    if (ed) {
+      return h('aside', { class: 'pp-plan-side pp-shape-side' },
+        h('h3', null, ed.op === 'copy' ? 'Копия фигуры' : ed.op === 'vertex' ? 'Сдвинуть точку' : 'Перенести фигуру'),
+        h('p', null, EDIT_HINTS[ed.op][ed.step]),
+        w.shapeEditMsg ? h('p', { class: 'pp-error' }, w.shapeEditMsg) : null,
+        h('small', { class: 'pp-muted' }, 'Привязка к узлам чертежа — как при черчении; Alt — без привязки. Где окажется фигура, видно пунктиром.'),
+        h('div', { class: 'pp-row' }, button('Отмена', () => { w.shapeEdit = null; w.shapeEditMsg = null; w.viewer.setEdit(null); render(); })));
+    }
+    const startEdit = (op) => { w.shapeEdit = op; w.shapeEditMsg = null; w.viewer.setEdit({ op, id: sel.id }); render(); };
     return h('aside', { class: 'pp-plan-side pp-shape-side' },
       h('h3', null, SHP.kindOf(sh.kind).title), h('p', null, info),
       h('div', { class: 'pp-row pp-wrap' }, SHP.COLORS.map((col) => { const b = h('button', { type: 'button', class: 'pp-swatch-btn' + (sh.color === col.hex ? ' pp-on' : ''), title: col.title, onclick: () => { P.updateShape(sel.id, { color: col.hex }); changed(c); } }); b.style.background = col.hex; return b; })),
       h('div', { class: 'pp-row pp-wrap' },
+        button('Переместить', () => startEdit('move')),
+        button('Копировать', () => startEdit('copy')),
+        sh.kind !== 'text' ? button('Точки', () => startEdit('vertex')) : null,
+        sh.kind === 'dim' || sh.kind === 'area' ? button('В ведомость', () => shapeToBoqForm(c, sel), 'pp-primary') : null),
+      h('div', { class: 'pp-row pp-wrap' },
         sh.kind === 'text' ? button('Изменить текст', () => shapeTextForm(c, w, d, { id: sel.id })) : null,
         button('Удалить', () => { P.deleteShape(sel.id); w.shapeSel = null; changed(c); }, 'pp-danger'),
         button('Закрыть', () => { w.shapeSel = null; render(); })));
+  }
+  /** «В ведомость»: длина размера или площадь — в плановый объём позиции (прибавить или заменить); м³ — площадь × толщина. */
+  function shapeToBoqForm(c, row) {
+    const P = c.project;
+    const sh = SHP.fromRow(row);
+    const names = P.names();
+    const items = P.rows('boq_items').sort((a, b) => (a.position || 0) - (b.position || 0));
+    if (!items.length) { alert('Ведомость пуста — сначала добавьте позиции.'); return; }
+    const item = h('select', null, items.map((i) => h('option', { value: i.id }, P.itemName(i.id, names) + (names.units[i.unitId] ? ', ' + names.units[i.unitId] : '') + ' — план ' + (i.planQty === null || i.planQty === undefined ? 'не задан' : num(i.planQty)))));
+    item.value = items[0].id;
+    const mode = h('select', null, h('option', { value: 'add' }, 'Прибавить к плану'), h('option', { value: 'replace' }, 'Заменить план'));
+    mode.value = 'add';
+    const thick = h('input', { inputmode: 'decimal', placeholder: '0,2' });
+    const thickField = field('Толщина, м', thick, 'для м³: площадь × толщина');
+    const preview = h('p');
+    const calc = () => {
+      const it = P.get('boq_items', item.value);
+      const unit = names.units[it.unitId] || '';
+      thickField.style.display = sh.kind === 'area' && SHP.unitOf(unit) === 'M3' ? '' : 'none';
+      const t = parseQty(thick.value);
+      const r = SHP.toBoq(sh.kind, sh.value, unit, Number.isNaN(t) ? null : t);
+      if (r.qty === null) { preview.className = 'pp-error'; preview.textContent = r.note; return null; }
+      const now = Number(it.planQty) || 0, next = mode.value === 'replace' ? r.qty : now + r.qty;
+      preview.className = ''; preview.textContent = r.note + ': +' + num(Math.round(r.qty * 1e6) / 1e6) + ' ' + unit + '. План: ' + (it.planQty === null || it.planQty === undefined ? 'не задан' : num(it.planQty)) + ' → ' + num(Math.round(next * 1e6) / 1e6) + ' ' + unit;
+      return r.qty;
+    };
+    [item, mode].forEach((x) => x.addEventListener('change', calc));
+    thick.addEventListener('input', calc);
+    modal(c, 'В ведомость', h('div', null,
+      h('p', null, (sh.kind === 'dim' ? 'Размер: ' : 'Площадь: ') + (SHP.label(sh) || 'без значения')),
+      field('Позиция ведомости', item), field('Как', mode), thickField, preview), () => {
+      const q = calc();
+      if (q === null) bad(preview.textContent);
+      P.shapeToPlan(item.value, q, mode.value === 'replace');
+      setStatus('План «' + P.itemName(item.value) + '» обновлён.');
+    });
+    calc();
   }
   function shapeTextForm(c, w, d, { id, x, y, page, size }) {
     const P = c.project;

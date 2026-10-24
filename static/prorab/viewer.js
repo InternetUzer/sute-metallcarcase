@@ -36,6 +36,8 @@
     const d = opts.dxf;
     const SH = root.ProrabShapes;
     let shapes = (opts.shapes || []).map(SH.fromRow), selShape = null, showShapes = true;
+    // Правка фигуры: { op: 'move'|'copy'|'vertex', id, base: [x,y] (настоящие координаты) | null, vertex }
+    let editCfg = null;
     let drawCfg = null, dpts = [], hover = null, k = opts.metersPerUnit === undefined ? null : opts.metersPerUnit;
     let measurement = null;
     canvas.tabIndex = 0;
@@ -228,6 +230,16 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (showShapes || drawCfg) for (const sh of visibleShapes()) drawShape(sh, { selected: sh.id === selShape });
       if (measurement && drawCfg && drawCfg.kind === 'angle') drawShape(measurement, {});
+      if (editCfg) {
+        const sh = shapes.find((x) => x.id === editCfg.id);
+        if (sh && editCfg.base && hover) { const np = editedPoints(sh, toReal(hover[0], hover[1])); drawShape(Object.assign({}, sh, { points: np, value: editCfg.op === 'vertex' ? SH.revalue(sh.kind, sh.points, np, sh.value, k) : sh.value }), { preview: true }); }
+        if (hover) {
+          const [sx, sy] = toScreen(hover[0], hover[1]);
+          ctx.strokeStyle = hover.snapped ? '#34c759' : '#ffd60a'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+          ctx.beginPath(); ctx.moveTo(sx - 12, sy); ctx.lineTo(sx + 12, sy); ctx.moveTo(sx, sy - 12); ctx.lineTo(sx, sy + 12); ctx.stroke();
+          if (hover.snapped) ctx.strokeRect(sx - 5, sy - 5, 10, 10);
+        }
+      }
       if (drawCfg) {
         const live = hover && drawCfg.kind !== 'text' ? dpts.concat([hover]) : dpts;
         if (live.length) {
@@ -241,6 +253,34 @@
           if (hover.snapped) ctx.strokeRect(sx - 5, sy - 5, 10, 10);
         }
       }
+    }
+    /** Новые точки фигуры при правке: курсор в настоящих координатах [x, y]. */
+    function editedPoints(sh, at) {
+      if (editCfg.op === 'vertex') return SH.moveVertex(sh.kind, sh.points, editCfg.vertex, at);
+      return SH.translate(sh.points, at[0] - editCfg.base[0], at[1] - editCfg.base[1]);
+    }
+    function editClick(sx, sy, alt) {
+      const p = drawPoint(sx, sy, alt);
+      if (!p) return;
+      const at = toReal(p[0], p[1]);
+      const sh = shapes.find((x) => x.id === editCfg.id);
+      if (!sh) { editCfg = null; changed(); return; }
+      if (!editCfg.base) {
+        if (editCfg.op === 'vertex') {
+          const i = SH.nearestVertex(sh.kind, sh.points, at[0], at[1], (PIN_R * 1.2) / cam.s);
+          if (i < 0) { if (opts.onEditInfo) opts.onEditInfo('Рядом нет точки фигуры — щёлкните по углу или концу'); return; }
+          editCfg.vertex = i;
+        }
+        editCfg.base = at;
+        if (opts.onEditInfo) opts.onEditInfo(null, editCfg);
+        changed();
+        return;
+      }
+      const pts = editedPoints(sh, at);
+      const done = { id: sh.id, op: editCfg.op, points: pts, value: editCfg.op === 'vertex' ? SH.revalue(sh.kind, sh.points, pts, sh.value, k) : sh.value };
+      editCfg = null; hover = null; canvas.style.cursor = 'grab';
+      if (opts.onShapeEdit) opts.onShapeEdit(done);
+      changed();
     }
     /** Angular constraint first; snap only to vertices on an allowed direction. */
     function drawPoint(sx, sy, free) {
@@ -412,6 +452,7 @@
     canvas.addEventListener('pointermove', (e) => {
       if (!pointers.has(e.pointerId)) {
         if (drawCfg) { hover = drawPoint(e.offsetX, e.offsetY, e.altKey); canvas.style.cursor = 'crosshair'; drawChanged(); return; }
+        if (editCfg) { hover = drawPoint(e.offsetX, e.offsetY, e.altKey); canvas.style.cursor = 'crosshair'; changed(); return; }
         canvas.style.cursor = mode === 'place' ? 'crosshair' : hitNote(e.offsetX, e.offsetY) ? 'pointer' : 'grab';
         return;
       }
@@ -446,10 +487,11 @@
       if (drawCfg) { if (drawCfg.kind === 'polyline' || drawCfg.kind === 'area') finishDraw(); return; }
       if (mode === 'view' && !hitNote(e.offsetX, e.offsetY)) zoomAt(e.offsetX, e.offsetY, 2);
     });
-    canvas.addEventListener('pointerleave', () => { if (drawCfg && hover) { hover = null; drawChanged(); } });
+    canvas.addEventListener('pointerleave', () => { if (drawCfg && hover) { hover = null; drawChanged(); } else if (editCfg && hover) { hover = null; changed(); } });
 
     function click(sx, sy, alt) {
       if (drawCfg) { canvas.focus(); addDrawPoint(sx, sy, alt); return; }
+      if (editCfg) { editClick(sx, sy, alt); return; }
       if (mode === 'place') {
         let [lx, ly] = toContent(sx, sy);
         if (isPdf) {
@@ -485,7 +527,10 @@
       setShapes(rows, selectedId) { shapes = (rows || []).map(SH.fromRow); if (selectedId !== undefined) selShape = selectedId; if (selShape && !shapes.some((x) => x.id === selShape)) selShape = null; changed(); },
       setShapesVisible(on) { showShapes = !!on; if (!on) selShape = null; changed(); },
       /** Черчение: { kind, color, ortho } или null — выключить. */
-      setDraw(cfg) { const was = drawCfg; drawCfg = cfg ? Object.assign({}, cfg) : null; if (!cfg || !was || was.kind !== cfg.kind) { dpts = []; measurement = null; if (opts.onMeasure) opts.onMeasure(null); } if (cfg) { selShape = null; canvas.focus(); } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; drawChanged(); changed(); },
+      setDraw(cfg) { const was = drawCfg; drawCfg = cfg ? Object.assign({}, cfg) : null; if (cfg) editCfg = null; if (!cfg || !was || was.kind !== cfg.kind) { dpts = []; measurement = null; if (opts.onMeasure) opts.onMeasure(null); } if (cfg) { selShape = null; canvas.focus(); } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; drawChanged(); changed(); },
+      /** Правка фигуры: { op: 'move' | 'copy' | 'vertex', id } или null — отменить. */
+      setEdit(cfg) { editCfg = cfg ? { op: cfg.op, id: cfg.id, base: null, vertex: -1 } : null; if (cfg) { drawCfg = null; dpts = []; selShape = cfg.id; } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; changed(); },
+      get editing() { return editCfg ? { op: editCfg.op, id: editCfg.id, step: editCfg.base ? 1 : 0 } : null; },
       setScale(v) { k = v > 0 ? v : null; drawChanged(); },
       finishDraw() { return finishDraw(); },
       clearMeasurement() { measurement = null; changed(); },

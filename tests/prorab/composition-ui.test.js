@@ -27,7 +27,7 @@ function setup() {
   vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
-  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => {}; persist = () => {}; scheduleSave = () => {}; window.review = { compositionView, nodeForm, worksForm, workForm, APPS, PROJECT_APPS }; })();");
+  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => {}; persist = () => {}; scheduleSave = () => {}; window.review = { compositionView, nodeForm, worksForm, workForm, shapeToBoqForm, APPS, PROJECT_APPS }; })();");
   vm.runInNewContext(source, ctx);
   const p = new M.Project({}, window.PRORAB_SCHEMA, 'p', 'web-test', new S.Clock());
   p.put('projects', 'p', { name: 'Учебный объект' });
@@ -103,4 +103,45 @@ test('ошибки показываются в форме и ничего не �
   all(modalOf(body)).find((n) => n.tag === 'select').value = 'foundation_monolith'; // в браузере выбран первый вид
   assert.match(submit(body), /название/);
   assert.equal(c.project.rows('project_nodes').length, 0);
+});
+
+test('«В ведомость» с чертежа: площадь × толщина в м³, прибавить и заменить; копия и правка точек фигуры', () => {
+  const { api, c, body } = setup();
+  const P = c.project;
+  P.put('units', 'm3', { projectId: 'p', name: 'м³', deleted: 0 });
+  P.put('units', 'm', { projectId: 'p', name: 'п.м.', deleted: 0 });
+  P.put('boq_items', 'b', { projectId: 'p', name: 'Бетонирование плиты', unitId: 'm3', planQty: 10, position: 1, deleted: 0 });
+  P.put('boq_items', 'r', { projectId: 'p', name: 'Бордюр', unitId: 'm', planQty: null, position: 2, deleted: 0 });
+  P.put('drawings', 'd', { projectId: 'p', name: 'План', kind: 'dxf', file: 'x.dxf', deleted: 0 });
+  const area = P.addShape({ drawingId: 'd', kind: 'area', points: [[0, 0], [5000, 0], [5000, 4000], [0, 4000]], value: 20 });
+  api.shapeToBoqForm(c, area);
+  const m = modalOf(body);
+  const [item, mode] = all(m).filter((n) => n.tag === 'select');
+  const thick = all(m).find((n) => n.tag === 'input');
+  item.value = 'b'; mode.value = 'add'; thick.value = '0,25';
+  assert.equal(submit(body), '');
+  assert.equal(P.get('boq_items', 'b').planQty, 15); // 10 + 20 м² × 0,25 м
+  // Площадь в п.м. — нельзя, понятное объяснение
+  api.shapeToBoqForm(c, area);
+  const m2 = modalOf(body);
+  all(m2).filter((n) => n.tag === 'select')[0].value = 'r';
+  assert.match(submit(body), /Площадь — это м²/);
+  assert.equal(P.get('boq_items', 'r').planQty, null);
+  // Размер в п.м. — заменить план
+  const dim = P.addShape({ drawingId: 'd', kind: 'dim', points: [[0, 0], [12500, 0]], value: 12.5 });
+  api.shapeToBoqForm(c, dim);
+  const m3 = modalOf(body);
+  const [it3, md3] = all(m3).filter((n) => n.tag === 'select');
+  it3.value = 'r'; md3.value = 'replace';
+  assert.equal(submit(body), '');
+  assert.equal(P.get('boq_items', 'r').planQty, 12.5);
+  // Копия и правка точек — через модель, как после щелчков в просмотрщике
+  const copy = P.copyShape(area.id, [[100, 0], [5100, 0], [5100, 4000], [100, 4000]]);
+  assert.equal(copy.kind, 'area');
+  assert.equal(copy.value, 20);
+  assert.notEqual(copy.id, area.id);
+  P.updateShape(area.id, { points: [[0, 0], [2500, 0], [2500, 4000], [0, 4000]], value: 10 });
+  assert.equal(P.get('drawing_shapes', area.id).points, '0,0;2500,0;2500,4000;0,4000');
+  assert.equal(P.get('drawing_shapes', area.id).value, 10);
+  assert.throws(() => P.updateShape(area.id, { points: [[0, 0]] }), /Не хватает точек/);
 });
