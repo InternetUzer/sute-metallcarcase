@@ -228,3 +228,14 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-card code { background: var(--pp-bg); padding: 1px 5px; border-radius: 5px; font-size: 0.95em; }
 .pp-report-choices { max-height: 270px; overflow: auto; padding: 8px; border: 1px solid #64748b; border-radius: 8px; }
 .pp-report-choices .pp-check { display: flex; align-items: flex-start; padding: 7px; gap: 10px; overflow-wrap: anywhere; }
+
+/* Состав объекта: дерево конструкций и работ */
+.pp-tree { padding: 6px 10px; }
+.pp-tree-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pp-line); }
+.pp-tree-row:last-child { border-bottom: none; }
+.pp-tree-title { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pp-tree-title small { color: var(--pp-muted); }
+.pp-tree-toggle { width: 22px; border: none; background: none; color: var(--pp-text); font-size: 14px; cursor: pointer; padding: 0; }
+.pp-tree-category .pp-tree-title strong { font-size: 1.05em; }
+.pp-tree-work .pp-progress { min-width: 120px; }
+.pp-small-input { width: 110px; }

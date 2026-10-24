@@ -703,6 +703,7 @@
     journal: { title: 'Журнал работ', icon: '📒', view: (w, c) => journalView(w, c) },
     calendar: { title: 'Календарь', icon: '📅', view: (w, c) => calendarView(w, c) },
     boq: { title: 'Ведомость', icon: '📋', view: (w, c) => boqView(w, c) },
+    composition: { title: 'Состав объекта', icon: '🧱', view: (w, c) => compositionView(w, c) },
     remarks: { title: 'Замечания', icon: '⚠️', view: (w, c) => remarksView(w, c) },
     finance: { title: 'Финансы', icon: '💰', view: (w, c) => financeView(w, c) },
     machines: { title: 'Техника и бригады', icon: '🚜', view: (w, c) => machinesView(w, c) },
@@ -722,7 +723,7 @@
     econ: { title: 'Экономика объекта', icon: '💼', view: (w, c) => econView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'fixation', 'documents'];
+  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'composition', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'fixation', 'documents'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -1168,6 +1169,148 @@
             h('td', { class: late ? 'pp-error' : '' }, r.finished ? 'готово' : r.due ? shortDate(r.due) : ''),
             h('td', null, button('+ Сделано', () => doneForm(c, { date: today, itemId: r.id }))));
         })))) : h('p', { class: 'pp-card pp-muted' }, 'Ведомость пуста. Добавьте позиции кнопкой «+ Позиция» (или в приложении на телефоне).'));
+  }
+
+  // ───────── состав объекта (конструкции и работы — как «Состав объекта» в приложении) ─────────
+  const CO = window.ProrabComposition;
+  const ACCEPT_MARK = { PENDING: '🔶 на приёмке', ACCEPTED: '✅ принято', REJECTED: '❌ не принято' };
+  function compositionView(w, c) {
+    const P = c.project;
+    const tree = CO.tree(P);
+    const ids = (bs) => [].concat(...bs.map((b) => [b.id].concat(ids(b.children))));
+    if (!w.open) {
+      const def = (bs) => [].concat(...bs.map((b) => (b.level !== 'NODE' ? [b.id] : []).concat(def(b.children))));
+      w.open = new Set(def(tree));
+    }
+    const unbound = CO.unboundCount(P);
+    const pct = (st) => (st.percent === null ? '' : Math.round(st.percent) + '%' + (st.byCost ? ' по стоимости' : ''));
+    const rows = [];
+    const branch = (b, depth) => {
+      const open = w.open.has(b.id);
+      const st = b.stats;
+      const info = [st.works ? 'работ ' + st.works : 'работ нет', pct(st), st.planCost ? 'план ' + money(st.planCost) : '', st.unpriced ? 'без цены ' + st.unpriced : '',
+        st.pending ? '🔶 ' + st.pending : '', st.rejected ? '❌ ' + st.rejected : ''].filter(Boolean).join(' · ');
+      const node = b.level === 'NODE' && b.nodeId ? P.get('project_nodes', b.nodeId) : null;
+      rows.push(h('div', { class: 'pp-tree-row pp-tree-' + b.level.toLowerCase(), style: 'padding-left:' + (depth * 18) + 'px' },
+        h('button', { type: 'button', class: 'pp-tree-toggle', 'aria-expanded': String(open), onclick: () => { if (open) w.open.delete(b.id); else w.open.add(b.id); render(); } }, open ? '▾' : '▸'),
+        h('div', { class: 'pp-tree-title' }, h('strong', null, b.title), b.subtitle || b.location ? h('small', null, [b.subtitle, b.location].filter(Boolean).join(' · ')) : null, h('small', null, info)),
+        node ? h('div', { class: 'pp-row pp-wrap' },
+          button('+ Работы', () => worksForm(c, node.id)),
+          button('Изменить', () => nodeForm(c, node, null)),
+          button('+ Вложенная', () => nodeForm(c, null, node.id))) : null));
+      if (!open) return;
+      b.children.forEach((k) => branch(k, depth + 1));
+      b.works.forEach((x) => {
+        const bar = h('span', { class: 'pp-bar-fill' + (x.plan && x.fact >= x.plan ? ' pp-full' : '') });
+        bar.style.width = (x.plan ? Math.max(0, Math.min(100, x.fact / x.plan * 100)) : 0) + '%';
+        rows.push(h('div', { class: 'pp-tree-row pp-tree-work', style: 'padding-left:' + ((depth + 1) * 18 + 22) + 'px' },
+          h('div', { class: 'pp-tree-title' },
+            h('button', { type: 'button', class: 'pp-link', onclick: () => workForm(c, x.itemId) }, (x.history ? '🔒 ' : '') + x.title),
+            h('small', null, [x.plan === null ? 'объём не задан' : 'план ' + num(x.plan) + ' ' + x.unit, 'сделано ' + num(x.fact) + ' ' + x.unit,
+              x.priceCents === null ? 'цена не задана' : money(x.priceCents) + ' за ед.', x.finished ? 'закончено' : '', ACCEPT_MARK[x.accept] || ''].filter(Boolean).join(' · '))),
+          x.plan ? h('span', { class: 'pp-progress' }, bar, h('span', null, num(Math.round(Math.min(x.fact / x.plan, 1) * 1000) / 10) + '%')) : h('span')));
+      });
+      if (b.level === 'NODE' && !b.works.length && !b.children.length) rows.push(h('p', { class: 'pp-muted', style: 'padding-left:' + ((depth + 1) * 18 + 22) + 'px' }, 'Работы не выбраны — «+ Работы».'));
+    };
+    tree.forEach((b) => branch(b, 0));
+    return h('main', null,
+      h('div', { class: 'pp-row pp-between pp-wrap' },
+        h('p', { class: 'pp-muted' }, 'Конструкции объекта и работы по ним из библиотеки «Земля / Металл / Бетон / Кровля / Стены / Гидроизоляция». Работы — это позиции ведомости: объём и цена у них общие. Виден и правится и здесь, и на телефонах объекта.'),
+        h('div', { class: 'pp-row' },
+          tree.length ? button(w.open.size >= ids(tree).length ? 'Свернуть всё' : 'Развернуть всё', () => { w.open = w.open.size >= ids(tree).length ? new Set() : new Set(ids(tree)); render(); }) : null,
+          button('+ Конструкция', () => nodeForm(c, null, null), 'pp-primary'))),
+      tree.length ? h('section', { class: 'pp-card pp-tree' }, rows) : h('p', { class: 'pp-card pp-muted' }, 'Состав пока пуст. Нажмите «+ Конструкция»: например «Фундамент Ф1», «Каркас», «Кровля» — и выберите работы по ним.'),
+      unbound ? h('p', { class: 'pp-muted' }, 'Без привязки к конструкциям: ' + unbound + ' позиц. ведомости (заведены вручную или из Excel) — остаются в ведомости как есть.') : null,
+      h('small', { class: 'pp-muted' }, '🔒 — по работе есть «Сделано», приёмка или «Закончено»: её нельзя убрать, объём и цена правятся в ведомости.'));
+  }
+
+  function nodeForm(c, node, parentId) {
+    const P = c.project;
+    const cat = CO.catalog;
+    const kind = h('select', null, cat.categories.map((g) => h('optgroup', { label: g.title }, cat.offeredKinds(g.key).map((k) => h('option', { value: k.key }, (k.group ? k.group + ': ' : '') + k.title)))));
+    const label = h('input', { value: node ? node.label : '', placeholder: 'Ф1, Каркас пролёта 1, Кровля корпуса А' });
+    const location = h('input', { value: node ? node.location || '' : '', placeholder: 'оси 1–3 / А–Б, отм. −1,500' });
+    const others = CO.nodes(P).filter((n) => !node || n.id !== node.id);
+    const parent = h('select', null, h('option', { value: '' }, '— верхний уровень —'), others.map((n) => h('option', { value: n.id }, n.label + ' · ' + ((cat.nodeKind(n.kind) || {}).title || n.kind))));
+    parent.value = node ? node.parentId || '' : parentId || '';
+    const k = node && cat.nodeKind(node.kind);
+    modal(c, node ? 'Конструкция' : 'Новая конструкция', h('div', null,
+      node ? h('p', null, 'Вид: ', h('strong', null, k ? k.title : node.kind), h('small', { class: 'pp-muted' }, ' (вид после создания не меняется)')) : field('Вид конструкции', kind),
+      field('Название', label), field('Где (необязательно)', location), field('Вложена в', parent)), () => {
+      if (node) CO.updateNode(P, node.id, { label: label.value, location: location.value, parentId: parent.value || null });
+      else CO.addNode(P, { kind: kind.value, label: label.value, location: location.value, parentId: parent.value || null });
+    }, node ? { text: 'Убрать', run: () => {
+      if (!confirm('Убрать конструкцию «' + node.label + '»? Работы с записями «Сделано» или приёмкой останутся в разделе «Конструкция в архиве».')) return false;
+      try { CO.archiveNode(P, node.id); } catch (e) { alert(e.message); return false; }
+    } } : null);
+  }
+
+  function worksForm(c, nodeId) {
+    const P = c.project;
+    const node = P.get('project_nodes', nodeId);
+    const segment = h('input', { placeholder: 'вся конструкция', value: '' });
+    const lines = [];
+    const list = h('div', { class: 'pp-catalog' });
+    const draw = () => {
+      const seg = segment.value.trim() || CO.WHOLE;
+      const have = new Set(CO.chosen(P, nodeId).filter((x) => x.segmentKey === seg).map((x) => x.templateKey));
+      list.replaceChildren(); lines.length = 0;
+      CO.catalog.offeredFor(node.kind).forEach((t) => {
+        const box = h('input', { type: 'checkbox' });
+        const qty = h('input', { inputmode: 'decimal', placeholder: 'объём', class: 'pp-small-input' });
+        const price = h('input', { inputmode: 'decimal', placeholder: 'цена за ед., ₽', class: 'pp-small-input' });
+        const taken = have.has(t.key);
+        if (taken) { box.checked = true; box.disabled = true; qty.disabled = true; price.disabled = true; }
+        else lines.push({ t, box, qty, price });
+        const mode = t.variantMode === 'COMBINED' ? ' (комплекс)' : t.variantMode === 'SEPARATE' ? ' (отдельно)' : '';
+        list.append(h('div', { class: 'pp-row pp-wrap pp-between' },
+          h('label', { class: 'pp-check' }, box, ' ' + t.title + mode + ', ' + CO.catalog.unitName(t.unitCode) + (t.suggested ? ' ★' : '') + (taken ? ' — уже выбрана' : '')),
+          h('span', { class: 'pp-row' }, qty, price)));
+      });
+    };
+    segment.addEventListener('change', draw);
+    draw();
+    modal(c, 'Работы: ' + node.label, h('div', null,
+      field('Участок (если работы не на всю конструкцию)', segment),
+      h('p', { class: 'pp-muted' }, '★ — обычно нужна. Комплекс и отдельные операции одной группы вместе не выбираются. Объём и цену можно указать сейчас или позже.'),
+      list), () => {
+      const pick = lines.filter((l) => l.box.checked);
+      if (!pick.length) bad('Отметьте работы');
+      const items = pick.map((l) => {
+        const q = parseQty(l.qty.value), p = parseMoney(l.price.value);
+        if (Number.isNaN(q)) bad('Объём «' + l.t.title + '»: число от 0, например 12,5');
+        if (Number.isNaN(p)) bad('Цена «' + l.t.title + '»: сумма в рублях, например 1500 или 1500,50');
+        return { templateKey: l.t.key, quantity: q, priceCents: p };
+      });
+      const ids = CO.addWorks(P, nodeId, items, segment.value);
+      setStatus('Добавлено работ: ' + ids.length + ' — они уже в ведомости.');
+    });
+  }
+
+  function workForm(c, itemId) {
+    const P = c.project;
+    const item = P.get('boq_items', itemId);
+    if (!item) return;
+    const units = P.names().units;
+    if (CO.historyOf(P).has(itemId)) {
+      modal(c, 'Работа', h('div', null, h('p', null, h('strong', null, item.name)),
+        h('p', { class: 'pp-muted' }, '🔒 По работе уже есть записи «Сделано», приёмка или «Закончено». Из состава её убрать нельзя, а объём, цену и сроки можно изменить в ведомости.'),
+        button('Открыть в ведомости', () => { document.querySelector('.pp-modal').remove(); boqForm(c, itemId); })), () => {});
+      return;
+    }
+    const qty = h('input', { inputmode: 'decimal', value: item.planQty === null || item.planQty === undefined ? '' : String(item.planQty).replace('.', ',') });
+    const price = h('input', { inputmode: 'decimal', value: item.priceCents === null || item.priceCents === undefined ? '' : String(item.priceCents / 100).replace('.', ',') });
+    modal(c, 'Работа', h('div', null, h('p', null, h('strong', null, item.name)),
+      h('div', { class: 'pp-row pp-wrap' }, field('Объём, ' + (units[item.unitId] || ''), qty), field('Цена за ед., ₽', price)),
+      h('small', { class: 'pp-muted' }, 'Сроки, исполнитель и название — в ведомости.')), () => {
+      const q = parseQty(qty.value), p = parseMoney(price.value);
+      if (Number.isNaN(q)) bad('Объём: число от 0, например 12,5');
+      if (Number.isNaN(p)) bad('Цена: сумма в рублях, например 1500 или 1500,50');
+      CO.updateWork(P, itemId, { quantity: q, priceCents: p });
+    }, { text: 'Убрать из состава', run: () => {
+      if (!confirm('Убрать работу «' + item.name + '» из состава и ведомости?')) return false;
+      try { CO.removeWork(P, itemId); } catch (e) { alert(e.message); return false; }
+    } });
   }
 
   const categoryName = (c) => (M.CATEGORIES.find(([k]) => k === c) || [null, 'Иное'])[1];
