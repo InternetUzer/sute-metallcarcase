@@ -5,6 +5,7 @@ const I = require('../../static/prorab/id.js'), DS = require('../../static/prora
 class Node {
   constructor(tag) { this.tag = tag; this.nodeType = 1; this.children = []; this.events = {}; this.dataset = {}; this.value = ''; this.classList = { add() {}, remove() {} }; }
   append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
   addEventListener(type, fn) { this.events[type] = fn; }
   setAttribute(k, v) { this[k] = v; }
   click() { this.clicked = true; }
@@ -36,7 +37,7 @@ function setup() {
   vm.runInNewContext(fs.readFileSync('static/prorab/disk.js', 'utf8'), ctx);
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
   ctx.reviewOptions = options;
-  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => { reviewOptions.renderCount = (reviewOptions.renderCount || 0) + 1; }; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, makeOjr, repForm, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
+  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, "  render = () => { reviewOptions.renderCount = (reviewOptions.renderCount || 0) + 1; }; afterDocument = () => {}; window.review = { idView, dirsView, ksMake, makeOjr, repForm, orgForm, ksSettings, ojrSettings, fixationView, setSession(d) { disk = d; me = 'web-test'; store = R.storage(rawStorage, 'mock:'); } }; })();");
   vm.runInNewContext(source, ctx);
   const p = new M.Project({}, window.PRORAB_SCHEMA, 'p', 'web-test', new S.Clock());
   p.put('projects', 'p', { name: 'Учебный объект' });
@@ -203,10 +204,68 @@ test('423 при редактировании участника сохраня�
   assert.equal(files.get(path), original);
   assert.equal(I.reps(c.id.participants)[0].fio, 'Иванов И. И.');
   assert.ok(modal.textContent.includes('423'));
+  assert.ok(modal.textContent.includes('Не удалось сохранить'));
+  assert.equal(body.children.some((n) => n.className === 'pp-notice' && !n.removed), false);
   assert.equal(modal.removed, undefined); assert.equal(fio.value, 'Петров П. П.');
   options.failFolder = false;
   await form.events.submit({ preventDefault() {} });
   assert.equal(modal.removed, true);
   assert.equal(I.reps(c.id.participants)[0].fio, 'Петров П. П.');
   assert.equal(I.reps(JSON.parse(files.get(path)))[0].fio, 'Петров П. П.');
+  assert.ok(body.children.at(-1).textContent.includes('Представитель сохранён на Яндекс Диске'));
+});
+
+test('кнопка показывает ожидание, повторный клик не пишет второй раз, успех только после проверки Диска', async () => {
+  const { api, c, files, body } = setup();
+  const disk = c.id.storage.disk, originalGet = disk.getText;
+  let release, reading, reads = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const readback = new Promise((resolve) => { reading = resolve; });
+  disk.getText = async (path) => {
+    reads++;
+    if (files.has(path)) { reading(); await gate; }
+    return originalGet(path);
+  };
+  api.ksSettings(c);
+  const modal = body.children.at(-1), form = nodes(modal).find((n) => n.tag === 'form');
+  const submit = nodes(form).find((n) => n.type === 'submit');
+  const pending = form.events.submit({ preventDefault() {} });
+  assert.equal(submit.disabled, true); assert.equal(submit.textContent, 'Сохраняю на Диск…');
+  await form.events.submit({ preventDefault() {} });
+  await readback;
+  assert.equal(reads, 2);
+  assert.equal(modal.removed, undefined);
+  assert.equal(body.children.some((n) => n.className === 'pp-notice'), false);
+  release(); await pending;
+  assert.equal(modal.removed, true); assert.equal(submit.disabled, false);
+  assert.equal(submit.textContent, 'Сохранить');
+  const notice = body.children.at(-1);
+  assert.equal(notice.className, 'pp-notice');
+  assert.ok(notice.textContent.includes('Настройки КС-2 и КС-3 сохранены на Яндекс Диске'));
+  assert.equal(notice.children[0].role, 'status');
+  nodes(notice).find((n) => n.tag === 'button').events.click();
+  assert.equal(notice.removed, true);
+});
+
+test('организация и титульный лист журнала подтверждают сохранение; при ошибке чтения успех не появляется', async () => {
+  const { api, c, files, body } = setup();
+  const org = I.saveOrg(c.id.participants, { id: 'org-1', role: 'builder', name: 'Монтаж' });
+  api.orgForm(c, org);
+  let form = nodes(body.children.at(-1)).find((n) => n.tag === 'form');
+  await form.events.submit({ preventDefault() {} });
+  assert.ok(body.children.at(-1).textContent.includes('Организация сохранена на Яндекс Диске'));
+  api.ojrSettings(c);
+  form = nodes(body.children.at(-1)).find((n) => n.tag === 'form');
+  await form.events.submit({ preventDefault() {} });
+  assert.ok(body.children.at(-1).textContent.includes('Настройки общего журнала сохранены на Яндекс Диске'));
+  const oldSuccess = body.children.at(-1), disk = c.id.storage.disk, put = disk.putText;
+  disk.putText = async (path, text) => { await put(path, text); files.set(path, '{}'); };
+  api.ksSettings(c);
+  const modal = body.children.at(-1);
+  form = nodes(modal).find((n) => n.tag === 'form');
+  await form.events.submit({ preventDefault() {} });
+  assert.equal(oldSuccess.removed, true);
+  assert.equal(modal.removed, undefined);
+  assert.ok(form.textContent.includes('Диск не подтвердил сохранение'));
+  assert.equal(body.children.some((n) => n.className === 'pp-notice' && !n.removed), false);
 });

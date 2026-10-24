@@ -153,6 +153,22 @@
     const el = document.getElementById('pp-status');
     if (el) { el.textContent = text; el.className = 'pp-status' + (error ? ' pp-error' : ''); }
   }
+  let notice = null, noticeTimer = null;
+  function clearNotice() {
+    clearTimeout(noticeTimer); noticeTimer = null;
+    if (notice) notice.remove();
+    notice = null;
+  }
+  /** Outside the desktop: remains visible after render and on narrow screens. */
+  function notify(text, error) {
+    clearNotice();
+    const message = h('span', { role: error ? 'alert' : 'status', 'aria-live': error ? 'assertive' : 'polite', 'aria-atomic': 'true' });
+    notice = h('div', { class: 'pp-notice' + (error ? ' pp-notice-error' : '') }, message,
+      h('button', { type: 'button', class: 'pp-btn pp-icon', 'aria-label': 'Закрыть уведомление', onclick: clearNotice }, '✕'));
+    document.body.append(notice);
+    message.textContent = text;
+    if (!error) noticeTimer = setTimeout(clearNotice, 8000);
+  }
   const lastName = (p) => p.split('/').filter(Boolean).pop() || p;
   const projName = (path) => (ctxs[path] && ctxs[path].project ? ctxs[path].project.project.name : null) || (store.json('names', {})[path]) || lastName(path);
 
@@ -1871,17 +1887,27 @@
   /** Окно с асинхронным «Сохранить» (шифрование и Диск). */
   function asyncDialog(title, body, onSave, opts) {
     opts = opts || {};
-    const err = h('p', { class: 'pp-error' });
-    const ok = h('button', { type: 'submit', class: 'pp-btn pp-primary' }, opts.okText || 'Сохранить');
+    const err = h('p', { class: 'pp-error', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+    const okText = opts.okText || 'Сохранить';
+    const ok = h('button', { type: 'submit', class: 'pp-btn pp-primary' }, okText);
     let working = false;
     const close = (saved) => { if (working && !saved) return; wrap.remove(); if (opts.onClose) opts.onClose(); };
     const wrap = h('div', { class: 'pp-modal', onclick: (e) => { if (e.target === wrap && !opts.sticky) close(); } },
       h('form', { class: 'pp-dialog', onsubmit: async (e) => {
         e.preventDefault();
         if (ok.disabled) return;
-        working = true; ok.disabled = true; err.textContent = opts.busyText || '';
-        try { if ((await onSave()) !== false) close(true); else err.textContent = ''; } catch (x) { err.textContent = x.message; }
-        working = false; ok.disabled = false;
+        clearNotice();
+        working = true; ok.disabled = true; ok.textContent = opts.busyText || 'Сохраняю…';
+        err.className = 'pp-muted'; err.textContent = ok.textContent;
+        try {
+          if ((await onSave()) !== false) {
+            close(true);
+            if (opts.successText) { setStatus(opts.successText); notify(opts.successText); }
+          } else err.textContent = '';
+        } catch (x) {
+          err.className = 'pp-error';
+          err.textContent = (opts.successText ? 'Не удалось сохранить. ' : '') + x.message;
+        } finally { working = false; ok.disabled = false; ok.textContent = okText; }
       } },
         h('div', { class: 'pp-row pp-between' }, h('h2', null, title), opts.sticky ? h('span') : button('✕', () => close(false), 'pp-icon')),
         body, err,
@@ -2289,7 +2315,7 @@
       I.saveOrg(d, { id: o ? o.id : null, role: role.value, name: name.value, ogrn: ogrn.value.replace(/\s/g, ''), inn: inn.value.replace(/\s/g, ''), okpo: okpo.value.replace(/\s/g, ''), address: address.value, phone: phone.value, sro: sro.value, sroOgrn: sroOgrn.value.replace(/\s/g, ''), sroInn: sroInn.value.replace(/\s/g, '') });
       await saveParticipants(c, d);
       render();
-    }, { extra: o ? button('Удалить', async () => { if (!confirm('Удалить организацию «' + o.name + '»? В уже сохранённых актах она останется.')) return; I.remove(d, 'orgs', o.id); await saveParticipants(c, d); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
+    }, { busyText: 'Сохраняю на Диск…', successText: 'Организация сохранена на Яндекс Диске.', extra: o ? button('Удалить', async () => { if (!confirm('Удалить организацию «' + o.name + '»? В уже сохранённых актах она останется.')) return; I.remove(d, 'orgs', o.id); await saveParticipants(c, d); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
   }
 
   function repForm(c, r) {
@@ -2306,7 +2332,7 @@
       I.saveRep(d, { id: r ? r.id : null, role: role.value, orgId: org.value || null, fio: fio.value, position: position.value, nrs: nrs.value, order: order.value });
       await saveParticipants(c, d);
       render();
-    }, { extra: r ? button('Удалить', async () => { if (!confirm('Удалить представителя ' + r.fio + '? В уже сохранённых актах он останется.')) return; I.remove(d, 'reps', r.id); await saveParticipants(c, d); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
+    }, { busyText: 'Сохраняю на Диск…', successText: 'Представитель сохранён на Яндекс Диске.', extra: r ? button('Удалить', async () => { if (!confirm('Удалить представителя ' + r.fio + '? В уже сохранённых актах он останется.')) return; I.remove(d, 'reps', r.id); await saveParticipants(c, d); document.querySelector('.pp-modal').remove(); render(); }, 'pp-danger') : null });
   }
 
   /** Форма АОСР. a — сохранённый акт или null (новый); opts.itemId — из позиции ведомости / приёмки. */
@@ -2384,6 +2410,7 @@
       I.setDefaults(d, { place: act.place, project: act.project, norms: act.norms, documents: act.documents, copies: act.copies, aosrTemplate: act.template });
       await saveParticipants(c, d).catch(() => {}); // акт уже подтверждён; настройки следующих актов вторичны
       setStatus('Акт сохранён: ' + ID_DIR + '/АОСР/' + name + (missingLabels.length ? ' · в шаблоне незнакомые метки: ' + missingLabels.join(', ') : ''), missingLabels.length > 0);
+      notify(status.text, status.error);
       window.open(D.webEdit(idActs(c) + '/' + name), '_blank', 'noopener');
       render();
     }, { okText: 'Сохранить и открыть в Word', busyText: 'Сохраняю на Диск…', extra: a && !a.signed ? button('Удалить черновик', async () => {
@@ -2493,7 +2520,7 @@
         vatRate: rate.value === '' ? null : Number(rate.value), vatIncluded: incl.checked, signFrom: from.value || null, signTo: toR.value || null }) });
       await saveParticipants(c, d);
       render();
-    });
+    }, { busyText: 'Сохраняю на Диск…', successText: 'Настройки КС-2 и КС-3 сохранены на Яндекс Диске.' });
   }
 
   function ksOpts(c, w, number) {
@@ -2593,7 +2620,7 @@
       I.certificatePrevious(existing, record);
       await st.storage.generated('КС', [], record);
       st.certificates = existing.concat([record]); afterDocument(c); render();
-    }, { okText: 'Внести в накопление' });
+    }, { okText: 'Внести в накопление', busyText: 'Сохраняю на Диск…', successText: 'Ранее предъявленная КС-2 сохранена в реестре на Яндекс Диске.' });
   }
 
   function ksExcel(c, w) {
@@ -2656,7 +2683,7 @@
       I.setDefaults(d, { ojr: { number: number.value.trim(), permit: permit.value.trim(), expertise: expertise.value.trim(), journals: journals.filter((j) => String(j.name || '').trim()) } });
       await saveParticipants(c, d);
       render();
-    });
+    }, { busyText: 'Сохраняю на Диск…', successText: 'Настройки общего журнала сохранены на Яндекс Диске.' });
   }
 
   async function makeOjr(c, w) {

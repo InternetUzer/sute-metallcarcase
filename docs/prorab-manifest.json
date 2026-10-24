@@ -24,7 +24,7 @@
     },
     {
       "path": "static/prorab/app.js",
-      "sha256": "f6e7d92b2ecbb2e47d4a76a88372742fb22cdd6a9a6028ff280772a37275d444",
+      "sha256": "0144b090dc88a1bdab74a9c2b6c6b61d3043a402b91ca0c87224e06200c75e94",
       "base_sha256": "e8aa8bdb551994e308452fd92a83ac3147fc6312abc6c18d7de0b219830fefcd"
     },
     {
@@ -89,7 +89,7 @@
     },
     {
       "path": "static/prorab/prorab.css",
-      "sha256": "c189b6def72349c1e32b3a935282fb78699c27ef85528f13bf1b599f3868cc7d",
+      "sha256": "029df5a545b13979afdad3e80a551c23caec68ca5ecc051a874d6d8bc110fc5a",
       "base_sha256": "c189b6def72349c1e32b3a935282fb78699c27ef85528f13bf1b599f3868cc7d"
     },
     {

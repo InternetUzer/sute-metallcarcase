@@ -105,6 +105,10 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 .pp-file small { color: var(--pp-muted); font-size: 11px; }
 .pp-file .pp-icon-name { text-shadow: none; }
 .pp-modal { z-index: 3000; }
+.pp-notice { position: fixed; z-index: 4000; right: 12px; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); width: min(480px, calc(100vw - 24px)); display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--pp-card); color: var(--pp-text); border: 2px solid var(--pp-plus); border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.25); font-size: 15px; }
+.pp-notice > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pp-notice > button { flex: 0 0 44px; min-height: 44px; }
+.pp-notice-error { border-color: var(--pp-danger); }
 @media (max-width: 720px) {
   .pp-icons { grid-auto-flow: row; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); grid-template-rows: none; grid-auto-rows: 96px; grid-auto-columns: auto; }
   .pp-win { inset: 0 !important; width: auto !important; height: auto !important; border-radius: 0; resize: none; }
