@@ -2806,7 +2806,12 @@
   async function fixReport(c) {
     const chains = await loadAllChains(c);
     const rows = [];
-    for (const ch of chains) rows.push(Object.assign(await F.verifyChain(ch.seals, ch.anchors), { device: ch.device }));
+    // Подпись устройства: телефон пишет в фиксации свою модель, вкладки кабинета — «web-…»
+    const label = (ch) => {
+      const named = (ch.seals.find((s) => s && s.deviceName) || {}).deviceName;
+      return ch.device === me ? 'Это устройство' : named ? 'Телефон ' + named : /^web-/.test(ch.device) ? 'Кабинет' : 'Устройство ' + ch.device.slice(0, 8);
+    };
+    for (const ch of chains) rows.push(Object.assign(await F.verifyChain(ch.seals, ch.anchors), { device: label(ch), folder: ch.device }));
     const anchors = await verifyAnchors(chains);
     return { chains: rows, anchors, problems: rows.some((r) => r.problems.length) || anchors.invalid > 0, at: Date.now(), raw: chains };
   }
@@ -2827,7 +2832,7 @@
       const p = c.project.project;
       const lines = ['Отчёт о проверке фиксаций данных «Прораб+»', 'Объект: ' + (p.name || '') + (p.address ? ', ' + p.address : ''), 'Идентификатор объекта: ' + c.project.projectId,
         'Проверено: ' + new Date(rep.at).toLocaleString('ru-RU'), 'Итог: ' + (rep.problems ? 'НАЙДЕНЫ НАРУШЕНИЯ' : 'нарушений не найдено'), '',
-        ...rep.chains.map((r) => 'Устройство ' + r.device + ': фиксаций ' + r.seals + (r.first ? ', с ' + new Date(r.first).toISOString() : '') + (r.last ? ' по ' + new Date(r.last).toISOString() : '') + ', с квитанцией сервера ' + r.anchored + (r.problems.length ? '\n  Нарушения: ' + r.problems.join('\n  ') : '')),
+        ...rep.chains.map((r) => r.device + ' (папка ' + r.folder + '): фиксаций ' + r.seals + (r.first ? ', с ' + new Date(r.first).toISOString() : '') + (r.last ? ' по ' + new Date(r.last).toISOString() : '') + ', с квитанцией сервера ' + r.anchored + (r.problems.length ? '\n  Нарушения: ' + r.problems.join('\n  ') : '')),
         '', rep.anchors.checked ? 'Подписи квитанций сервера проверены: верных ' + rep.anchors.valid + ', неверных ' + rep.anchors.invalid : 'Подписи квитанций сервера не проверялись.'];
       const readme = ['Как устроены фиксации', '', 'Каждый файл NNNNNN.json — фиксация: изменившиеся записи объекта полностью (row) и их отпечатки SHA-256 (h) от канонического JSON (ключи по алфавиту),',
         'общий отпечаток состояния (root — SHA-256 строк «таблица/id:отпечаток» по алфавиту через перевод строки), отпечаток предыдущей фиксации (prev) и свой отпечаток (hash — SHA-256 канонического JSON фиксации без поля hash).',

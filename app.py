@@ -30,7 +30,7 @@ from messengers import public_links, validate_settings as validate_messengers
 from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
 from prorab_transfer import register_transfer
-from prorab_anchor import register_anchor
+from prorab_anchor import APP_PATHS as ANCHOR_APP_PATHS, register_anchor
 
 ROOT = Path(__file__).resolve().parent
 
@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net'
 # Место объекта для погоды по адресу — те же сервисы, что в приложении (OpenStreetMap и Open-Meteo)
 PRORAB_GEO = 'https://nominatim.openstreetmap.org https://geocoding-api.open-meteo.com'
-PRORAB_VERSION = '13'
+PRORAB_VERSION = '14'
 PRORAB_DEFAULT_ROOT = '/Прораб+'
 # Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
 # он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.
@@ -133,7 +133,8 @@ def create_app(test_config=None):
                 g.user = user
             else:
                 session.clear()
-        if request.method == 'POST':
+        # Квитанции фиксации для приложения на телефоне — без CSRF (только подпись отпечатка, см. prorab_anchor.py)
+        if request.method == 'POST' and request.path not in ANCHOR_APP_PATHS:
             token = request.form.get('csrf_token', '')
             if not token or not secrets.compare_digest(token, session.get('csrf','')):
                 abort(400, 'Сессия формы истекла. Обновите страницу и повторите отправку.')

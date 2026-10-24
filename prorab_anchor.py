@@ -4,6 +4,10 @@
 своё время (UTC) и подпись HMAC-SHA256 ключом сервера. Квитанцию нельзя подделать без ключа, сервер может
 её проверить позже (/prorab/anchor/verify). Каждая квитанция дописывается в журнал data/prorab-anchors.log.
 
+Приложение на телефоне получает квитанции по адресам /prorab/anchor/app и /prorab/anchor/app/verify — без проверки
+CSRF (APP_PATHS): у приложения нет страницы с формой и входа на сайт. Эти адреса ничего не меняют на сервере, кроме
+строки журнала, и ограничены теми же лимитами; данные объекта сюда не передаются.
+
 Если задан PRORAB_TSA_URL — дополнительно запрашивается метка времени независимой службы по RFC 3161
 (ответ возвращается целиком, base64; проверка: openssl ts -verify). Адрес службы задаёт только администратор
 сервера (переменная окружения), из запроса он не берётся.
@@ -90,14 +94,17 @@ def request_tsa(digest):
         return None, 'Служба меток времени недоступна'
 
 
+# Адреса для приложения на телефоне — без CSRF (см. protect() в app.py)
+APP_PATHS = frozenset({'/prorab/anchor/app', '/prorab/anchor/app/verify'})
+
+
 def log_path():
     return Path(current_app.config['DATABASE']).with_name('prorab-anchors.log')
 
 
 def register_anchor(app, limited):
-    @app.post('/prorab/anchor')
-    def prorab_anchor():
-        # Проверка CSRF для POST — общая для сайта (before_request)
+    def issue():
+        # Проверка CSRF для POST — общая для сайта (before_request); адреса приложения — без неё (APP_PATHS)
         limited('prorab-anchor-minute', 60, 60)
         limited('prorab-anchor-day', 3000, 86400)
         digest = (request.form.get('hash') or '').strip().lower()
@@ -106,12 +113,11 @@ def register_anchor(app, limited):
         at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         tsa, tsa_error = request_tsa(digest)
         with open(log_path(), 'a', encoding='utf-8') as log:
-            log.write(at + ' ' + digest + ' ' + key_id() + (' tsa' if tsa else '') + '\n')
+            log.write(at + ' ' + digest + ' ' + key_id() + (' tsa' if tsa else '') + (' app' if request.path in APP_PATHS else '') + '\n')
         return jsonify(format='prorab-anchor', version=1, hash=digest, time=at, alg='HMAC-SHA256', key=key_id(), sig=sign(digest, at),
                        tsa=tsa, tsa_url=os.environ.get('PRORAB_TSA_URL') if tsa else None, tsa_error=tsa_error)
 
-    @app.post('/prorab/anchor/verify')
-    def prorab_anchor_verify():
+    def verify():
         limited('prorab-anchor-verify', 120, 60)
         digest = (request.form.get('hash') or '').strip().lower()
         at = (request.form.get('time') or '').strip()
@@ -119,3 +125,8 @@ def register_anchor(app, limited):
         if not HEX64.match(digest) or not re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$', at) or not re.match(r'^[0-9a-f]{64}$', sig):
             return jsonify(valid=False, error='Неполная квитанция.'), 400
         return jsonify(valid=hmac.compare_digest(sign(digest, at), sig), key=key_id())
+
+    app.add_url_rule('/prorab/anchor', 'prorab_anchor', issue, methods=['POST'])
+    app.add_url_rule('/prorab/anchor/verify', 'prorab_anchor_verify', verify, methods=['POST'])
+    app.add_url_rule('/prorab/anchor/app', 'prorab_anchor_app', issue, methods=['POST'])
+    app.add_url_rule('/prorab/anchor/app/verify', 'prorab_anchor_app_verify', verify, methods=['POST'])

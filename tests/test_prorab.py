@@ -212,3 +212,27 @@ def test_anchor_tsa_request_is_rfc3161(app, monkeypatch):
     r = client.post('/prorab/anchor', data={'hash': 'c' * 64, 'csrf_token': anchor_token(client)}).get_json()
     assert r['tsa'] and r['tsa_url'] == 'https://tsa.example.test/tsp'
     assert calls[0][2]['Content-Type'] == 'application/timestamp-query'
+
+
+def test_anchor_for_phone_app_without_csrf(app, monkeypatch):
+    """Приложение на телефоне: квитанция и проверка без CSRF и без входа; та же подпись, что у кабинета; прочие POST — с CSRF."""
+    import prorab_anchor
+    monkeypatch.delenv('PRORAB_TSA_URL', raising=False)
+    client = app.test_client()
+    digest = 'd' * 64
+    r = client.post('/prorab/anchor/app', data={'hash': digest})
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j['hash'] == digest and len(j['sig']) == 64
+    assert 'Set-Cookie' not in r.headers
+    assert client.post('/prorab/anchor/app', data={'hash': 'nothex'}).status_code == 400
+    ok = client.post('/prorab/anchor/app/verify', data={'hash': digest, 'time': j['time'], 'sig': j['sig']}).get_json()
+    assert ok['valid'] is True
+    # Квитанция телефона проверяется и в кабинете (тот же ключ)
+    token = anchor_token(client)
+    assert client.post('/prorab/anchor/verify', data={'hash': digest, 'time': j['time'], 'sig': j['sig'], 'csrf_token': token}).get_json()['valid'] is True
+    log = prorab_anchor.Path(app.config['DATABASE']).with_name('prorab-anchors.log').read_text()
+    assert digest + ' ' in log and ' app' in log
+    # Исключение только для этих адресов
+    assert app.test_client().post('/prorab/anchor', data={'hash': digest}).status_code == 400
+    assert app.test_client().post('/prorab/anchor/app/other', data={'hash': digest}).status_code in (400, 404)
