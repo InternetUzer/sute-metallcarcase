@@ -2,6 +2,8 @@
  * «Прораб+» в браузере — просмотр чертежа (DXF или лист PDF) с пометками, как в приложении.
  * Колесо — масштаб, перетаскивание — сдвиг, двойной щелчок — ближе, два пальца — масштаб.
  * Координаты пометок «настоящие»: у DXF — координаты чертежа, у PDF — точки листа (1/72 дюйма, от левого верхнего угла).
+ * Свои линии (drawing_shapes, shapes.js): рисуются поверх; режим черчения — щелчок ставит точку (с привязкой к узлам DXF),
+ * двойной щелчок или Enter заканчивает ломаную и площадь, Esc — отмена, Backspace — убрать последнюю точку.
  */
 (function (root) {
   'use strict';
@@ -10,7 +12,9 @@
 
   /**
    * opts: { kind: 'dxf'|'pdf', dxf, pdf (документ pdf.js), page, hidden: Set, notes, focusId,
-   *         onNote(id), onPlace(x, y, page), onChange() }
+   *         onNote(id), onPlace(x, y, page), onChange(),
+   *         shapes (записи drawing_shapes), metersPerUnit, onShape({ kind, points, page, size }), onShapeText(x, y, page, size),
+   *         onShapePick(id|null), onDrawChange({ count, live }) }
    */
   function create(host, opts) {
     const isPdf = opts.kind === 'pdf';
@@ -30,6 +34,10 @@
     let pdfPage = null, base = null, baseScale = 1, sharp = null, sharpTask = null, sharpTimer = null, baseTask = null;
     let frame = 0, destroyed = false;
     const d = opts.dxf;
+    const SH = root.ProrabShapes;
+    let shapes = (opts.shapes || []).map(SH.fromRow), selShape = null, showShapes = true;
+    let drawCfg = null, dpts = [], hover = null, k = opts.metersPerUnit === undefined ? null : opts.metersPerUnit;
+    canvas.tabIndex = 0;
 
     // локальные координаты: DXF — со сдвигом на origin; PDF — точки листа
     const toLocal = (x, y) => (isPdf ? [x, y] : [x - d.originX, y - d.originY]);
@@ -108,6 +116,7 @@
       ctx.fillStyle = isPdf ? '#8a8f98' : '#1b1e24';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       if (isPdf) drawPdf(); else drawDxf();
+      drawShapes();
       drawPins();
     }
 
@@ -147,6 +156,132 @@
         ctx.drawImage(sharp.canvas, 0, 0);
       }
     }
+
+    // ───── свои линии ─────
+    const realToScreen = (p) => { const [lx, ly] = toLocal(p[0], p[1]); return toScreen(lx, ly); };
+    function label(ctx2, t, x, y, angle, color) {
+      ctx2.save();
+      ctx2.translate(x, y); ctx2.rotate(angle);
+      ctx2.font = 'bold 12px sans-serif'; ctx2.textAlign = 'center'; ctx2.textBaseline = 'middle';
+      const tw = ctx2.measureText(t).width, pad = 4;
+      ctx2.fillStyle = color; ctx2.globalAlpha = 0.92;
+      ctx2.beginPath(); ctx2.roundRect ? ctx2.roundRect(-tw / 2 - pad, -8 - pad / 2, tw + pad * 2, 16 + pad, 6) : ctx2.rect(-tw / 2 - pad, -8 - pad / 2, tw + pad * 2, 16 + pad); ctx2.fill();
+      ctx2.globalAlpha = 1; ctx2.fillStyle = '#fff'; ctx2.fillText(t, 0, 0.5);
+      ctx2.restore();
+    }
+    function drawShape(sh, opt) {
+      const pts = sh.points.map(realToScreen);
+      if (!pts.length) return;
+      const color = sh.color;
+      ctx.strokeStyle = color; ctx.fillStyle = color;
+      ctx.lineWidth = (sh.width || 2) + (opt.selected ? 1 : 0);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.setLineDash(opt.preview ? [6, 5] : []);
+      ctx.globalAlpha = opt.preview ? 0.75 : 1;
+      const path = (p, closed) => { ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]); for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]); if (closed) ctx.closePath(); };
+      const halo = () => { if (!opt.selected) return; ctx.save(); ctx.setLineDash([]); ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth += 6; ctx.stroke(); ctx.restore(); };
+      if (sh.kind === 'text') {
+        const px = (sh.size || 0) * cam.s;
+        const size = Math.max(px, 9);
+        if (size > 4000) return;
+        ctx.save(); ctx.font = size + 'px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        if (opt.selected) { ctx.fillStyle = 'rgba(0,122,255,0.28)'; ctx.fillRect(pts[0][0] - 2, pts[0][1] - size, ctx.measureText(sh.text || 'Текст').width + 4, size * 1.25); ctx.fillStyle = color; }
+        ctx.fillText(sh.text || 'Текст', pts[0][0], pts[0][1]); ctx.restore();
+      } else if (sh.kind === 'dim') {
+        if (pts.length < 2) { ctx.fillRect(pts[0][0] - 2, pts[0][1] - 2, 4, 4); }
+        else {
+          const [a, b] = pts;
+          path([a, b], false); halo(); ctx.stroke();
+          const len = Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])), ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len, t = 6 * 0.7071;
+          const tx = (ux - uy) * t, ty = (uy + ux) * t;
+          ctx.setLineDash([]);
+          ctx.beginPath(); ctx.moveTo(a[0] - tx, a[1] - ty); ctx.lineTo(a[0] + tx, a[1] + ty); ctx.moveTo(b[0] - tx, b[1] - ty); ctx.lineTo(b[0] + tx, b[1] + ty); ctx.stroke();
+          let ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+          if (ang > Math.PI / 2) ang -= Math.PI; if (ang < -Math.PI / 2) ang += Math.PI;
+          let nx = uy, ny = -ux; if (ny > 0) { nx = -nx; ny = -ny; }
+          label(ctx, SH.label(sh) || sh.text || 'масштаб?', (a[0] + b[0]) / 2 + nx * 12, (a[1] + b[1]) / 2 + ny * 12, ang, color);
+        }
+      } else if (sh.kind === 'rect') {
+        if (pts.length >= 2) { path(SH.rect(sh.points[0], sh.points[1]).map(realToScreen), true); halo(); ctx.stroke(); }
+      } else if (sh.kind === 'area') {
+        if (pts.length >= 2) {
+          path(pts, pts.length >= 3); halo(); ctx.stroke();
+          if (pts.length >= 3) { ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1; const t = SH.label(sh); if (t) { const c = realToScreen(SH.center(sh.points)); label(ctx, t, c[0], c[1], 0, color); } }
+        }
+      } else if (pts.length >= 2) { path(pts, false); halo(); ctx.stroke(); }
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      if (opt.selected && sh.kind !== 'text') for (const q of pts) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(q[0], q[1], 5, 0, 2 * Math.PI); ctx.fill(); ctx.fillStyle = color; ctx.beginPath(); ctx.arc(q[0], q[1], 3.5, 0, 2 * Math.PI); ctx.fill(); }
+    }
+    const visibleShapes = () => shapes.filter((x) => !isPdf || (x.page || 0) === page);
+    function drawShapes() {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (showShapes || drawCfg) for (const sh of visibleShapes()) drawShape(sh, { selected: sh.id === selShape });
+      if (drawCfg) {
+        const live = hover && drawCfg.kind !== 'text' ? dpts.concat([hover]) : dpts;
+        if (live.length) {
+          const real = live.map((p) => toReal(p[0], p[1]));
+          drawShape({ kind: drawCfg.kind, points: real, color: drawCfg.color, value: SH.value(drawCfg.kind, real, k), width: 2 }, { preview: true });
+        }
+        if (hover) {
+          const [sx, sy] = toScreen(hover[0], hover[1]);
+          ctx.strokeStyle = hover.snapped ? '#34c759' : '#ffd60a'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+          ctx.beginPath(); ctx.moveTo(sx - 12, sy); ctx.lineTo(sx + 12, sy); ctx.moveTo(sx, sy - 12); ctx.lineTo(sx, sy + 12); ctx.stroke();
+          if (hover.snapped) ctx.strokeRect(sx - 5, sy - 5, 10, 10);
+        }
+      }
+    }
+    /** Точка черчения под курсором: привязка к узлу DXF, «Орто» от последней точки. */
+    function drawPoint(sx, sy, free) {
+      let [lx, ly] = toContent(sx, sy), snapped = false;
+      // Alt — без привязки к узлам
+      if (!free && !isPdf && root.ProrabDxf) { const sn = root.ProrabDxf.snap(d, lx, ly, (PIN_R * 1.2) / cam.s, hidden); if (sn) { [lx, ly] = sn; snapped = true; } }
+      if (isPdf && pageSize && (lx < 0 || ly < 0 || lx > pageSize[0] || ly > pageSize[1])) return null;
+      let p = [lx, ly];
+      if (drawCfg && drawCfg.ortho && dpts.length) p = SH.ortho(dpts[dpts.length - 1], p);
+      p.snapped = snapped;
+      return p;
+    }
+    function liveText() {
+      const all = hover && drawCfg.kind !== 'text' ? dpts.concat([hover]) : dpts;
+      if (all.length < 2) return null;
+      const L = (u) => (k ? SH.formatMeters(u * k) : (u * 25.4 / 72).toFixed(1).replace('.', ',') + ' мм на листе');
+      const seg = (a, b) => L(Math.hypot(b[0] - a[0], b[1] - a[1]));
+      const kind = drawCfg.kind;
+      if (kind === 'rect') return L(Math.abs(all[1][0] - all[0][0])) + ' × ' + L(Math.abs(all[1][1] - all[0][1]));
+      if (kind === 'area' && all.length >= 3) { const v = SH.value('area', all, k); return v === null ? 'площадь — нужен масштаб' : SH.label({ kind: 'area', value: v }); }
+      if (kind === 'polyline' && all.length >= 3) return seg(all[all.length - 2], all[all.length - 1]) + ' · всего ' + L(SH.length(all));
+      return seg(all[all.length - 2], all[all.length - 1]);
+    }
+    const drawChanged = () => { if (opts.onDrawChange && drawCfg) opts.onDrawChange({ count: dpts.length, live: liveText() }); changed(); };
+    function finishDraw() {
+      if (!drawCfg) return false;
+      // Двойной щелчок ставит лишние одинаковые точки
+      const pts = dpts.filter((p, i) => i === 0 || p[0] !== dpts[i - 1][0] || p[1] !== dpts[i - 1][1]);
+      if (!SH.complete(drawCfg.kind, pts)) { dpts = pts; drawChanged(); return false; }
+      const real = pts.map((p) => toReal(p[0], p[1]));
+      dpts = [];
+      if (opts.onShape) opts.onShape({ kind: drawCfg.kind, points: real, page: isPdf ? page : 0, color: drawCfg.color, value: SH.value(drawCfg.kind, real, k) });
+      drawChanged();
+      return true;
+    }
+    function addDrawPoint(sx, sy, free) {
+      const p = drawPoint(sx, sy, free);
+      if (!p) return;
+      if (drawCfg.kind === 'text') {
+        const [x, y] = toReal(p[0], p[1]);
+        if (opts.onShapeText) opts.onShapeText(x, y, isPdf ? page : 0, 14 / cam.s);
+        return;
+      }
+      dpts.push(p);
+      const max = SH.kindOf(drawCfg.kind).max;
+      if (max !== null && dpts.length >= max) finishDraw(); else drawChanged();
+    }
+    canvas.addEventListener('keydown', (e) => {
+      if (!drawCfg) return;
+      if (e.key === 'Enter') { e.preventDefault(); finishDraw(); }
+      else if (e.key === 'Escape') { e.preventDefault(); dpts = []; drawChanged(); }
+      else if (e.key === 'Backspace') { e.preventDefault(); dpts.pop(); drawChanged(); }
+    });
 
     function drawPins() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -243,6 +378,7 @@
     });
     canvas.addEventListener('pointermove', (e) => {
       if (!pointers.has(e.pointerId)) {
+        if (drawCfg) { hover = drawPoint(e.offsetX, e.offsetY, e.altKey); canvas.style.cursor = 'crosshair'; drawChanged(); return; }
         canvas.style.cursor = mode === 'place' ? 'crosshair' : hitNote(e.offsetX, e.offsetY) ? 'pointer' : 'grab';
         return;
       }
@@ -265,7 +401,7 @@
       if (!was || pointers.size) return;
       drag = null;
       if (moved || e.type === 'pointercancel') return;
-      click(e.offsetX, e.offsetY);
+      click(e.offsetX, e.offsetY, e.altKey);
     };
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
@@ -273,9 +409,14 @@
       e.preventDefault();
       zoomAt(e.offsetX, e.offsetY, Math.pow(1.0018, -e.deltaY * (e.deltaMode === 1 ? 30 : 1)));
     }, { passive: false });
-    canvas.addEventListener('dblclick', (e) => { if (mode === 'view' && !hitNote(e.offsetX, e.offsetY)) zoomAt(e.offsetX, e.offsetY, 2); });
+    canvas.addEventListener('dblclick', (e) => {
+      if (drawCfg) { if (drawCfg.kind === 'polyline' || drawCfg.kind === 'area') finishDraw(); return; }
+      if (mode === 'view' && !hitNote(e.offsetX, e.offsetY)) zoomAt(e.offsetX, e.offsetY, 2);
+    });
+    canvas.addEventListener('pointerleave', () => { if (drawCfg && hover) { hover = null; drawChanged(); } });
 
-    function click(sx, sy) {
+    function click(sx, sy, alt) {
+      if (drawCfg) { canvas.focus(); addDrawPoint(sx, sy, alt); return; }
       if (mode === 'place') {
         let [lx, ly] = toContent(sx, sy);
         if (isPdf) {
@@ -289,7 +430,14 @@
         return;
       }
       const n = hitNote(sx, sy);
-      if (n && opts.onNote) opts.onNote(n.id);
+      if (n) { if (opts.onNote) opts.onNote(n.id); return; }
+      // Своя линия под курсором — выбрать
+      if (showShapes) {
+        const [lx, ly] = toContent(sx, sy), [x, y] = toReal(lx, ly);
+        const list = visibleShapes(), i = SH.pick(list, x, y, (PIN_R * 0.8) / cam.s);
+        const id = i >= 0 ? list[i].id : null;
+        if (id !== selShape) { selShape = id; changed(); if (opts.onShapePick) opts.onShapePick(id); }
+      }
     }
 
     const ro = new ResizeObserver(() => resize());
@@ -301,6 +449,14 @@
       get page() { return page; },
       get pageCount() { return isPdf ? opts.pdf.numPages : 1; },
       setNotes(list) { notes = list || []; changed(); },
+      setShapes(rows, selectedId) { shapes = (rows || []).map(SH.fromRow); if (selectedId !== undefined) selShape = selectedId; if (selShape && !shapes.some((x) => x.id === selShape)) selShape = null; changed(); },
+      setShapesVisible(on) { showShapes = !!on; if (!on) selShape = null; changed(); },
+      /** Черчение: { kind, color, ortho } или null — выключить. */
+      setDraw(cfg) { const was = drawCfg; drawCfg = cfg ? Object.assign({}, cfg) : null; if (!cfg || !was || was.kind !== cfg.kind) dpts = []; if (cfg) { selShape = null; canvas.focus(); } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; drawChanged(); changed(); },
+      setScale(v) { k = v > 0 ? v : null; drawChanged(); },
+      finishDraw() { return finishDraw(); },
+      undoPoint() { dpts.pop(); drawChanged(); },
+      get selectedShape() { return selShape; },
       setHidden(set) { hidden = set; paths = null; changed(); },
       setMode(m) { mode = m; canvas.style.cursor = m === 'place' ? 'crosshair' : 'grab'; },
       setPage(n) { if (isPdf && n !== page) return loadPage(n); return Promise.resolve(); },
