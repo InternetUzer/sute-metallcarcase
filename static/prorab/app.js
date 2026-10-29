@@ -9,6 +9,7 @@
   'use strict';
   const S = window.ProrabSync, M = window.ProrabModel, D = window.ProrabDisk, SCHEMA = window.PRORAB_SCHEMA, O = window.ProrabOffice;
   const R = window.ProrabPersistence;
+  const L = window.ProrabLifecycle, DOC = window.ProrabDocuments, REPORT = window.ProrabRemarksReport;
   const app = document.getElementById('prorab');
   const CLIENT_ID = app.dataset.clientId || '';
   const DOCS = 'Документы';
@@ -112,6 +113,10 @@
   const clock = new S.Clock();
   const today = S.today();
   let projects = null; // [{ path, name }]
+  let deletedProjects = [], diagnostics = null;
+  function log(level, operation, message, project, code) {
+    try { if (diagnostics) diagnostics.add(level, operation, message, project, code); } catch (_) { /* logging never blocks work */ }
+  }
   let projectsError = null;
   let found = null; // объекты в других папках Диска (если в папке рабочего стола их нет): [{ parent, names }]
   const ctxs = {}; // папка объекта → { path, project, loading, error, saving, saveTimer, status }
@@ -150,6 +155,7 @@
 
   function setStatus(text, error) {
     status = { text, error: !!error };
+    log(error ? 'error' : 'info', 'Кабинет', text);
     const el = document.getElementById('pp-status');
     if (el) { el.textContent = text; el.className = 'pp-status' + (error ? ' pp-error' : ''); }
   }
@@ -161,6 +167,7 @@
   }
   /** Outside the desktop: remains visible after render and on narrow screens. */
   function notify(text, error) {
+    log(error ? 'error' : 'info', 'Уведомление', text);
     clearNotice();
     const message = h('span', { role: error ? 'alert' : 'status', 'aria-live': error ? 'assertive' : 'polite', 'aria-atomic': 'true' });
     notice = h('div', { class: 'pp-notice' + (error ? ' pp-notice-error' : '') }, message,
@@ -252,15 +259,22 @@
       const root = (await disk.list(ROOT)) || [];
       const paths = root.filter((i) => i.type === 'dir' && !i.name.startsWith('.')).map((i) => ROOT + '/' + i.name);
       for (const p of extraProjects()) if (!paths.includes(p)) paths.push(p);
-      const list = [];
+      const list = [], removed = [];
       for (let i = 0; i < paths.length; i += 6) {
         const part = paths.slice(i, i + 6);
         const ok = await Promise.all(part.map((p) => hasData(p).catch(() => false)));
-        part.forEach((p, k) => { if (ok[k]) list.push({ path: p, name: projName(p) }); });
+        await Promise.all(part.map(async (p, k) => {
+          if (!ok[k]) return;
+          try {
+            const lifecycle = await L.read(disk, p);
+            (lifecycle && lifecycle.action === 'delete' ? removed : list).push({ path: p, name: projName(p), lifecycle });
+          } catch (e) { list.push({ path: p, name: projName(p) }); log('error', 'Состояние объекта', e.message, p, e.status); }
+        }));
       }
       projects = list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      deletedProjects = removed.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
       if (!projects.length && found === null) discover();
-      const isProject = new Set(list.map((p) => p.path));
+      const isProject = new Set(list.concat(removed).map((p) => p.path));
       home.items = sortItems(root.filter((i) => !isProject.has(ROOT + '/' + i.name)));
     } catch (e) {
       home.items = home.items || [];
@@ -285,9 +299,9 @@
         await Promise.all(root.slice(i, i + 6).map(async (d) => {
           const path = '/' + d.name;
           const items = (await disk.list(path).catch(() => null)) || [];
-          if (items.some((x) => x.type === 'dir' && x.name === 'data')) { add('/', d.name); return; }
+          if (items.some((x) => x.type === 'dir' && x.name === 'data')) { const e = await L.read(disk, path); if (!e || e.action !== 'delete') add('/', d.name); return; }
           const sub = items.filter((x) => x.type === 'dir' && !x.name.startsWith('.')).slice(0, 30);
-          const ok = await Promise.all(sub.map((x) => hasData(path + '/' + x.name).catch(() => false)));
+          const ok = await Promise.all(sub.map(async (x) => { try { const p = path + '/' + x.name; if (!await hasData(p)) return false; const e = await L.read(disk, p); return !e || e.action !== 'delete'; } catch (_) { return false; } }));
           sub.forEach((x, k) => { if (ok[k]) add(path, x.name); });
         }));
       }
@@ -364,6 +378,7 @@
         if (!files.length) throw new Error('В папке нет данных объекта. Подключите объект к ней в телефоне и синхронизируйте.');
         const best = files.slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
         const pid = best.projectId;
+        await L.assertActive(disk, path, pid);
         if (files.some((f) => f.projectId && f.projectId !== pid)) throw new Error('В папке данные разных объектов.');
         c.drafts = new R.Drafts(store, path, pid, me);
         const drafts = c.drafts.read();
@@ -375,8 +390,10 @@
         store.set('names', JSON.stringify(names));
         if (projects) projects.forEach((p) => { if (p.path === path) p.name = names[path]; });
         c.status = 'Загружено в ' + time();
+        log('info', 'Открытие объекта', 'Объект загружен; файлов устройств: ' + files.length, path);
       } catch (e) {
         c.error = e.message;
+        log('error', 'Открытие объекта', e.message, path, e.status);
         if (e.status === 401) fail(e);
       } finally {
         c.loading = false;
@@ -391,6 +408,7 @@
     // Пока открыта форма, объект не подменяем: она пишет в текущий (иначе её правки потерялись бы)
     if (!c.project || c.saving || modalOpen()) return;
     try {
+      await L.assertActive(disk, c.path, c.project.projectId);
       const files = await readFiles(c.path);
       if (modalOpen() || c.saving) return; // форма или сохранение начались во время чтения Диска
       const mine = S.toFile(c.project.state, c.project.projectId, c.project.project.name, me);
@@ -399,7 +417,8 @@
       c.project.dirty = dirty;
       store.set('clock', String(clock.last));
       c.status = 'Обновлено в ' + time();
-    } catch (e) { c.status = e.message; setStatus(projName(c.path) + ': ' + e.message, true); }
+      log('info', 'Синхронизация: чтение', 'Прочитано файлов устройств: ' + files.length, c.path);
+    } catch (e) { if (e.code === 'PROJECT_DELETED') c.error = e.message; c.status = e.message; log('error', 'Синхронизация: чтение', e.message, c.path, e.status); setStatus(projName(c.path) + ': ' + e.message, true); }
   }
 
   async function refreshAll() {
@@ -409,7 +428,10 @@
     if (econ.session && econ.vault && !modalOpen() && !econ.operation) {
       try { await econ.session.refresh(); } catch (e) { setStatus('Экономика: ' + e.message, true); }
     }
-    if (!modalOpen()) render();
+    if (!modalOpen()) {
+      for (const w of wins.filter((w) => w.kind === 'documents')) if (ctxs[w.folder] && !ctxs[w.folder].error) await loadDocuments(w, ctxs[w.folder]);
+      await loadProjects();
+    }
   }
 
   function scheduleSave(c, delay) {
@@ -433,12 +455,14 @@
     c.status = 'Сохраняю на Диск…';
     setStatus(projName(c.path) + ': сохраняю…');
     try {
+      await L.assertActive(targetDisk, c.path, c.project.projectId);
       await targetDisk.putText(c.path + '/data/' + me + '.json', text);
       c.drafts.acknowledge(drafts);
       c.project.dirty = c.project.revision !== revision;
       if (c.project.dirty) { persist(c); scheduleSave(c, 0); }
       c.status = 'Сохранено в ' + time() + ' — телефон получит при синхронизации';
       setStatus(projName(c.path) + ': сохранено в ' + time());
+      log('info', 'Синхронизация: запись', 'Изменения отправлены на Диск', c.path);
       // Фиксация не чаще раза в 30 минут; её ошибки не мешают сохранению
       fixNow(c, false).then((msg) => { if (msg && msg.startsWith('Зафиксировано')) c.status += ' · ' + msg.toLowerCase(); }, (e) => { c.fixWarning = e.message; });
     } catch (e) {
@@ -446,11 +470,172 @@
       c.status = 'Не сохранилось: ' + e.message;
       setStatus(projName(c.path) + ': не сохранилось на Диск. Не закрывайте страницу, повторю через минуту.', true);
       persist(c);
-      scheduleSave(c, 60000);
+      log('error', 'Синхронизация: запись', e.message, c.path, e.status);
+      if (e.code === 'PROJECT_DELETED') c.error = e.message; else scheduleSave(c, 60000);
     } finally { c.saving = false; if (!modalOpen()) render(); }
   }
 
   function changed(c) { persist(c); scheduleSave(c); render(); }
+
+  function downloadFile(name, bytes, mime) {
+    const href = URL.createObjectURL(new Blob([bytes], { type: mime || 'application/octet-stream' }));
+    const a = h('a', { href, download: name }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
+  }
+
+  function logsView(w) {
+    const rows = diagnostics ? diagnostics.rows().slice().reverse() : [];
+    const filtered = w.errorsOnly ? rows.filter((r) => r.level !== 'info') : rows;
+    return h('main', null, h('div', { class: 'pp-row pp-wrap' },
+      button(w.errorsOnly ? 'Показать всё' : 'Только ошибки и предупреждения', () => { w.errorsOnly = !w.errorsOnly; render(); }),
+      button('Обновить', render), button('Скачать логи', () => downloadFile('Прораб-логи.json', diagnostics.export(), 'application/json')),
+      button('Очистить историю', () => { if (confirm('Очистить историю логов этого браузера?')) { diagnostics.clear(); render(); } })),
+    h('p', { class: 'pp-muted' }, 'Последние 500 событий этого браузера для текущего аккаунта. История сохраняется после закрытия страницы. Логи телефона сюда пока не передаются. Ключи доступа и содержимое документов не записываются.'),
+    diagnostics && !diagnostics.persistent ? h('p', { class: 'pp-error' }, 'Браузер не разрешил сохранить логи. До закрытия страницы скачайте их на устройство.') : null,
+    filtered.length ? filtered.map((r) => h('section', { class: 'pp-card' },
+      h('strong', { class: r.level === 'error' ? 'pp-error' : '' }, new Date(r.at).toLocaleString('ru-RU') + ' · ' + r.operation + (r.status !== undefined ? ' · код ' + r.status : '')),
+      r.project ? h('p', { class: 'pp-muted' }, r.project) : null, h('p', null, r.message))) : h('p', { class: 'pp-card' }, 'Событий пока нет.'));
+  }
+
+  function trashView() {
+    return h('main', null, button('Обновить', loadProjects),
+      h('p', { class: 'pp-muted' }, 'Данные удалённых объектов сохранены на Диске. Восстановление вернёт объект в активные. Синхронизация удаления с телефоном требует поддержки этой функции в приложении.'),
+      deletedProjects.length ? deletedProjects.map((p) => h('section', { class: 'pp-card' }, h('strong', null, p.name),
+        h('p', null, 'Удалён: ' + new Date(p.lifecycle.at).toLocaleString('ru-RU')),
+        button('Восстановить', () => changeProjectState(p, 'restore')))) : h('p', { class: 'pp-card' }, 'Удалённых объектов нет.'));
+  }
+  async function changeProjectState(p, action) {
+    const removing = action === 'delete';
+    if (!confirm((removing ? 'Удалить «' + p.name + '» из активных объектов? Данные останутся на Диске и будут доступны для восстановления. Старые версии телефона продолжат показывать объект до обновления приложения.' : 'Восстановить «' + p.name + '»?'))) return;
+    const c = ctxs[p.path];
+    if (c && (c.saving || c.project && c.project.dirty || c.reporting || c.reportSaving)) return notify('Сначала дождитесь сохранения изменений и документов объекта.', true);
+    try {
+      let pid = p.lifecycle && p.lifecycle.projectId;
+      if (!pid) {
+        const files = await readFiles(p.path); pid = files[0] && files[0].projectId;
+        if (!pid || files.some((f) => f.projectId !== pid)) throw new Error('Нельзя определить объект: проверьте файлы устройств.');
+      }
+      await L.change(disk, p.path, pid, action, me, S.newId());
+      for (const w of wins.filter((w) => w.folder === p.path)) if (w.viewer) w.viewer.destroy();
+      wins = wins.filter((w) => w.folder !== p.path);
+      if (c) clearTimeout(c.saveTimer);
+      delete ctxs[p.path];
+      log('info', removing ? 'Удаление объекта' : 'Восстановление объекта', 'Состояние подтверждено на Диске', p.path);
+      await loadProjects(); notify(removing ? 'Объект перемещён в «Удалённые объекты».' : 'Объект восстановлен.');
+    } catch (e) { log('error', 'Состояние объекта', e.message, p.path, e.status); notify(e.message, true); }
+  }
+
+  async function loadDocuments(w, c) {
+    if (w.docsLoading) return;
+    w.docsLoading = true;
+    try { w.documents = await DOC.scan(disk, c.path); log(w.documents.errors.length ? 'warning' : 'info', 'Список документов', 'Файлов: ' + w.documents.files.length + (w.documents.errors.length ? '. ' + w.documents.errors.join('; ') : ''), c.path); }
+    catch (e) { w.documents = { files: [], errors: [e.message] }; log('error', 'Список документов', e.message, c.path, e.status); }
+    finally { w.docsLoading = false; if (!modalOpen()) render(); }
+  }
+  function documentsView(w, c) {
+    if (!w.documents && !w.docsLoading) loadDocuments(w, c);
+    const ready = c.readyReport;
+    return h('main', null, h('div', { class: 'pp-row pp-wrap' },
+      button('Отчёт с фото и чертежами', () => reportDialogNew(c, 'report'), 'pp-primary'),
+      button('Создать предписание', () => reportDialogNew(c, 'prescription')),
+      button('Исполнительная документация', () => openWindow('id', c.path)), button('Обновить список', () => loadDocuments(w, c)),
+      button('Загрузить готовые документы', async () => {
+        try { await L.assertActive(disk, c.path, c.project.projectId); await disk.mkdir(idDir(c)); await disk.mkdir(c.path + '/' + DOC.SHARED); uploadInto(c.path + '/' + DOC.SHARED, ''); }
+        catch (e) { notify(e.message, true); }
+      })),
+    h('p', { class: 'pp-muted' }, 'Здесь собраны исполнительная документация и прежняя папка «Документы». Новые отчёты сохраняются в «' + DOC.SHARED + '»; на телефоне откройте исполнительную документацию → «Документы по шаблонам» и обновите список.'),
+    ready ? h('section', { class: 'pp-card' }, h('strong', null, ready.name), h('p', { class: ready.warnings.length || !ready.saved ? 'pp-error' : 'pp-plus' }, ready.saved ? 'Сохранение на Диске подтверждено.' : 'Сохранение на Диске пока не подтверждено. Скачайте файл или повторите сохранение.'),
+      ready.warnings.map((s) => h('p', { class: 'pp-error' }, s)), button('Скачать готовый PDF', () => downloadFile(ready.name, ready.bytes, 'application/pdf')),
+      !ready.saved ? button('Повторить сохранение на Диск', async () => { try { await saveReadyReport(c); notify('Документ сохранён на Диске.'); } catch (e) { notify(e.message, true); } render(); }) : null) : null,
+    w.docsLoading ? h('p', null, 'Проверяю папки на Диске…') : null,
+    w.documents ? h('div', null, w.documents.errors.map((e) => h('p', { class: 'pp-error' }, e)),
+      !w.documents.files.length ? h('p', { class: 'pp-card' }, 'В облачных папках документов пока нет. Сайт видит файлы, уже загруженные на Диск. Экспорт старой версии приложения сам туда не отправляется.') :
+        w.documents.files.map((f) => h('section', { class: 'pp-card' }, h('strong', null, f.name), h('small', { class: 'pp-muted' }, f.folder),
+          h('div', { class: 'pp-row pp-wrap' }, button('Открыть', () => openItem(null, { name: f.name, type: 'file' }, c.path + '/' + f.folder, '')),
+            button('Скачать', async () => { try { const bytes = await disk.getBytes(f.path); if (!bytes) throw new Error('Файл не найден. Обновите список.'); downloadFile(f.name, bytes); } catch (e) { notify(e.message, true); } }))))) : null);
+  }
+  async function saveReadyReport(c) {
+    if (c.reportSaving) throw new Error('Дождитесь сохранения документа.');
+    const file = c.readyReport; if (!file) return;
+    c.reportSaving = true;
+    try {
+      await L.assertActive(file.disk, c.path, c.project.projectId);
+      const path = c.path + '/' + DOC.SHARED + '/' + file.name;
+      const existing = await file.disk.getBytes(path);
+      if (existing) {
+        const bytes = new Uint8Array(existing);
+        if (bytes.length !== file.bytes.length || !bytes.every((v, i) => v === file.bytes[i])) throw new Error('Файл с таким именем отличается. Старый файл не заменён; сформируйте новый отчёт.');
+      } else {
+        const storage = new DS.Store(file.disk, idDir(c));
+        await storage.generated('Документы', [{ name: file.name, bytes: file.bytes }]);
+      }
+      file.saved = true;
+      await fixFile(c, DOC.SHARED + '/' + file.name, file.bytes);
+      afterDocument(c);
+      log('info', 'Сохранение отчёта', 'Файл проверен после загрузки: ' + file.name, c.path);
+      wins.filter((w) => w.kind === 'documents' && w.folder === c.path).forEach((w) => loadDocuments(w, c));
+    } catch (e) { log('error', 'Сохранение отчёта', e.message, c.path, e.status); throw e; }
+    finally { c.reportSaving = false; }
+  }
+  function reportDialogNew(c, kind) {
+    if (c.reporting) return notify('Дождитесь формирования текущего отчёта.', true);
+    const all = REPORT.rows(c.project), prescribed = kind === 'prescription';
+    const contractor = select(c.project.rows('contractors').map((p) => ({ id: p.id, name: p.name })), '', true, prescribed ? 'Выберите исполнителя' : 'Все исполнители');
+    contractor.setAttribute('aria-label', 'Исполнитель');
+    const statusIn = select([{ id: 'all', name: 'Все' }, { id: 'open', name: 'Открытые' }, { id: 'done', name: 'Устранённые' }], prescribed ? 'open' : 'all');
+    const number = h('input', { value: '1', maxlength: '40' }), dateIn = h('input', { type: 'date', value: dayToInput(today), required: true });
+    const due = h('input', { type: 'date' }), issuer = h('input', { value: c.project.project.supervisor || '' });
+    const list = h('div', { class: 'pp-report-choices' }), note = h('p', { role: 'status' }), result = h('div'); let choices = [];
+    let numberTouched = false;
+    number.addEventListener('input', () => { numberTouched = true; });
+    if (prescribed) disk.list(c.path + '/' + DOC.SHARED).then((files) => {
+      if (numberTouched || c.reporting) return;
+      const max = (files || []).reduce((n, f) => { const match = /^Предписание №(\d+)\s/.exec(f.name); return match ? Math.max(n, Number(match[1])) : n; }, 0);
+      if (Number.isSafeInteger(max + 1)) number.value = String(max + 1);
+    }).catch((e) => log('warning', 'Нумерация предписаний', 'Не удалось получить номера с Диска: ' + e.message, c.path, e.status));
+    const redraw = () => {
+      let filtered; try { filtered = REPORT.selectRows(all, { kind, contractorId: contractor.value, status: statusIn.value }); } catch (_) { filtered = []; }
+      choices = filtered.map((r) => { const input = h('input', { type: 'checkbox', checked: true }); return { row: r, input }; });
+      list.replaceChildren(...choices.map(({ row, input }) => h('label', { class: 'pp-check' }, input, row.title + ' · ' + row.contractorName + ' · ' + (row.text || 'Без описания'))));
+      if (!choices.length) list.append(h('p', null, prescribed && !contractor.value ? 'Выберите исполнителя.' : 'Замечаний для выбранных условий нет.'));
+    };
+    contractor.addEventListener('change', redraw); statusIn.addEventListener('change', redraw); redraw();
+    const close = () => { if (!c.reporting && !c.reportSaving) { wrap.remove(); render(); } };
+    const submit = h('button', { type: 'submit', class: 'pp-btn pp-primary' }, 'Сформировать и сохранить');
+    const form = h('form', { class: 'pp-dialog', onsubmit: async (e) => {
+      e.preventDefault(); if (c.reporting || c.reportSaving) return;
+      const selected = choices.filter((x) => x.input.checked).map((x) => x.row.key);
+      if (!selected.length) { note.textContent = 'Выберите хотя бы одно замечание.'; return; }
+      const dayValue = inputToDay(dateIn.value); if (dayValue === null) { note.textContent = 'Укажите дату документа.'; return; }
+      const targetDisk = disk; let prepared = null;
+      if (c.readyReport && !c.readyReport.saved && !confirm('Есть ранее сформированный PDF без подтверждённого сохранения. Его можно скачать или сохранить повторно в «Документах». Заменить его новым отчётом?')) return;
+      c.reporting = true; submit.disabled = true; result.replaceChildren(); note.textContent = 'Собираю PDF…';
+      log('info', 'Формирование документа', prescribed ? 'Предписание' : 'Отчёт о замечаниях', c.path);
+      try {
+        await L.assertActive(targetDisk, c.path, c.project.projectId);
+        const output = await REPORT.build({ kind, rows: all, selected, contractorId: contractor.value, status: statusIn.value, number: number.value, date: dayValue,
+          commonDue: inputToDay(due.value), issuer: issuer.value, project: JSON.parse(JSON.stringify(c.project.project)), openPdf,
+          readFile: (file) => targetDisk.getBytes(c.path + '/files/' + file), onProgress: (s) => { note.textContent = s; } });
+        const name = REPORT.filename(kind, number.value, dayValue, S.newId());
+        prepared = c.readyReport = { ...output, name, disk: targetDisk, saved: false };
+        log(output.warnings.length ? 'warning' : 'info', 'Формирование документа', 'Страниц: ' + output.pages + ', замечаний: ' + output.count + ', недоступных вложений: ' + output.warnings.length, c.path);
+        result.append(button('Скачать готовый PDF', () => downloadFile(name, output.bytes, 'application/pdf')), ...output.warnings.map((s) => h('p', { class: 'pp-error' }, s)));
+        note.textContent = 'PDF готов. Сохраняю и проверяю файл на Диске…';
+        await saveReadyReport(c);
+        note.textContent = output.warnings.length ? 'Сохранён неполный отчёт. Ниже перечислены недоступные вложения; загрузите их с телефона и сформируйте заново.' : 'Готово. PDF сохранён на Диске и доступен в «Документах».';
+        note.className = output.warnings.length ? 'pp-error' : 'pp-plus';
+      } catch (error) {
+        note.className = 'pp-error'; note.textContent = error.message + (prepared && !prepared.saved ? ' PDF можно скачать. Повторное сохранение доступно в «Документах».' : '');
+        log('error', 'Формирование/сохранение документа', error.message, c.path, error.status);
+      } finally { c.reporting = false; submit.disabled = false; }
+    } }, h('div', { class: 'pp-row pp-between' }, h('h2', null, prescribed ? 'Предписание исполнителю' : 'Отчёт о замечаниях'), button('✕', close, 'pp-icon')),
+    h('p', { class: 'pp-muted' }, 'Фото и места на чертежах войдут в PDF. Если вложений нет на Диске, это будет отмечено в документе.'),
+    h('div', { class: 'pp-row pp-wrap' }, field('Исполнитель', contractor), prescribed ? field('Номер', number) : field('Статус', statusIn), field('Дата документа', dateIn)),
+    prescribed ? h('div', { class: 'pp-row pp-wrap' }, field('Общий срок', due, 'Только для замечаний без своего срока; записи не меняются'), field('Выдал', issuer)) : null,
+    h('p', { class: 'pp-muted' }, prescribed ? 'Номер проверьте по своему реестру. В предписание входят открытые замечания выбранного исполнителя.' : 'Выберите замечания для отчёта.'), list, note, result,
+    h('div', { class: 'pp-row pp-wrap' }, submit, button('Закрыть', close)));
+    const wrap = h('div', { class: 'pp-modal' }, form); document.body.append(wrap);
+  }
 
   /** Новый объект с компьютера: папка «Прораб+/<название>» и файл этого устройства; на телефоне — «Открыть из облака». */
   async function newProject() {
@@ -478,6 +663,9 @@
 
   // ───────── окна ─────────
   const APPS = {
+    logs: { title: 'Логи', icon: '📜', view: (w) => logsView(w) },
+    trash: { title: 'Удалённые объекты', icon: '🗑️', view: () => trashView() },
+    documents: { title: 'Документы', icon: '🗂️', view: (w, c) => documentsView(w, c) },
     journal: { title: 'Журнал работ', icon: '📒', view: (w, c) => journalView(w, c) },
     calendar: { title: 'Календарь', icon: '📅', view: (w, c) => calendarView(w, c) },
     boq: { title: 'Ведомость', icon: '📋', view: (w, c) => boqView(w, c) },
@@ -500,7 +688,7 @@
     econ: { title: 'Экономика объекта', icon: '💼', view: (w, c) => econView(w, c) },
     picker: { title: 'Добавить объект', icon: '➕', view: (w) => pickerView(w) },
   };
-  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'fixation', 'explorer'];
+  const PROJECT_APPS = ['today', 'card', 'journal', 'calendar', 'boq', 'extras', 'acceptance', 'id', 'remarks', 'drawings', 'finance', 'machines', 'dirs', 'fixation', 'documents'];
 
   function openWindow(kind, folder, opts) {
     opts = opts || {};
@@ -533,6 +721,7 @@
       return where + (w.path ? ' › ' + w.path.split('/').join(' › ') : '');
     }
     if (w.kind === 'project') return projName(w.folder);
+    if (w.kind === 'logs' || w.kind === 'trash') return APPS[w.kind].title;
     if (w.kind === 'economy') return 'Экономика — все объекты';
     if (w.kind === 'fileview') return (w.title || lastName(w.path)) + ' · просмотр';
     if (w.kind === 'drawing') { const c = ctxs[w.folder]; const d = c && c.project && c.project.get('drawings', w.path); return projName(w.folder) + ' · ' + (d ? d.name : 'Чертёж'); }
@@ -592,6 +781,8 @@
     const scroll = {};
     document.querySelectorAll('.pp-win').forEach((el) => { const b = el.querySelector('.pp-winbody'); if (b) scroll[el.dataset.key] = b.scrollTop; });
     const icons = [
+      { key: 'logs', icon: '📜', name: 'Логи', open: () => openWindow('logs') },
+      { key: 'trash', icon: '🗑️', name: 'Удалённые объекты', open: () => { loadProjects(); openWindow('trash'); } },
       ...(projects || []).map((p) => ({ key: 'proj:' + p.path, icon: '🏗️', name: p.name, open: () => openWindow('project', p.path), menu: (x, y) => projectMenu(x, y, p) })),
       ...(econVisible() ? [{ key: 'econ', icon: '💼', name: 'Экономика', open: () => openEconomy(), menu: (x, y) => popup(x, y, [['Открыть', () => openEconomy()], econ.vault ? ['🔒 Закрыть экономику', () => lockEcon('Экономика закрыта')] : null]) }] : []),
       ...linkList.map((l) => ({ key: 'link:' + l.path, icon: '📂', badge: true, name: l.name, open: () => openLink(l), menu: (x, y) => linkMenu(x, y, l) })),
@@ -616,7 +807,7 @@
             type: 'button', class: 'pp-icon-btn' + (home.selected === ic.key ? ' pp-selected' : ''), title: ic.name,
             onclick: () => { if (small()) ic.open(); else if (home.selected !== ic.key) { home.selected = ic.key; render(); } },
             ondblclick: ic.open,
-            oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); ic.menu(e.clientX, e.clientY); },
+            oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); if (ic.menu) ic.menu(e.clientX, e.clientY); else popup(e.clientX, e.clientY, [['Открыть', ic.open]]); },
           }, h('span', { class: 'pp-icon-img' + (ic.badge ? ' pp-shortcut' : '') }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
         visible.map(windowEl))),
       h('footer', { class: 'pp-taskbar' },
@@ -771,6 +962,7 @@
       ['-'], ['+ Сделано', () => withCtx(p.path, (c) => doneForm(c, { date: today }))], ['+ Задача', () => withCtx(p.path, (c) => taskForm(c, { date: today }))],
       econVisible() ? ['-'] : null, econVisible() ? ['💼 Экономика объекта', () => openEconomy(p.path)] : null,
       ['-'], ['Открыть папку на Диске', () => window.open(D.webFolder(p.path), '_blank', 'noopener')],
+      ['🗑️ Удалить объект…', () => changeProjectState(p, 'delete')],
       extra ? ['Убрать с рабочего стола', () => { setExtra(extraProjects().filter((x) => x !== p.path)); loadProjects(); }] : null,
     ]);
   }
@@ -987,7 +1179,7 @@
       h('div', { class: 'pp-row pp-between pp-wrap' },
         h('div', { class: 'pp-row' }, button('Открытые (' + all.filter((r) => r.status !== 'DONE').length + ')', () => { w.remarkFilter = 'open'; render(); }, w.remarkFilter === 'open' ? 'pp-primary' : ''),
           button('Все (' + all.length + ')', () => { w.remarkFilter = 'all'; render(); }, w.remarkFilter === 'all' ? 'pp-primary' : '')),
-        button('+ Замечание', () => remarkForm(c, null), 'pp-primary')),
+        h('div', { class: 'pp-row pp-wrap' }, button('Отчёт с фото и чертежами', () => reportDialogNew(c, 'report')), button('Предписание', () => reportDialogNew(c, 'prescription')), button('+ Замечание', () => remarkForm(c, null), 'pp-primary'))),
       list.length ? h('section', { class: 'pp-card' }, list.map((r) => {
         const late = r.status !== 'DONE' && r.dueDate && r.dueDate < today;
         const photos = P.attachmentsOf(r.id).length;
@@ -3303,6 +3495,7 @@
   function reloadFolder(base, rel) {
     if (base === HOME && !rel) loadHome();
     wins.filter((w) => w.kind === 'explorer' && w.base === base && w.path === rel).forEach(loadFolder);
+    wins.filter((w) => w.kind === 'documents' && base.startsWith(w.folder + '/')).forEach((w) => loadDocuments(w, ctxs[w.folder]));
     render();
   }
 
@@ -3673,6 +3866,8 @@
   }
 
   // ───────── запуск ─────────
+  window.addEventListener('error', (e) => log('error', 'Ошибка интерфейса', e.message));
+  window.addEventListener('unhandledrejection', (e) => log('error', 'Незавершённое действие', e.reason instanceof Error ? e.reason.message : 'Необработанная ошибка. Повторите действие и проверьте события Диска выше.'));
   async function start() {
     if (starting || disk) return;
     starting = true;
@@ -3684,6 +3879,7 @@
       const user = await candidate.user();
       accountId = user.uid;
       store = R.accountStorage(rawStorage, PREFIX, user.uid);
+      diagnostics = new window.ProrabDiagnostics.Log(store, [token]);
       writerLease = await R.acquireWriter(store, navigator.locks);
       me = writerLease.id;
       ROOT = D.normalize(store.get('root') || app.dataset.root || '/Прораб+');
@@ -3693,7 +3889,8 @@
       extraList = store.json('extra', []);
       linkList = store.json('links', []);
       clock.last = Number(store.get('clock')) || 0;
-      disk = candidate;
+      disk = diagnostics.watch(candidate);
+      log('info', 'Вход', 'Кабинет открыт, версия ' + (app.dataset.version || '22'));
     } catch (e) { starting = false; return fail(e); }
     starting = false;
     render();
