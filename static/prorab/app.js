@@ -9,7 +9,7 @@
   'use strict';
   const S = window.ProrabSync, M = window.ProrabModel, D = window.ProrabDisk, SCHEMA = window.PRORAB_SCHEMA, O = window.ProrabOffice;
   const R = window.ProrabPersistence;
-  const L = window.ProrabLifecycle, DOC = window.ProrabDocuments, REPORT = window.ProrabRemarksReport;
+  const L = window.ProrabLifecycle, C = window.ProrabProjectCreate, DOC = window.ProrabDocuments, REPORT = window.ProrabRemarksReport;
   const app = document.getElementById('prorab');
   const CLIENT_ID = app.dataset.clientId || '';
   const DOCS = 'Документы';
@@ -118,6 +118,7 @@
     try { if (diagnostics) diagnostics.add(level, operation, message, project, code); } catch (_) { /* logging never blocks work */ }
   }
   let projectsError = null;
+  let projectScan = 0;
   let found = null; // объекты в других папках Диска (если в папке рабочего стола их нет): [{ parent, names }]
   const ctxs = {}; // папка объекта → { path, project, loading, error, saving, saveTimer, status }
   let wins = [];
@@ -254,29 +255,37 @@
 
   /** Объекты: папки «Прораб+/…» с папкой data (так их создаёт телефон) и добавленные вручную. */
   async function loadProjects() {
+    const scan = ++projectScan;
     projectsError = null;
     try {
       const root = (await disk.list(ROOT)) || [];
       const paths = root.filter((i) => i.type === 'dir' && !i.name.startsWith('.')).map((i) => ROOT + '/' + i.name);
       for (const p of extraProjects()) if (!paths.includes(p)) paths.push(p);
-      const list = [], removed = [];
+      const list = [], removed = [], errors = [];
+      const previous = (projects || []).concat(deletedProjects);
       for (let i = 0; i < paths.length; i += 6) {
         const part = paths.slice(i, i + 6);
-        const ok = await Promise.all(part.map((p) => hasData(p).catch(() => false)));
-        await Promise.all(part.map(async (p, k) => {
-          if (!ok[k]) return;
+        await Promise.all(part.map(async (p) => {
           try {
+            if (!await hasData(p)) return;
             const lifecycle = await L.read(disk, p);
             (lifecycle && lifecycle.action === 'delete' ? removed : list).push({ path: p, name: projName(p), lifecycle });
-          } catch (e) { list.push({ path: p, name: projName(p) }); log('error', 'Состояние объекта', e.message, p, e.status); }
+          } catch (e) {
+            const old = previous.find((x) => x.path === p);
+            if (old) (old.lifecycle && old.lifecycle.action === 'delete' ? removed : list).push(old);
+            errors.push(lastName(p) + ': ' + e.message); log('error', 'Список объектов', e.message, p, e.status);
+          }
         }));
       }
+      if (scan !== projectScan) return;
       projects = list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
       deletedProjects = removed.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-      if (!projects.length && found === null) discover();
+      projectsError = errors.length ? 'Не все папки удалось проверить. Повторите обновление. ' + errors.join('; ') : null;
+      if (!projects.length && !projectsError && found === null) discover();
       const isProject = new Set(list.concat(removed).map((p) => p.path));
       home.items = sortItems(root.filter((i) => !isProject.has(ROOT + '/' + i.name)));
     } catch (e) {
+      if (scan !== projectScan) return;
       home.items = home.items || [];
       projects = projects || [];
       projectsError = e.message;
@@ -334,11 +343,12 @@
   }
 
   async function readFiles(path) {
-    const items = (await disk.list(path + '/data')) || [];
+    const items = await disk.list(path + '/data');
+    if (items === null) throw new Error('Папка данных объекта отсутствует на Диске. Проверьте путь и повторите обновление.');
     const out = [];
     for (const it of items.filter((i) => i.type === 'file' && i.name.endsWith('.json'))) {
       const text = await disk.getText(path + '/data/' + it.name);
-      if (text === null) continue;
+      if (text === null) throw new Error('Файл устройства исчез во время синхронизации: ' + it.name + '. Повторите обновление.');
       let j;
       try { j = JSON.parse(text); } catch (e) { throw new Error('Повреждены данные на Диске: ' + it.name + '. Повторите позже.'); }
       if (!S.validFile(j)) throw new Error('Неизвестный формат данных: ' + it.name + '. Обновите приложение на телефоне.');
@@ -411,10 +421,13 @@
       await L.assertActive(disk, c.path, c.project.projectId);
       const files = await readFiles(c.path);
       if (modalOpen() || c.saving) return; // форма или сохранение начались во время чтения Диска
+      if (!files.length || files.some((f) => f.projectId !== c.project.projectId)) throw new Error('Состав файлов объекта изменился. Правки сохранены в браузере; проверьте папку на Диске.');
       const mine = S.toFile(c.project.state, c.project.projectId, c.project.project.name, me);
       const dirty = c.project.dirty;
       c.project.state = S.mergeFiles(files.concat([mine]), c.project.projectId, clock);
       c.project.dirty = dirty;
+      c.error = null;
+      if (dirty) { persist(c); scheduleSave(c); }
       store.set('clock', String(clock.last));
       c.status = 'Обновлено в ' + time();
       log('info', 'Синхронизация: чтение', 'Прочитано файлов устройств: ' + files.length, c.path);
@@ -457,6 +470,7 @@
     try {
       await L.assertActive(targetDisk, c.path, c.project.projectId);
       await targetDisk.putText(c.path + '/data/' + me + '.json', text);
+      if (await targetDisk.getText(c.path + '/data/' + me + '.json') !== text) throw new Error('Диск пока не подтвердил сохранение. Правки сохранены в браузере и будут отправлены повторно.');
       c.drafts.acknowledge(drafts);
       c.project.dirty = c.project.revision !== revision;
       if (c.project.dirty) { persist(c); scheduleSave(c, 0); }
@@ -637,28 +651,48 @@
     const wrap = h('div', { class: 'pp-modal' }, form); document.body.append(wrap);
   }
 
-  /** Новый объект с компьютера: папка «Прораб+/<название>» и файл этого устройства; на телефоне — «Открыть из облака». */
-  async function newProject() {
-    const name = (prompt('Название объекта', 'Новый объект') || '').trim();
-    if (!name) return;
-    if (!validName(name)) return alert('В названии нельзя использовать \\ / : * ? " < > |');
-    try {
-      await disk.mkdir(ROOT);
-      let path = ROOT + '/' + name;
-      for (let i = 2; await disk.list(path) !== null; i++) path = ROOT + '/' + name + ' (' + i + ')';
-      await disk.mkdir(path); await disk.mkdir(path + '/data'); await disk.mkdir(path + '/files');
-      const pid = S.newId();
-      const project = new M.Project({}, SCHEMA, pid, me, clock);
-      project.put('projects', pid, { name });
-      DEFAULT_UNITS.forEach((u) => project.put('units', S.newId(), { projectId: pid, name: u }));
-      await disk.putText(path + '/data/' + me + '.json', JSON.stringify(S.toFile(project.state, pid, name, me)));
-      store.set('clock', String(clock.last));
-      const names = store.json('names', {}); names[path] = name; store.set('names', JSON.stringify(names));
-      projects = (projects || []).concat([{ path, name }]).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-      setStatus('Создан объект «' + name + '». В телефоне: «Открыть из облака» → папка ' + path);
-      openWindow('project', path);
-      withCtx(path, (c) => cardForm(c, { title: 'Новый объект — карточка', note: 'Заполните, что знаете: адрес, участников, сроки. Остальное можно дописать позже. Чертежи — в окне объекта «Чертежи».' }));
-    } catch (e) { alert(e.message); }
+  /** New project is acknowledged only after readback; retries keep the same ID and folder. */
+  function newProject() {
+    if (modalOpen()) return;
+    const targetDisk = disk, targetRoot = ROOT, targetStore = store, device = me;
+    const key = C.KEY + ':' + device;
+    let task = null, busy = false;
+    try { const raw = targetStore.get(key); if (raw) task = C.validate(JSON.parse(raw)); }
+    catch (e) { log('error', 'Создание объекта', e.message); notify(e.message, true); return; }
+    const name = h('input', { type: 'text', required: true, maxlength: 120, value: task ? task.name : '', placeholder: 'Например, Склад на Северной' });
+    const note = h('p', { class: 'pp-muted', role: 'status' }, task ? 'Есть незавершённое создание. Повтор продолжит его в той же папке.' : 'После создания можно заполнить карточку, добавить чертежи, работы и документы.');
+    const submit = h('button', { type: 'submit', class: 'pp-btn pp-primary' }, task ? 'Повторить создание' : 'Создать');
+    const close = () => { if (!busy) wrap.remove(); };
+    const checkpoint = (t) => { if (!targetStore.set(key, JSON.stringify(t))) throw new Error('Браузер не смог запомнить незавершённое создание. Разрешите сохранение данных сайта и повторите.'); };
+    name.disabled = !!task;
+    const abandon = button('Начать другой объект', () => {
+      if (busy || !task || !confirm('Снять незавершённое создание? Уже записанные папки и данные останутся на Диске; проверьте рабочий стол перед созданием другого объекта.')) return;
+      if (!targetStore.set(key, null)) return notify('Браузер не смог удалить незавершённое создание. Повторите позже.', true);
+      task = null; name.disabled = false; name.value = ''; submit.textContent = 'Создать'; note.className = 'pp-muted'; note.textContent = 'Введите название нового объекта.'; abandon.hidden = true; loadProjects();
+    });
+    abandon.hidden = !task;
+    const form = h('form', { class: 'pp-dialog', onsubmit: async (e) => {
+      e.preventDefault(); if (busy) return;
+      busy = true; submit.disabled = true; name.disabled = true; note.className = 'pp-muted'; note.textContent = 'Создаю объект и проверяю запись на Диске…';
+      try {
+        if (!task) task = C.prepare(targetRoot, name.value.trim(), device, SCHEMA, clock, DEFAULT_UNITS);
+        const result = await C.commit(targetDisk, task, checkpoint);
+        targetStore.set(key, null); targetStore.set('clock', String(clock.last));
+        const names = targetStore.json('names', {}); names[result.path] = result.name; targetStore.set('names', JSON.stringify(names));
+        if (task.root !== ROOT) setExtra(extraProjects().concat([result.path]));
+        log('info', 'Создание объекта', 'Создание подтверждено на Диске', result.path);
+        busy = false; close(); await loadProjects();
+        notify('Создан объект «' + result.name + '». В телефоне: «Открыть из облака» → ' + result.path);
+        openWindow('project', result.path);
+        withCtx(result.path, (c) => cardForm(c, { title: 'Новый объект — карточка', note: 'Объект сохранён на Диске. Заполните известные данные. На телефоне: «Открыть из облака» → ' + result.path }));
+      } catch (error) {
+        log('error', 'Создание объекта', error.message, task && task.path, error.status);
+        note.className = 'pp-error'; note.textContent = error.message;
+      } finally { busy = false; submit.disabled = false; name.disabled = !!task; abandon.hidden = !task; submit.textContent = task ? 'Повторить создание' : 'Создать'; }
+    } }, h('div', { class: 'pp-row pp-between' }, h('h2', null, 'Создать объект'), button('✕', close, 'pp-icon')),
+    field('Название объекта', name), h('p', { class: 'pp-muted' }, 'Папка рабочего стола: ' + (task ? task.root : targetRoot)), note,
+    h('div', { class: 'pp-row pp-wrap' }, submit, button('Закрыть', close), abandon));
+    const wrap = h('div', { class: 'pp-modal' }, form); document.body.append(wrap); if (!task) name.focus();
   }
 
   // ───────── окна ─────────
@@ -781,6 +815,7 @@
     const scroll = {};
     document.querySelectorAll('.pp-win').forEach((el) => { const b = el.querySelector('.pp-winbody'); if (b) scroll[el.dataset.key] = b.scrollTop; });
     const icons = [
+      { key: 'create', icon: '➕', name: 'Создать объект', single: true, open: newProject },
       { key: 'logs', icon: '📜', name: 'Логи', open: () => openWindow('logs') },
       { key: 'trash', icon: '🗑️', name: 'Удалённые объекты', open: () => { loadProjects(); openWindow('trash'); } },
       ...(projects || []).map((p) => ({ key: 'proj:' + p.path, icon: '🏗️', name: p.name, open: () => openWindow('project', p.path), menu: (x, y) => projectMenu(x, y, p) })),
@@ -794,18 +829,18 @@
       wallEl(h('div', { class: 'pp-desktop', oncontextmenu: (e) => { if (e.target.classList.contains('pp-desktop') || e.target.classList.contains('pp-icons')) { e.preventDefault(); homeMenu(e.clientX, e.clientY); } } },
         h('div', { class: 'pp-icons', onclick: (e) => { if (e.target.classList.contains('pp-icons')) { home.selected = null; render(); } } },
           projects === null ? h('p', { class: 'pp-desk-note' }, 'Ищу объекты на Диске…') : null,
-          projects && !projects.length ? h('div', { class: 'pp-desk-note' },
+          projects && !projects.length && !projectsError ? h('div', { class: 'pp-desk-note' },
             h('p', null, 'Рабочий стол — папка «' + lastName(ROOT) + '» на вашем Яндекс Диске. Объектов в ней пока нет.'),
             found === null ? h('p', null, 'Ищу объекты в других папках Диска…') :
               found.length ? h('div', null, found.map((g) => h('div', { class: 'pp-found' },
                 h('p', null, 'Найдены объекты в папке «' + (g.parent === '/' ? 'корень Диска' : g.parent) + '»: ' + g.names.join(', ')),
                 g.parent !== '/' ? button('Сделать «' + lastName(g.parent) + '» рабочим столом' + (ROOT_SAVE ? ' для всех' : ''), () => chooseRoot(g.parent), 'pp-primary') : null,
                 button('Показать эти объекты здесь', () => { setExtra(extraProjects().concat(g.names.map((n) => (g.parent === '/' ? '' : g.parent) + '/' + n))); loadProjects(); })))) :
-                h('p', null, 'Объектов на Диске не нашлось. Подключите объект к облаку в телефоне (папка «' + lastName(ROOT) + '») или создайте его здесь: правый щелчок → «Новый объект».')) : null,
+                h('p', null, 'Объектов на Диске не нашлось. Подключите объект к облаку в телефоне (папка «' + lastName(ROOT) + '») или нажмите «Создать объект» на рабочем столе.')) : null,
           projectsError ? h('p', { class: 'pp-desk-note pp-error' }, projectsError) : null,
           icons.map((ic) => h('button', {
             type: 'button', class: 'pp-icon-btn' + (home.selected === ic.key ? ' pp-selected' : ''), title: ic.name,
-            onclick: () => { if (small()) ic.open(); else if (home.selected !== ic.key) { home.selected = ic.key; render(); } },
+            onclick: () => { if (small() || ic.single) ic.open(); else if (home.selected !== ic.key) { home.selected = ic.key; render(); } },
             ondblclick: ic.open,
             oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); if (ic.menu) ic.menu(e.clientX, e.clientY); else popup(e.clientX, e.clientY, [['Открыть', ic.open]]); },
           }, h('span', { class: 'pp-icon-img' + (ic.badge ? ' pp-shortcut' : '') }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
@@ -1005,7 +1040,8 @@
       h('p', { class: 'pp-muted' }, 'Сегодня в плане: ' + plan + (late ? ' · просрочено: ' + late : '') + ' · записей «Сделано» за 7 дней: ' + done + (openRemarks ? ' · открытых замечаний: ' + openRemarks : '') + ' · ' + c.status),
       h('div', { class: 'pp-files' }, PROJECT_APPS.map((k) => h('button', { type: 'button', class: 'pp-file', ondblclick: () => openWindow(k, w.folder), onclick: () => { if (small()) openWindow(k, w.folder); } },
         h('span', { class: 'pp-icon-img' }, APPS[k].icon), h('span', { class: 'pp-icon-name' }, APPS[k].title)))),
-      h('div', { class: 'pp-row pp-wrap' }, button('📄 Отчёт за сегодня', () => reportDialog(c, today)), button('⟳ Обновить', async () => { await refreshCtx(c); render(); })));
+      h('div', { class: 'pp-row pp-wrap' }, button('📄 Отчёт за сегодня', () => reportDialog(c, today)), button('⟳ Обновить', async () => { await refreshCtx(c); render(); }),
+        button('Удалить объект…', () => changeProjectState({ path: c.path, name: p.name }, 'delete'))));
   }
 
   // ───────── журнал, календарь, ведомость, финансы ─────────
@@ -3890,7 +3926,7 @@
       linkList = store.json('links', []);
       clock.last = Number(store.get('clock')) || 0;
       disk = diagnostics.watch(candidate);
-      log('info', 'Вход', 'Кабинет открыт, версия ' + (app.dataset.version || '22'));
+      log('info', 'Вход', 'Кабинет открыт, версия ' + (app.dataset.version || '23'));
     } catch (e) { starting = false; return fail(e); }
     starting = false;
     render();

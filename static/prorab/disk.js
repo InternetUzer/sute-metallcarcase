@@ -215,6 +215,20 @@
       finally { if (this.folders.get(key) === work) this.folders.delete(key); }
     }
 
+    /** Reserve a NEW directory. Unlike mkdir, never reuse another client's project. */
+    async mkdirExclusive(path) {
+      const key = diskPath(path);
+      const r = await this.call('PUT', '/resources', { path: key });
+      if (r.ok) { await this.completed(r); return true; }
+      if (r.status === 409) {
+        const existing = await this.call('GET', '/resources', { path: key, fields: 'type' });
+        if (existing.ok && ['dir', 'file'].includes((await existing.json()).type)) return false;
+        if (existing.status === 404) throw new DiskError('Не удалось создать объект: родительская папка отсутствует. Обновите рабочий стол.', 409);
+        throw await this.writeError(existing, 'Не удалось проверить имя объекта');
+      }
+      throw await this.writeError(r, 'Не удалось создать объект');
+    }
+
     /** An existing directory needs no PUT; 409 alone does not prove it exists. */
     async ensureFolder(path) {
       const directory = async (response) => {

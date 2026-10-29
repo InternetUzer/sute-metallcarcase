@@ -119,6 +119,14 @@ test('асинхронное создание папки дожидается з
 });
 
 const uploadHref = 'https://uploader1d.dst.yandex.net:443/upload-target/signed-test';
+
+test('project folder reservation distinguishes new, occupied and missing-parent paths', async () => {
+  assert.equal(await client([[201, {}]]).disk.mkdirExclusive('/new'), true);
+  for (const type of ['dir', 'file']) assert.equal(await client([[409, {}], [200, { type }]]).disk.mkdirExclusive('/taken'), false);
+  await assert.rejects(client([[409, {}], [404, {}]]).disk.mkdirExclusive('/missing/new'), /родительская папка/);
+  await assert.rejects(client([[423, {}]]).disk.mkdirExclusive('/new'), e => e.status === 423);
+  assert.equal(await client([[202, { href: 'https://cloud-api.yandex.net/v1/disk/operations/new' }], [200, { status: 'success' }]]).disk.mkdirExclusive('/new'), true);
+});
 const uploadOptions = { uploadUrl: '/prorab/upload', csrf: 'test-csrf' };
 
 test('JSON and Word bytes use same-origin upload without giving the site the OAuth key', async () => {

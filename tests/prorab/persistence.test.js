@@ -95,7 +95,7 @@ function application() {
   let source = fs.readFileSync('static/prorab/app.js', 'utf8');
   source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, `
     render = () => {};
-    window.review = { save, refreshCtx, persistAll, changed, takeTokenFromUrl, beginYandexLogin,
+    window.review = { save, refreshCtx, readFiles, persistAll, changed, takeTokenFromUrl, beginYandexLogin,
       changedEcon, saveEcon, lockEcon, econ,
       setup(c, fakeDisk) {
         disk = { ...fakeDisk, list: (path) => path.endsWith('/.prorab-lifecycle') ? Promise.resolve([]) : fakeDisk.list(path) }; me = 'web-test';
@@ -115,7 +115,8 @@ function application() {
 test('edit while upload is in flight remains durable after the earlier upload succeeds', async () => {
   const { api, c, p } = application();
   let complete, uploaded;
-  api.setup(c, { putText: async (path, text) => { uploaded = JSON.parse(text); await new Promise((r) => { complete = r; }); } });
+  let stored;
+  api.setup(c, { getText: async () => stored, putText: async (path, text) => { uploaded = JSON.parse(text); await new Promise((r) => { complete = r; }); stored = text; } });
   const saving = api.save(c);
   await new Promise((resolve) => setImmediate(resolve));
   p.put('projects', 'p', { address: 'Added during upload' });
@@ -129,7 +130,8 @@ test('edit while upload is in flight remains durable after the earlier upload su
 test('network error retains draft and retry acknowledges it only after success', async () => {
   const { api, c, p } = application();
   let failing = true;
-  api.setup(c, { putText: async () => { if (failing) throw new Error('offline'); } });
+  let stored;
+  api.setup(c, { getText: async () => stored, putText: async (path, text) => { if (failing) throw new Error('offline'); stored = text; } });
   await api.save(c);
   assert.equal(p.dirty, true); assert.equal(c.drafts.read().length, 1);
   failing = false; await api.save(c);
@@ -145,6 +147,39 @@ test('refresh preserves Project reference captured by an ongoing drawing upload'
   p.addDrawing({ id: 'drawing', name: 'План', kind: 'pdf', file: 'drawing.pdf', pages: 1 });
   await Promise.resolve();
   assert.equal(c.drafts.read()[0].file.tables.drawings[0].id, 'drawing');
+});
+
+test('accepted upload without confirmed readback retains edits for retry', async () => {
+  const { api, c, p } = application();
+  let stored = null, confirm = false;
+  api.setup(c, { putText: async (path, text) => { stored = text; }, getText: async () => confirm ? stored : null });
+  await api.save(c);
+  assert.equal(p.dirty, true); assert.equal(c.drafts.read().length, 1);
+  confirm = true; await api.save(c);
+  assert.equal(p.dirty, false); assert.equal(c.drafts.read().length, 0);
+});
+
+test('missing directory, vanished JSON and foreign project cannot become a successful refresh', async () => {
+  for (const kind of ['directory', 'file', 'foreign', 'empty']) {
+    const { api, c, p } = application();
+    const foreign = { ...S.toFile(p.state, 'p', 'Объект', 'phone'), projectId: 'other' };
+    api.setup(c, { list: async () => kind === 'directory' ? null : kind === 'empty' ? [] : [{ type: 'file', name: 'phone.json' }], getText: async () => kind === 'file' ? null : JSON.stringify(foreign) });
+    const before = JSON.stringify(p.state);
+    await api.refreshCtx(c);
+    assert.equal(JSON.stringify(p.state), before);
+    assert.ok(!c.status.startsWith('Обновлено'), kind);
+  }
+});
+
+test('a restored remote object clears the previous deleted error and retains unsent edits', async () => {
+  const { api, c, p } = application();
+  c.error = 'Объект удалён';
+  const phone = S.toFile(p.state, 'p', 'Объект', 'phone');
+  api.setup(c, { list: async () => [{ type: 'file', name: 'phone.json' }], getText: async () => JSON.stringify(phone) });
+  p.put('projects', 'p', { address: 'Несохранённый адрес' });
+  await api.refreshCtx(c);
+  assert.equal(c.error, null); assert.equal(p.project.address, 'Несохранённый адрес');
+  assert.equal(p.dirty, true); assert.equal(c.drafts.read()[0].file.tables.projects[0].address, 'Несохранённый адрес');
 });
 
 
