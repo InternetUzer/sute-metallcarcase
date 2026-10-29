@@ -98,7 +98,7 @@ function application() {
     window.review = { save, refreshCtx, readFiles, persistAll, changed, takeTokenFromUrl, beginYandexLogin,
       changedEcon, saveEcon, lockEcon, econ,
       setup(c, fakeDisk) {
-        disk = { ...fakeDisk, list: (path) => path.endsWith('/.prorab-lifecycle') ? Promise.resolve([]) : fakeDisk.list(path) }; me = 'web-test';
+        disk = { ...fakeDisk, list: (path) => path.endsWith('/.prorab-lifecycle') ? Promise.resolve([]) : fakeDisk.list ? fakeDisk.list(path) : Promise.resolve([]) }; me = 'web-test';
         store = R.accountStorage(rawStorage, PREFIX, 'test-account');
         c.drafts = new R.Drafts(store, c.path, c.project.projectId, me);
         ctxs[c.path] = c; watchChanges(c);

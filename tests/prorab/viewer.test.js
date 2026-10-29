@@ -4,7 +4,7 @@ const SH = require('../../static/prorab/shapes.js');
 const DXF = require('../../static/prorab/dxf.js');
 
 function setup(kind = 'dxf', shapes = [], lines = []) {
-  const strokes = [], frames = [], made = [], placed = [], picked = [], measurements = [];
+  const strokes = [], frames = [], made = [], placed = [], picked = [], measurements = [], edits = [];
   const ctx2d = new Proxy({}, { get(target, key) {
     if (key in target) return target[key];
     if (key === 'stroke') return () => strokes.push(true);
@@ -27,13 +27,13 @@ function setup(kind = 'dxf', shapes = [], lines = []) {
   }; } };
   const viewer = window.ProrabViewer.create(host, { kind, pdf, shapes, notes: [], metersPerUnit: 0.001,
     dxf: { originX: 1000000, originY: 2000000, fitBox: [0, 0, 1000, 1000], lines, texts: [] },
-    onMeasure: (value) => measurements.push(value), onShape: (s) => made.push(s), onPlace: (...args) => placed.push(args), onShapePick: (id) => picked.push(id) });
+    onShapeEdit: (edit) => edits.push(edit), onMeasure: (value) => measurements.push(value), onShape: (s) => made.push(s), onPlace: (...args) => placed.push(args), onShapePick: (id) => picked.push(id) });
   const click = (x, y, altKey = false) => {
     host.canvas.events.pointerdown({ pointerId: 1, offsetX: x, offsetY: y });
     host.canvas.events.pointerup({ pointerId: 1, offsetX: x, offsetY: y, type: 'pointerup', altKey });
   };
   const draw = () => { strokes.length = 0; while (frames.length) frames.shift()(); return strokes.length; };
-  return { viewer, click, made, placed, picked, draw, measurements, move(x, y) { host.canvas.events.pointermove({ pointerId: 9, offsetX: x, offsetY: y }); }, ctx2d };
+  return { viewer, click, made, placed, picked, draw, measurements, edits, escape() { host.canvas.events.keydown({ key: 'Escape', preventDefault() {} }); }, move(x, y) { host.canvas.events.pointermove({ pointerId: 9, offsetX: x, offsetY: y }); }, ctx2d };
 }
 
 test('линии с телефона видны на своём листе PDF, скрываются и выбираются касанием', async () => {
@@ -130,4 +130,16 @@ test('замер угла использует три точки без угло
   assert.doesNotThrow(draw);
   viewer.setMode('place');
   assert.equal(measurements.at(-1), null);
+});
+
+
+test('shape editing cancels on PDF page change, placing a note, hiding shapes or Escape', async () => {
+  const row={id:'shape',kind:'line',points:'100,100;300,300',page:0};
+  const {viewer,click,edits,placed,escape}=setup('pdf',[row]);await new Promise(setImmediate);
+  viewer.setEdit({op:'move',id:'shape'});click(400,400);assert.equal(viewer.editing.step,1);
+  await viewer.setPage(1);assert.equal(viewer.editing,null);click(600,600);assert.equal(edits.length,0);
+  await viewer.setPage(0);viewer.setEdit({op:'copy',id:'shape'});click(400,400);viewer.setMode('place');click(600,600);
+  assert.equal(viewer.editing,null);assert.equal(edits.length,0);assert.equal(placed.length,1);
+  viewer.setMode('view');viewer.setEdit({op:'move',id:'shape'});escape();assert.equal(viewer.editing,null);
+  viewer.setEdit({op:'move',id:'shape'});viewer.setShapesVisible(false);assert.equal(viewer.editing,null);
 });

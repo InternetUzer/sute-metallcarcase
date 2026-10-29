@@ -237,3 +237,16 @@ def anchor_token(client):
     client.get('/prorab')
     with client.session_transaction() as session:
         return session['csrf']
+
+
+@pytest.mark.parametrize('previous', ['/прораб+', '/Прораб +', '/ПРОРАБ+ (2)/'])
+def test_old_workspace_alias_uses_current_default(app, previous):
+    with sqlite3.connect(app.config['DATABASE']) as db:
+        db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)', ('prorab_root', previous))
+    assert 'data-root="/Диск Прораб+"' in app.test_client().get('/prorab').get_data(as_text=True)
+
+
+def test_custom_workspace_is_not_renamed_by_default_change(app):
+    with sqlite3.connect(app.config['DATABASE']) as db:
+        db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)', ('prorab_root', '/Прораб+ Спецпроект'))
+    assert 'data-root="/Прораб+ Спецпроект"' in app.test_client().get('/prorab').get_data(as_text=True)

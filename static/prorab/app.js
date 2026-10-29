@@ -25,8 +25,9 @@
   // Рабочий стол — сама папка «Прораб+» (у приглашённого в общую папку она может называться иначе —
   // выбирается в меню «Папка рабочего стола»): объекты (папки с data) и всё, что создано на рабочем столе
   // Порядок: своя папка этого браузера (у приглашённого общая папка может называться иначе) → папка,
-  // закреплённая владельцем на сайте (data-root) → «Прораб+»
+  // закреплённая владельцем на сайте (data-root) → «Диск Прораб+»
   const DEFAULT_ROOT = '/Диск Прораб+';
+  const oldRoot = (p) => /^\/прораб\s*\+(?:\s+\(\d+\))?$/i.test(D.normalize(p));
   let ROOT = D.normalize(app.dataset.root || DEFAULT_ROOT);
   const ROOT_SAVE = app.dataset.rootSave || '';
   let HOME = ROOT;
@@ -119,7 +120,21 @@
     try { if (diagnostics) diagnostics.add(level, operation, message, project, code); } catch (_) { /* logging never blocks work */ }
   }
   let projectsError = null;
-  let projectScan = 0;
+  let projectScan = 0, projectLoad = null, projectRescan = false, homeRevision = 0, refreshRun = null;
+  const windowObservers = [];
+  let backgroundRender = null;
+  function renderSoon() {
+    if (backgroundRender !== null) return;
+    backgroundRender = setTimeout(() => { backgroundRender = null; if (!modalOpen()) render(); }, 32);
+  }
+  async function mapLimited(items, count, action) {
+    const results = new Array(items.length); let next = 0;
+    await Promise.all(Array.from({ length: Math.min(count, items.length) }, async () => {
+      while (next < items.length) { const i = next++; results[i] = await action(items[i], i); }
+    }));
+    return results;
+  }
+  let discovering = false;
   let found = null; // объекты в других папках Диска (если в папке рабочего стола их нет): [{ parent, names }]
   const ctxs = {}; // папка объекта → { path, project, loading, error, saving, saveTimer, status }
   let wins = [];
@@ -149,10 +164,35 @@
     store.set('extra', JSON.stringify(extraList));
     saveDesk();
   }
+  let deskRevision = 0, deskPending = null, deskSaving = null;
+  const deskDraftKey = () => 'desktop-pending:' + ROOT;
   function saveDesk() {
     const conf = { version: 1, wall: wall.kind === 'image' ? { kind: 'image', file: wall.file } : { kind: 'preset', id: wall.id }, extra: extraList, links: linkList };
-    return disk.mkdir(ROOT).then(() => disk.putText(DESK_FILE, JSON.stringify(conf, null, 1)))
-      .then(() => setStatus('Настройки рабочего стола сохранены на Диске'), (e) => setStatus('Настройки не сохранились на Диске: ' + e.message, true));
+    deskRevision++;
+    deskPending = JSON.stringify(conf, null, 1);
+    if (!store.set(deskDraftKey(), deskPending)) setStatus('Настройки пока только в памяти. Не закрывайте вкладку до сохранения на Диск.', true);
+    return flushDesk();
+  }
+  function flushDesk() {
+    if (deskSaving) return deskSaving;
+    if (!deskPending) return Promise.resolve();
+    deskSaving = (async () => {
+      try {
+        while (deskPending) {
+          const captured = deskPending;
+          await disk.mkdir(ROOT);
+          if (captured !== deskPending) continue;
+          await disk.putText(DESK_FILE, captured);
+          if (await disk.getText(DESK_FILE) !== captured) throw new Error('Диск пока не подтвердил запись');
+          if (captured === deskPending) {
+            deskPending = null;
+            if (store.get(deskDraftKey()) === captured) store.set(deskDraftKey(), null);
+          }
+        }
+        setStatus('Настройки рабочего стола сохранены на Диске');
+      } catch (e) { setStatus('Настройки не сохранились на Диске: ' + e.message + '. Повторю при обновлении.', true); }
+    })().finally(() => { deskSaving = null; });
+    return deskSaving;
   }
 
   function setStatus(text, error) {
@@ -265,6 +305,7 @@
       if (!c || c.root !== ROOT || !Array.isArray(c.list) || !Array.isArray(c.removed)) return;
       const ok = (x) => x && typeof x.path === 'string' && typeof x.name === 'string';
       projects = c.list.filter(ok); deletedProjects = c.removed.filter(ok);
+      if (Array.isArray(c.items)) home.items = sortItems(c.items.filter(x => x && typeof x.name === 'string' && ['file', 'dir'].includes(x.type)));
     } catch (_) { /* нет — ищем как обычно */ }
   }
 
@@ -273,8 +314,18 @@
    * Один запрос на папку: отметку об удалении видно в том же списке. Проверка идёт непрерывным потоком
    * (до 8 папок одновременно); без списка с прошлого раза объекты показываются по мере нахождения.
    */
-  async function loadProjects() {
-    const scan = ++projectScan;
+  function cacheDesktop() {
+    if (projects !== null) store.set(CACHE_KEY, JSON.stringify({ root: ROOT, list: projects, removed: deletedProjects, items: home.items }));
+  }
+  function loadProjects(afterChange) {
+    if (projectLoad) { if (afterChange === true) projectRescan = true; return projectLoad; }
+    projectLoad = (async () => {
+      do { projectRescan = false; await scanProjects(); } while (projectRescan);
+    })().finally(() => { projectLoad = null; });
+    return projectLoad;
+  }
+  async function scanProjects() {
+    const scan = ++projectScan, revision = homeRevision;
     projectsError = null;
     projectsRefreshing = true;
     try {
@@ -300,7 +351,7 @@
             errors.push(lastName(p) + ': ' + e.message); log('error', 'Список объектов', e.message, p, e.status);
           }
           // Первого открытия без списка с прошлого раза: показываем найденное сразу
-          if (progressive && scan === projectScan && list.length !== shown && !modalOpen()) { shown = list.length; projects = list.slice().sort(byName); render(); }
+          if (progressive && scan === projectScan && list.length !== shown && !modalOpen()) { shown = list.length; projects = list.slice().sort(byName); renderSoon(); }
         }
       };
       await Promise.all(Array.from({ length: Math.min(8, paths.length) }, worker));
@@ -308,10 +359,10 @@
       projects = list.sort(byName);
       deletedProjects = removed.sort(byName);
       projectsError = errors.length ? 'Не все папки удалось проверить. Повторите обновление. ' + errors.join('; ') : null;
-      if (!errors.length) store.set(CACHE_KEY, JSON.stringify({ root: ROOT, list: projects, removed: deletedProjects }));
-      if (!projects.length && !projectsError && found === null) discover();
       const isProject = new Set(list.concat(removed).map((p) => p.path));
-      home.items = sortItems(root.filter((i) => !isProject.has(ROOT + '/' + i.name)));
+      if (revision === homeRevision) home.items = sortItems(root.filter((i) => !isProject.has(ROOT + '/' + i.name)));
+      else if (home.items) home.items = home.items.filter((i) => !isProject.has(ROOT + '/' + i.name));
+      if (!errors.length) cacheDesktop();
     } catch (e) {
       if (scan !== projectScan) return;
       home.items = home.items || [];
@@ -329,7 +380,8 @@
    * мог подключить объекты к другой папке. Найденное предлагается сделать рабочим столом.
    */
   async function discover() {
-    found = [];
+    if (discovering) return;
+    discovering = true; found = []; render();
     try {
       const root = ((await disk.list('/')) || []).filter((i) => i.type === 'dir' && !i.name.startsWith('.')).slice(0, 40);
       const groups = new Map();
@@ -346,6 +398,7 @@
       }
       found = Array.from(groups.entries()).map(([parent, names]) => ({ parent, names: names.sort((a, b) => a.localeCompare(b, 'ru')) })).sort((a, b) => b.names.length - a.names.length);
     } catch (e) { found = []; }
+    discovering = false;
     if (!modalOpen()) render();
   }
 
@@ -372,20 +425,25 @@
     location.reload();
   }
 
+  const deviceFileCache = new Map(); // Verified by Disk md5; memory only, bounded to 128 small files.
   async function readFiles(path) {
     const items = await disk.list(path + '/data');
     if (items === null) throw new Error('Папка данных объекта отсутствует на Диске. Проверьте путь и повторите обновление.');
-    const out = [];
-    for (const it of items.filter((i) => i.type === 'file' && i.name.endsWith('.json'))) {
-      const text = await disk.getText(path + '/data/' + it.name);
+    return mapLimited(items.filter((i) => i.type === 'file' && i.name.endsWith('.json')), 4, async (it) => {
+      const full = path + '/data/' + it.name, key = full + ':' + (it.md5 || '');
+      const cached = it.md5 ? deviceFileCache.get(key) : undefined;
+      const text = cached === undefined ? await disk.getText(full) : cached;
       if (text === null) throw new Error('Файл устройства исчез во время синхронизации: ' + it.name + '. Повторите обновление.');
       let j;
       try { j = JSON.parse(text); } catch (e) { throw new Error('Повреждены данные на Диске: ' + it.name + '. Повторите позже.'); }
       if (!S.validFile(j)) throw new Error('Неизвестный формат данных: ' + it.name + '. Обновите приложение на телефоне.');
       j.device = j.device || it.name.replace(/\.json$/, '');
-      out.push(j);
-    }
-    return out;
+      if (it.md5 && cached === undefined && text.length <= 256 * 1024) {
+        if (deviceFileCache.size >= 128) deviceFileCache.delete(deviceFileCache.keys().next().value);
+        deviceFileCache.set(key, text);
+      }
+      return j;
+    });
   }
 
   function snapshot(c) { return S.toFile(c.project.state, c.project.projectId, c.project.project.name, me); }
@@ -464,16 +522,23 @@
     } catch (e) { if (e.code === 'PROJECT_DELETED') c.error = e.message; c.status = e.message; log('error', 'Синхронизация: чтение', e.message, c.path, e.status); setStatus(projName(c.path) + ': ' + e.message, true); }
   }
 
-  async function refreshAll() {
+  function refreshAll() {
+    if (refreshRun) return refreshRun;
+    refreshRun = refreshAllNow().finally(() => { refreshRun = null; });
+    return refreshRun;
+  }
+  async function refreshAllNow() {
     const open = new Set(wins.map((w) => w.folder).filter(Boolean));
     if (econ.vault && wins.some((w) => w.kind === 'economy')) for (const p of projects || []) open.add(p.path);
-    for (const path of open) if (ctxs[path]) await refreshCtx(ctxs[path]);
+    flushDesk();
+    const desktop = modalOpen() ? Promise.resolve() : loadProjects();
+    await mapLimited(Array.from(open).filter(path => ctxs[path]), 3, path => refreshCtx(ctxs[path]));
     if (econ.session && econ.vault && !modalOpen() && !econ.operation) {
       try { await econ.session.refresh(); } catch (e) { setStatus('Экономика: ' + e.message, true); }
     }
     if (!modalOpen()) {
-      for (const w of wins.filter((w) => w.kind === 'documents')) if (ctxs[w.folder] && !ctxs[w.folder].error) await loadDocuments(w, ctxs[w.folder]);
-      await loadProjects();
+      await mapLimited(wins.filter(w => w.kind === 'documents' && ctxs[w.folder] && !ctxs[w.folder].error), 2, w => loadDocuments(w, ctxs[w.folder]));
+      await desktop;
     }
   }
 
@@ -552,13 +617,11 @@
     const removing = action === 'delete';
     if (!confirm((removing ? 'Удалить «' + p.name + '» на всех устройствах? Папка объекта уйдёт в Корзину Яндекс Диска — вернуть её можно там в течение 30 дней. Телефон с приложением 1.0.136 и новее уберёт объект из списка и сохранит свои данные в «Удалённых объектах». Обновите приложение на всех телефонах: старые версии могут вернуть папку.' : 'Восстановить «' + p.name + '»?'))) return;
     const c = ctxs[p.path];
-    if (c && (c.saving || c.project && c.project.dirty || c.reporting || c.reportSaving)) return notify('Сначала дождитесь сохранения изменений и документов объекта.', true);
+    if (c && (c.saving || c.project && c.project.dirty || c.reporting || c.reportSaving || c.id && (c.id.generating || c.id.storage.busy) || c.fix && c.fix.busy) || wins.some((w) => w.folder === p.path && w.busy)) return notify('Сначала дождитесь сохранения изменений и документов объекта.', true);
     try {
-      let pid = p.lifecycle && p.lifecycle.projectId;
-      if (!pid) {
-        const files = await readFiles(p.path); pid = files[0] && files[0].projectId;
-        if (!pid || files.some((f) => f.projectId !== pid)) throw new Error('Нельзя определить объект: проверьте файлы устройств.');
-      }
+      // A stale cached card/marker must never delete a different project at this path.
+      const files = await readFiles(p.path), pid = files[0] && files[0].projectId;
+      if (!pid || files.some((f) => f.projectId !== pid) || c && c.project && c.project.projectId !== pid || p.lifecycle && p.lifecycle.projectId !== pid) throw new Error('Нельзя определить объект: состав файлов изменился. Обновите список и проверьте файлы устройств.');
       await L.change(disk, p.path, pid, action, me, S.newId());
       // Удаление — целиком: после события папка объекта уходит в Корзину Диска
       let trashed = false, trashError = null;
@@ -568,7 +631,7 @@
       if (c) clearTimeout(c.saveTimer);
       delete ctxs[p.path];
       log('info', removing ? 'Удаление объекта' : 'Восстановление объекта', 'Состояние подтверждено на Диске', p.path);
-      await loadProjects();
+      await loadProjects(true);
       notify(!removing ? 'Объект восстановлен.' : trashed ? 'Объект удалён, папка — в Корзине Яндекс Диска (30 дней).' :
         'Объект перемещён в «Удалённые объекты», но папку убрать в Корзину не удалось: ' + trashError + '. Удалите её на disk.yandex.ru.', removing && !trashed);
     } catch (e) { log('error', 'Состояние объекта', e.message, p.path, e.status); notify(e.message, true); }
@@ -716,7 +779,7 @@
         const names = targetStore.json('names', {}); names[result.path] = result.name; targetStore.set('names', JSON.stringify(names));
         if (task.root !== ROOT) setExtra(extraProjects().concat([result.path]));
         log('info', 'Создание объекта', 'Создание подтверждено на Диске', result.path);
-        busy = false; close(); await loadProjects();
+        busy = false; close(); await loadProjects(true);
         notify('Создан объект «' + result.name + '». В телефоне: «Открыть из облака» → ' + result.path);
         openWindow('project', result.path);
         withCtx(result.path, (c) => cardForm(c, { title: 'Новый объект — карточка', note: 'Объект сохранён на Диске. Заполните известные данные. На телефоне: «Открыть из облака» → ' + result.path }));
@@ -836,11 +899,12 @@
     const body = h('div', { class: 'pp-winbody' + (w.kind === 'drawing' || w.kind === 'fileview' ? ' pp-winbody-plan' : '') }, content);
     if (!w.max) {
       let t = null;
-      new ResizeObserver(() => {
+      const observer = new ResizeObserver(() => {
         if (!el.isConnected || w.max) return;
         w.w = el.offsetWidth; w.h = el.offsetHeight;
         clearTimeout(t); t = setTimeout(() => rememberLayout(w), 400);
-      }).observe(el);
+      });
+      observer.observe(el); windowObservers.push(observer);
     }
     el.append(bar, body);
     return el;
@@ -848,6 +912,7 @@
 
   function render() {
     if (!disk) return;
+    for (const observer of windowObservers.splice(0)) observer.disconnect();
     const scroll = {};
     document.querySelectorAll('.pp-win').forEach((el) => { const b = el.querySelector('.pp-winbody'); if (b) scroll[el.dataset.key] = b.scrollTop; });
     const icons = [
@@ -863,21 +928,21 @@
     app.classList.add('pp-desk-app');
     app.replaceChildren(
       wallEl(h('div', { class: 'pp-desktop', oncontextmenu: (e) => { if (e.target.classList.contains('pp-desktop') || e.target.classList.contains('pp-icons')) { e.preventDefault(); homeMenu(e.clientX, e.clientY); } } },
-        h('div', { class: 'pp-icons', onclick: (e) => { if (e.target.classList.contains('pp-icons')) { home.selected = null; render(); } } },
+        h('div', { class: 'pp-icons', onclick: (e) => { if (e.target.classList.contains('pp-icons')) { home.selected = null; document.querySelectorAll('.pp-icon-btn.pp-selected').forEach(el => el.classList.remove('pp-selected')); } } },
           projects === null ? h('p', { class: 'pp-desk-note' }, 'Ищу объекты на Диске…') : null,
           projects !== null && projectsRefreshing && home.loading ? h('p', { class: 'pp-desk-note pp-desk-refresh' }, 'Обновляю список объектов…') : null,
-          projects && !projects.length && !projectsError ? h('div', { class: 'pp-desk-note' },
+          projects && !projects.length && !projectsError && !projectsRefreshing ? h('div', { class: 'pp-desk-note' },
             h('p', null, 'Рабочий стол — папка «' + lastName(ROOT) + '» на вашем Яндекс Диске. Объектов в ней пока нет.'),
-            found === null ? h('p', null, 'Ищу объекты в других папках Диска…') :
+            discovering ? h('p', null, 'Ищу объекты в других папках Диска…') : found === null ? button('Найти объекты в других папках', discover) :
               found.length ? h('div', null, found.map((g) => h('div', { class: 'pp-found' },
                 h('p', null, 'Найдены объекты в папке «' + (g.parent === '/' ? 'корень Диска' : g.parent) + '»: ' + g.names.join(', ')),
                 g.parent !== '/' ? button('Сделать «' + lastName(g.parent) + '» рабочим столом' + (ROOT_SAVE ? ' для всех' : ''), () => chooseRoot(g.parent), 'pp-primary') : null,
-                button('Показать эти объекты здесь', () => { setExtra(extraProjects().concat(g.names.map((n) => (g.parent === '/' ? '' : g.parent) + '/' + n))); loadProjects(); })))) :
+                button('Показать эти объекты здесь', () => { setExtra(extraProjects().concat(g.names.map((n) => (g.parent === '/' ? '' : g.parent) + '/' + n))); loadProjects(true); })))) :
                 h('p', null, 'Объектов на Диске не нашлось. Подключите объект к облаку в телефоне (папка «' + lastName(ROOT) + '») или нажмите «Создать объект» на рабочем столе.')) : null,
           projectsError ? h('p', { class: 'pp-desk-note pp-error' }, projectsError) : null,
           icons.map((ic) => h('button', {
             type: 'button', class: 'pp-icon-btn' + (home.selected === ic.key ? ' pp-selected' : ''), title: ic.name,
-            onclick: () => { if (small() || ic.single) ic.open(); else if (home.selected !== ic.key) { home.selected = ic.key; render(); } },
+            onclick: (e) => { if (small() || ic.single) ic.open(); else if (home.selected !== ic.key) { home.selected = ic.key; document.querySelectorAll('.pp-icon-btn.pp-selected').forEach(el => el.classList.remove('pp-selected')); e.currentTarget.classList.add('pp-selected'); } },
             ondblclick: ic.open,
             oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); if (ic.menu) ic.menu(e.clientX, e.clientY); else popup(e.clientX, e.clientY, [['Открыть', ic.open]]); },
           }, h('span', { class: 'pp-icon-img' + (ic.badge ? ' pp-shortcut' : '') }, ic.icon), h('span', { class: 'pp-icon-name' }, ic.name)))),
@@ -886,11 +951,10 @@
         h('button', { type: 'button', class: 'pp-start', onclick: (e) => startMenu(e) }, '▦ Прораб+'),
         h('div', { class: 'pp-tasks' }, wins.map((w) => h('button', { type: 'button', class: 'pp-task' + (!w.min && w.z === zTop ? ' pp-active' : ''), title: winTitle(w), onclick: () => { if (!w.min && w.z === zTop) w.min = true; else { w.min = false; w.z = ++zTop; } render(); } }, APPS[w.kind].icon + ' ' + winTitle(w)))),
         h('span', { id: 'pp-status', class: 'pp-status' + (status.error ? ' pp-error' : '') }, status.text),
-        button('⟳', () => { refreshAll(); loadProjects(); home.items = null; render(); }, 'pp-tray', 'Обновить'),
+        button('⟳', refreshAll, 'pp-tray', 'Обновить'),
         h('span', { class: 'pp-clock' }, time())),
     );
     document.querySelectorAll('.pp-win').forEach((el) => { const b = el.querySelector('.pp-winbody'); if (b && scroll[el.dataset.key]) b.scrollTop = scroll[el.dataset.key]; });
-    if (home.items === null && !home.loading && projects !== null) loadHome();
   }
 
   function popup(x, y, items) {
@@ -921,7 +985,7 @@
 
   function homeMenu(x, y) {
     popup(x, y, [
-      ['⟳ Обновить', () => { home.items = null; loadProjects(); }],
+      ['⟳ Обновить', refreshAll],
       ['-'], ['#Создать'],
       ['🔗 Ярлык на сайт', () => createIn(HOME, '', 'url')], ['📂 Ярлык на папку Диска…', () => openWindow('picker', null, { mode: 'link' })], ['📁 Папку', () => createIn(HOME, '', 'dir')], ['📝 Документ Word', () => createIn(HOME, '', 'docx')], ['📊 Таблицу Excel', () => createIn(HOME, '', 'xlsx')],
       ['🏗️ Новый объект', newProject],
@@ -967,24 +1031,30 @@
   /** Настройки рабочего стола с Диска: объекты из других папок и фон. */
   async function loadDesk() {
     let conf;
+    const revision = deskRevision;
     try {
-      const text = await disk.getText(DESK_FILE);
-      if (!text) return;
+      deskPending = deskPending || store.get(deskDraftKey());
+      const text = deskPending || await disk.getText(DESK_FILE);
+      if (!text || revision !== deskRevision) return;
       const j = JSON.parse(text);
-      // Прежний формат файла — только фон
       conf = j.wall || (j.kind ? j : {});
       if (Array.isArray(j.extra)) { extraList = j.extra.filter((p) => typeof p === 'string'); store.set('extra', JSON.stringify(extraList)); }
       if (Array.isArray(j.links)) { linkList = j.links.filter((l) => l && typeof l.path === 'string').map((l) => ({ path: D.normalize(l.path), name: String(l.name || lastName(l.path)) })); store.set('links', JSON.stringify(linkList)); }
     } catch (e) { return; }
-    loadWallFrom(conf);
+    flushDesk();
+    await loadWallFrom(conf, revision);
+    renderSoon();
   }
 
-  async function loadWallFrom(conf) {
+  async function loadWallFrom(conf, revision) {
     try {
       if (conf.kind === 'preset' && conf.id !== wall.id) setWall({ kind: 'preset', id: conf.id }, false);
       if (conf.kind === 'image' && conf.file && (wall.kind !== 'image' || wall.file !== conf.file || !wall.data)) {
         const bytes = await disk.getBytes(ROOT + '/' + conf.file);
-        if (bytes) setWall({ kind: 'image', file: conf.file, data: await blobToData(new Blob([bytes], { type: 'image/jpeg' })) }, false);
+        if (bytes) {
+          const data = await blobToData(new Blob([bytes], { type: 'image/jpeg' }));
+          if (revision === deskRevision) setWall({ kind: 'image', file: conf.file, data }, false);
+        }
       }
     } catch (e) { /* нет настройки — фон по умолчанию */ }
   }
@@ -1035,7 +1105,7 @@
       econVisible() ? ['-'] : null, econVisible() ? ['💼 Экономика объекта', () => openEconomy(p.path)] : null,
       ['-'], ['Открыть папку на Диске', () => window.open(D.webFolder(p.path), '_blank', 'noopener')],
       ['🗑️ Удалить объект…', () => changeProjectState(p, 'delete')],
-      extra ? ['Убрать с рабочего стола', () => { setExtra(extraProjects().filter((x) => x !== p.path)); loadProjects(); }] : null,
+      extra ? ['Убрать с рабочего стола', () => { setExtra(extraProjects().filter((x) => x !== p.path)); loadProjects(true); }] : null,
     ]);
   }
 
@@ -2755,6 +2825,7 @@
       h('div', { class: 'pp-row pp-between pp-wrap' },
         h('p', { class: 'pp-muted' }, 'Все объекты. Договор, бюджет и поступления, внесённые здесь, видите только вы. Нажмите на объект, чтобы заполнить.' + (loading ? ' Загружаю объектов: ' + loading + '…' : '')),
         h('div', { class: 'pp-row' }, button('⬇ Excel', () => exportEconomy(list)), button('🔑 Сменить код', () => newEconCode()), button('🔒 Закрыть', () => lockEcon('Экономика закрыта'), 'pp-danger'))),
+      h('p', { class: 'pp-muted' }, 'Зашифрованный файл: ', h('a', { href: D.webFolder(econDir()), target: '_blank', rel: 'noopener' }, econFile()), '. Папка отдельная; не открывайте к ней общий доступ.'),
       h('section', { class: 'pp-card pp-row pp-wrap pp-totals' },
         h('div', null, h('small', null, 'Договоры'), h('strong', null, moneyOr(t.contract))),
         h('div', null, h('small', null, 'Потрачено'), h('strong', null, moneyOr(t.spent))),
@@ -3758,32 +3829,47 @@
   const dirOf = (base, rel) => base + (rel ? '/' + rel : '');
 
   async function loadHome() {
+    const revision = ++homeRevision;
     home.loading = true;
-    await loadProjects();
-    home.loading = false;
-  }
-
-  async function loadFolder(w) {
-    w.items = null; w.error = null;
     try {
-      const items = await disk.list(w.kind === 'picker' ? w.path || '/' : dirOf(w.base, w.path));
-      w.items = sortItems(items || []);
-    } catch (e) { w.items = []; w.error = e.message; }
+      const items = await disk.list(ROOT);
+      if (revision !== homeRevision) return;
+      const known = new Set((projects || []).concat(deletedProjects).map(p => p.path));
+      home.items = sortItems((items || []).filter(i => !known.has(ROOT + '/' + i.name)));
+      cacheDesktop();
+    } catch (e) { setStatus('Не удалось обновить файлы рабочего стола: ' + e.message, true); }
+    finally { if (revision === homeRevision) home.loading = false; }
     if (!modalOpen()) render();
   }
 
-  /** Папка изменилась — обновить рабочий стол и открытые окна этой папки. */
-  function reloadFolder(base, rel) {
-    if (base === HOME && !rel) loadHome();
-    wins.filter((w) => w.kind === 'explorer' && w.base === base && w.path === rel).forEach(loadFolder);
-    wins.filter((w) => w.kind === 'documents' && base.startsWith(w.folder + '/')).forEach((w) => loadDocuments(w, ctxs[w.folder]));
+  async function loadFolder(w) {
+    const request = w.loadRequest = (w.loadRequest || 0) + 1;
+    w.error = null; w.loading = true;
+    try {
+      const items = await disk.list(w.kind === 'picker' ? w.path || '/' : dirOf(w.base, w.path));
+      if (request !== w.loadRequest) return;
+      w.items = sortItems(items || []);
+    } catch (e) { if (request === w.loadRequest) { w.items = w.items || []; w.error = e.message; } }
+    finally { if (request === w.loadRequest) w.loading = false; }
+    if (!modalOpen()) render();
+  }
+
+  const patchItems = (items, delta) => sortItems((items || []).filter(i => i.name !== delta.remove && (!delta.add || i.name !== delta.add.name)).concat(delta.add ? [delta.add] : []));
+  /** Apply the confirmed mutation locally. A shortcut does not require scanning every project. */
+  function reloadFolder(base, rel, delta) {
+    if (base === HOME && !rel) {
+      if (delta && home.items !== null) { homeRevision++; home.items = patchItems(home.items, delta); cacheDesktop(); }
+      else loadHome();
+    }
+    wins.filter(w => w.kind === 'explorer' && w.base === base && w.path === rel).forEach(w => {
+      if (delta && w.items !== null) { w.loadRequest = (w.loadRequest || 0) + 1; w.items = patchItems(w.items, delta); w.loading = false; }
+      else loadFolder(w);
+    });
+    wins.filter(w => w.kind === 'documents' && base.startsWith(w.folder + '/')).forEach(w => loadDocuments(w, ctxs[w.folder]));
     render();
   }
 
-  async function ensureBase(base) {
-    if (base !== HOME) await disk.mkdir(ROOT);
-    await disk.mkdir(base);
-  }
+  async function ensureBase(base) { await disk.mkdir(base); }
 
   /** Ярлык на сайт: адрес и имя → файл «Имя.url» в папке. */
   async function createShortcut(base, rel, old) {
@@ -3797,7 +3883,7 @@
       await ensureBase(base);
       await disk.putBlob(dirOf(base, rel) + '/' + name + '.url', new Blob([shortcutText(url)], { type: 'text/plain' }), !!old);
       setStatus((old ? 'Ярлык изменён: ' : 'Создан ярлык: ') + name);
-      reloadFolder(base, rel);
+      reloadFolder(base, rel, { add: { name: name + '.url', type: 'file' } });
     } catch (e) { alert(e.message); }
   }
 
@@ -3819,7 +3905,7 @@
         setStatus('Создан ' + name + ' — открываю в Яндекс Документах');
         window.open(D.webEdit(dir + '/' + name), '_blank', 'noopener');
       }
-      reloadFolder(base, rel);
+      reloadFolder(base, rel, { add: { name, type: kind === 'dir' ? 'dir' : 'file' } });
     } catch (e) { alert(e.message); }
   }
 
@@ -3833,11 +3919,10 @@
           if (f.size > 200 * 1024 * 1024) { alert(f.name + ': больше 200 МБ — загрузите через сайт Диска'); continue; }
           setStatus('Загружаю ' + f.name + '…');
           await disk.putBlob(dirOf(base, rel) + '/' + f.name, f, false);
-          n++;
+          n++; reloadFolder(base, rel, { add: { name: f.name, type: 'file', size: f.size } });
         }
         setStatus('Загружено файлов: ' + n);
       } catch (e) { alert(e.message); }
-      reloadFolder(base, rel);
     });
     input.click();
   }
@@ -3895,11 +3980,11 @@
         if (isUrl && n) n += '.url';
         if (!n || n === it.name) return;
         if (!validName(n)) return alert('В имени нельзя использовать \\ / : * ? " < > |');
-        try { await disk.move(full, dirOf(base, rel) + '/' + n); reloadFolder(base, rel); } catch (e) { alert(e.message); }
+        try { await disk.move(full, dirOf(base, rel) + '/' + n); reloadFolder(base, rel, { remove: it.name, add: { ...it, name: n } }); } catch (e) { alert(e.message); }
       }],
       ['Удалить в корзину', async () => {
         if (!confirm('Удалить «' + shownName(it) + '»? Его можно будет восстановить из корзины Яндекс Диска.')) return;
-        try { await disk.remove(full); reloadFolder(base, rel); } catch (e) { alert(e.message); }
+        try { await disk.remove(full); reloadFolder(base, rel, { remove: it.name }); } catch (e) { alert(e.message); }
       }],
     ]);
   }
@@ -4165,7 +4250,9 @@
       me = writerLease.id;
       ROOT = D.normalize(store.get('root') || app.dataset.root || DEFAULT_ROOT);
       // Прежняя общая папка «Прораб+» заменена на «Диск Прораб+» (старые папки убираются в Корзину)
-      if (ROOT === '/Прораб+') ROOT = D.normalize(app.dataset.root || DEFAULT_ROOT);
+      if (oldRoot(ROOT)) {
+        ROOT = D.normalize(app.dataset.root && !oldRoot(app.dataset.root) ? app.dataset.root : DEFAULT_ROOT);
+      }
       HOME = ROOT;
       DESK_FILE = ROOT + '/.prorab-desktop.json';
       wall = store.json('wall', { kind: 'preset', id: 'default' });
@@ -4184,7 +4271,7 @@
     const desk = loadDesk().catch(() => {});
     loadProjects().then(() => { home.loading = false; checkEcon(); });
     // В настройках стола оказались объекты из других папок — досмотреть их
-    desk.then(() => { if (JSON.stringify(extraProjects()) !== extraBefore) loadProjects(); });
+    desk.then(() => { if (JSON.stringify(extraProjects()) !== extraBefore) loadProjects(true); });
     clearInterval(refreshTimer);
     refreshTimer = setInterval(refreshAll, 60000);
     setInterval(() => { const el = document.querySelector('.pp-clock'); if (el) el.textContent = time(); }, 30000);

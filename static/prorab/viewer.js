@@ -346,6 +346,7 @@
       if (max !== null && dpts.length >= max) finishDraw(); else drawChanged();
     }
     canvas.addEventListener('keydown', (e) => {
+      if (editCfg && e.key === 'Escape') { e.preventDefault(); editCfg = null; hover = null; canvas.style.cursor = 'grab'; if (opts.onEditInfo) opts.onEditInfo(null); changed(); return; }
       if (!drawCfg) return;
       if (e.key === 'Enter') { e.preventDefault(); finishDraw(); }
       else if (e.key === 'Escape') { e.preventDefault(); dpts = []; measurement = null; if (opts.onMeasure) opts.onMeasure(null); drawChanged(); }
@@ -390,7 +391,7 @@
     // ───── PDF: лист целиком и чёткая дорисовка видимой части ─────
     async function loadPage(n) {
       const next = Math.max(0, Math.min(opts.pdf.numPages - 1, n));
-      if (next !== page) { dpts = []; hover = null; selShape = null; measurement = null; if (opts.onMeasure) opts.onMeasure(null); }
+      if (next !== page) { editCfg = null; dpts = []; hover = null; selShape = null; measurement = null; if (opts.onMeasure) opts.onMeasure(null); }
       page = next;
       pageSize = null;
       if (drawCfg) drawChanged();
@@ -525,11 +526,11 @@
       get pageCount() { return isPdf ? opts.pdf.numPages : 1; },
       setNotes(list) { notes = list || []; changed(); },
       setShapes(rows, selectedId) { shapes = (rows || []).map(SH.fromRow); if (selectedId !== undefined) selShape = selectedId; if (selShape && !shapes.some((x) => x.id === selShape)) selShape = null; changed(); },
-      setShapesVisible(on) { showShapes = !!on; if (!on) selShape = null; changed(); },
+      setShapesVisible(on) { showShapes = !!on; if (!on) { selShape = null; editCfg = null; hover = null; } changed(); },
       /** Черчение: { kind, color, ortho } или null — выключить. */
       setDraw(cfg) { const was = drawCfg; drawCfg = cfg ? Object.assign({}, cfg) : null; if (cfg) editCfg = null; if (!cfg || !was || was.kind !== cfg.kind) { dpts = []; measurement = null; if (opts.onMeasure) opts.onMeasure(null); } if (cfg) { selShape = null; canvas.focus(); } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; drawChanged(); changed(); },
       /** Правка фигуры: { op: 'move' | 'copy' | 'vertex', id } или null — отменить. */
-      setEdit(cfg) { editCfg = cfg ? { op: cfg.op, id: cfg.id, base: null, vertex: -1 } : null; if (cfg) { drawCfg = null; dpts = []; selShape = cfg.id; } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; changed(); },
+      setEdit(cfg) { editCfg = cfg ? { op: cfg.op, id: cfg.id, base: null, vertex: -1 } : null; if (cfg) { drawCfg = null; dpts = []; selShape = cfg.id; canvas.focus(); } hover = null; canvas.style.cursor = cfg ? 'crosshair' : 'grab'; changed(); },
       get editing() { return editCfg ? { op: editCfg.op, id: editCfg.id, step: editCfg.base ? 1 : 0 } : null; },
       setScale(v) { k = v > 0 ? v : null; drawChanged(); },
       finishDraw() { return finishDraw(); },
@@ -539,7 +540,7 @@
       setHidden(set) { hidden = set; paths = null; changed(); },
       setMode(m) {
         mode = m;
-        if (m === 'place') { drawCfg = null; dpts = []; hover = null; measurement = null; if (opts.onMeasure) opts.onMeasure(null); }
+        if (m === 'place') { editCfg = null; drawCfg = null; dpts = []; hover = null; measurement = null; if (opts.onMeasure) opts.onMeasure(null); }
         canvas.style.cursor = m === 'place' || drawCfg ? 'crosshair' : 'grab';
         changed();
       },

@@ -39,6 +39,12 @@
     return latest(events);
   }
   async function assertActive(disk, path, projectId) {
+    // A missing marker directory also occurs when the whole project is in Trash.
+    // Fail before any mkdir/upload instead of treating that as an active project.
+    if (await disk.list(path) === null) {
+      const error = new Error('Папка объекта отсутствует на Диске: она удалена или перемещена. Запись остановлена; проверьте Корзину Диска и восстановите объект.');
+      error.code = 'PROJECT_DELETED'; throw error;
+    }
     const e = await read(disk, path, projectId);
     if (e && e.action === 'delete') {
       const error = new Error('Объект удалён из активных. Он находится в «Удалённых объектах»; сначала восстановите его.');
