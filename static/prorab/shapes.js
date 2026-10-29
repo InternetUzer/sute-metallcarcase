@@ -215,7 +215,63 @@
     return out.join('\n') + '\n';
   }
 
-  const api = { KINDS, TOOLS, COLORS, kindOf, toolOf, colorOf, encode, decode, complete, rect, segments, length, area, value, label, formatMeters,
+  // ───────── этап 2: правка фигур и объём в ведомость (как ShapeCore.kt) ─────────
+  const translate = (pts, dx, dy) => pts.map((p) => [p[0] + dx, p[1] + dy]);
+  /** Точки, за которые можно взяться: у прямоугольника — 4 угла. */
+  const vertices = (kind, pts) => (kind === 'rect' && pts.length >= 2 ? rect(pts[0], pts[1]) : pts);
+  function nearestVertex(kind, pts, x, y, tolerance) {
+    let best = -1, bd = tolerance;
+    vertices(kind, pts).forEach((p, i) => { const d = Math.hypot(p[0] - x, p[1] - y); if (d <= bd) { best = i; bd = d; } });
+    return best;
+  }
+  /** Перенести точку index (из vertices) в to; у прямоугольника противоположный угол остаётся на месте. */
+  function moveVertex(kind, pts, index, to) {
+    if (kind === 'rect' && pts.length >= 2) { const r = rect(pts[0], pts[1]); if (index < 0 || index > 3) return pts; return [r[(index + 2) % 4], to]; }
+    if (index < 0 || index >= pts.length) return pts;
+    return pts.map((p, i) => (i === index ? to : p));
+  }
+  /** Значение после правки: по масштабу, если он известен, иначе в той же пропорции к прежнему. */
+  function revalue(kind, old, pts, oldValue, k) {
+    if (kind !== 'dim' && kind !== 'area') return null;
+    if (k !== null && k !== undefined && k > 0) return value(kind, pts, k);
+    if (oldValue === null || oldValue === undefined) return null;
+    if (kind === 'dim') { const l = length(old.slice(0, 2)); return l > 0 ? oldValue * length(pts.slice(0, 2)) / l : null; }
+    const a = area(old); return a > 0 ? oldValue * area(pts) / a : null;
+  }
+  function unitOf(name) {
+    const u = String(name || '').toLowerCase().replace(/[ .]/g, '').replace('²', '2').replace('³', '3');
+    if (['м', 'пм', 'мп', 'погм', 'пог', 'метр', 'м1'].includes(u)) return 'M';
+    if (u === 'мм') return 'MM';
+    if (['м2', 'квм', 'кв', 'мкв'].includes(u)) return 'M2';
+    if (['м3', 'кубм', 'куб', 'мкуб'].includes(u)) return 'M3';
+    return 'OTHER';
+  }
+  const fix = (v, d) => v.toFixed(d).replace('.', ',');
+  const trimNum = (v, d) => { let s = v.toFixed(d).replace(/0+$/, '').replace(/\.$/, ''); return s.replace('.', ','); };
+  /** Перевод значения фигуры (м или м²) в единицу позиции ведомости: { qty, note }; qty === null — нельзя. */
+  function toBoq(kind, v, unitName, thickness) {
+    if (v === null || v === undefined || !Number.isFinite(Number(v))) return { qty: null, note: 'У фигуры нет значения: задайте масштаб чертежа и постройте её заново' };
+    v = Number(v);
+    const u = unitOf(unitName), unit = String(unitName || '').trim() || 'без единицы';
+    if (kind === 'dim') {
+      if (u === 'M') return { qty: v, note: 'длина ' + formatMeters(v) };
+      if (u === 'MM') return { qty: v * 1000, note: 'длина ' + formatMeters(v) };
+      if (u === 'M2' || u === 'M3') return { qty: null, note: 'Размер — это длина, а у позиции единица «' + unit + '». Для площади постройте «Площадь»' };
+      return { qty: v, note: 'длина в метрах; у позиции единица «' + unit + '» — проверьте' };
+    }
+    if (kind === 'area') {
+      if (u === 'M2') return { qty: v, note: 'площадь ' + fix(v, 2) + ' м²' };
+      if (u === 'M3') {
+        if (!(thickness > 0) || !Number.isFinite(thickness)) return { qty: null, note: 'Для м³ укажите толщину в метрах, например 0,2' };
+        return { qty: v * thickness, note: 'площадь ' + fix(v, 2) + ' м² × толщина ' + trimNum(thickness, 3) + ' м' };
+      }
+      if (u === 'M' || u === 'MM') return { qty: null, note: 'Площадь — это м², а у позиции единица «' + unit + '». Для длины постройте «Размер»' };
+      return { qty: v, note: 'площадь в м²; у позиции единица «' + unit + '» — проверьте' };
+    }
+    return { qty: null, note: 'В ведомость переносятся размер (длина) и площадь' };
+  }
+
+  const api = { translate, vertices, nearestVertex, moveVertex, revalue, unitOf, toBoq, KINDS, TOOLS, COLORS, kindOf, toolOf, colorOf, encode, decode, complete, rect, segments, length, area, value, label, formatMeters,
     measureAngle, formatAngle, angleLabelPoint,
     distance, pick, ortho, ANGLE_STEPS, angleStep, constrainAngle, onAngle, center, fromRow, metersPerUnit, dxf, defaultTextHeight, bounds };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

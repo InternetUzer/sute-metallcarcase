@@ -426,9 +426,30 @@
       const out = {};
       if (changes.color !== undefined) out.color = SH.colorOf(changes.color).hex;
       if (changes.text !== undefined) out.text = String(changes.text || '').trim().slice(0, 300);
+      if (changes.points !== undefined) {
+        const kind = this.get('drawing_shapes', id).kind;
+        if (!SH.complete(kind, changes.points)) throw new Error('Не хватает точек для фигуры');
+        out.points = SH.encode(changes.points);
+      }
+      if (changes.value !== undefined) out.value = Number.isFinite(changes.value) ? changes.value : null;
       return this.put('drawing_shapes', id, out);
     }
     deleteShape(id) { this.del('drawing_shapes', id); }
+    /** Копия фигуры с новыми точками (этап 2 «автокада»): тот же вид, цвет, текст, значение. */
+    copyShape(id, points, value) {
+      const src = this.get('drawing_shapes', id);
+      if (!src) throw new Error('Фигура не найдена');
+      return this.addShape({ drawingId: src.drawingId, page: src.page || 0, kind: src.kind, points, text: src.text, color: src.color, size: src.size, value: value === undefined ? src.value : value, viewId: src.viewId || null });
+    }
+    /** «В ведомость»: прибавить к плановому объёму позиции или заменить его. */
+    shapeToPlan(itemId, qty, replace) {
+      const item = this.get('boq_items', itemId);
+      if (!item || Number(item.deleted)) throw new Error('Позиция ведомости не найдена');
+      if (!Number.isFinite(qty) || qty < 0) throw new Error('Нечего переносить');
+      const v = replace ? qty : (Number(item.planQty) || 0) + qty;
+      if (v > 1e12) throw new Error('Слишком большой объём');
+      return this.put('boq_items', itemId, { planQty: Math.round(v * 1e9) / 1e9 });
+    }
 
     /** Следующий номер пометки на чертеже (с удалёнными — как в телефоне). */
     nextNoteNumber(drawingId) { return this.rows('drawing_notes', true).filter((x) => x.drawingId === drawingId).reduce((m, x) => Math.max(m, x.number || 0), 0) + 1; }

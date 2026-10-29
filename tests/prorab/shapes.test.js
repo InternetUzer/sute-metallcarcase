@@ -139,3 +139,35 @@ test('замер угла: острый, прямой, тупой и развё�
   assert.equal(S.formatAngle(30.125), '30,13°');
   assert.equal(S.angleStep({ kind: 'angle', angleStep: 90 }), 0);
 });
+
+test('этап 2: перенос, копия, точки, пересчёт и объём в ведомость — как ShapeEditTest приложения', () => {
+  assert.deepEqual(S.translate([[0, 0], [4000, 0]], 10, -5), [[10, -5], [4010, -5]]);
+  const r = [[0, 0], [100, 50]];
+  assert.deepEqual(S.vertices('rect', r), [[0, 0], [100, 0], [100, 50], [0, 50]]);
+  assert.equal(S.nearestVertex('rect', r, 98, 3, 5), 1);
+  assert.equal(S.nearestVertex('rect', r, 50, 25, 5), -1);
+  assert.deepEqual(S.moveVertex('rect', r, 1, [120, -10]), [[0, 50], [120, -10]]);
+  const sq = [[0, 0], [4000, 0], [4000, 3000], [0, 3000]];
+  assert.deepEqual(S.moveVertex('area', sq, 1, [5, 5]), [[0, 0], [5, 5], [4000, 3000], [0, 3000]]);
+  assert.deepEqual(S.moveVertex('area', sq, 9, [1, 1]), sq);
+  assert.ok(Math.abs(S.revalue('dim', [[0, 0], [2000, 0]], [[0, 0], [3000, 0]], 2, 0.001) - 3) < 1e-9);
+  assert.ok(Math.abs(S.revalue('dim', [[0, 0], [2000, 0]], [[0, 0], [3000, 0]], 4, null) - 6) < 1e-9);
+  assert.ok(Math.abs(S.revalue('area', sq, [[0, 0], [2000, 0], [2000, 3000], [0, 3000]], 12, null) - 6) < 1e-9);
+  assert.equal(S.revalue('area', sq, sq, null, null), null);
+  assert.equal(S.revalue('line', sq, sq, 2, 0.001), null);
+  assert.equal(S.unitOf('м²'), 'M2'); assert.equal(S.unitOf('кв. м'), 'M2'); assert.equal(S.unitOf('М3'), 'M3');
+  assert.equal(S.unitOf('п.м.'), 'M'); assert.equal(S.unitOf('мм'), 'MM'); assert.equal(S.unitOf('шт.'), 'OTHER');
+  assert.equal(S.toBoq('dim', 12.5, 'п.м.', null).qty, 12.5);
+  assert.equal(S.toBoq('dim', 2.4, 'мм', null).qty, 2400);
+  assert.equal(S.toBoq('dim', 2.4, 'м²', null).qty, null);
+  assert.equal(S.toBoq('area', 35.2, 'м2', null).qty, 35.2);
+  const m3 = S.toBoq('area', 35.2, 'м³', 0.2);
+  assert.ok(Math.abs(m3.qty - 7.04) < 1e-9);
+  assert.equal(m3.note, 'площадь 35,20 м² × толщина 0,2 м');
+  assert.equal(S.toBoq('area', 35.2, 'м³', null).qty, null);
+  assert.equal(S.toBoq('area', 35.2, 'м³', -1).qty, null);
+  assert.equal(S.toBoq('area', 35.2, 'п.м.', null).qty, null);
+  assert.ok(S.toBoq('area', 35.2, 'шт.', null).note.includes('проверьте'));
+  assert.equal(S.toBoq('dim', null, 'м', null).qty, null);
+  assert.equal(S.toBoq('line', 3, 'м', null).qty, null);
+});

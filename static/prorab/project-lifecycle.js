@@ -15,7 +15,8 @@
     const projectId = events[0].projectId;
     return events.map((e) => validate(e, projectId)).sort((a, b) => a.revision - b.revision || Number(a.action === 'delete') - Number(b.action === 'delete') || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).at(-1);
   }
-  async function read(disk, path, projectId) {
+  /** cache (Map) — уже прочитанные события: они неизменяемые, повторно по сети не читаются (ключ — путь и md5). */
+  async function read(disk, path, projectId, cache) {
     const items = (await disk.list(path + '/' + DIR)) || [];
     const files = items.filter((i) => i.type === 'file' && i.name.endsWith('.json'));
     if (files.length > 10000) throw new Error('История удаления слишком велика. Нужна проверка.');
@@ -23,8 +24,13 @@
     for (let i = 0; i < files.length; i += 6) {
       events.push(...await Promise.all(files.slice(i, i + 6).map(async (f) => {
         if (!validId(f.name.slice(0, -5))) throw new Error('Непонятное имя в истории удаления объекта.');
+        const key = path + '/' + DIR + '/' + f.name + ':' + (f.md5 || '');
         let e;
-        try { e = JSON.parse(await disk.getText(path + '/' + DIR + '/' + f.name)); } catch (_) { throw new Error('Не удалось прочитать историю удаления объекта.'); }
+        try {
+          let text = f.md5 && cache ? cache.get(key) : undefined;
+          if (text === undefined) { text = await disk.getText(path + '/' + DIR + '/' + f.name); if (f.md5 && cache && typeof text === 'string') cache.set(key, text); }
+          e = JSON.parse(text);
+        } catch (_) { throw new Error('Не удалось прочитать историю удаления объекта.'); }
         validate(e, projectId);
         if (e.id + '.json' !== f.name) throw new Error('Имя события удаления не совпадает с содержимым.');
         return e;
@@ -33,6 +39,12 @@
     return latest(events);
   }
   async function assertActive(disk, path, projectId) {
+    // A missing marker directory also occurs when the whole project is in Trash.
+    // Fail before any mkdir/upload instead of treating that as an active project.
+    if (await disk.list(path) === null) {
+      const error = new Error('Папка объекта отсутствует на Диске: она удалена или перемещена. Запись остановлена; проверьте Корзину Диска и восстановите объект.');
+      error.code = 'PROJECT_DELETED'; throw error;
+    }
     const e = await read(disk, path, projectId);
     if (e && e.action === 'delete') {
       const error = new Error('Объект удалён из активных. Он находится в «Удалённых объектах»; сначала восстановите его.');

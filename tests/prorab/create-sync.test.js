@@ -115,3 +115,14 @@ test('shared deletion blocks another web writer; restore retains data and shared
   for (const [path, text] of before) assert.equal(d.files.get(path), text);
   assert.equal((await DOC.scan(d, task.path)).files[0].name, 'report.pdf');
 });
+
+
+test('project removed to Disk trash blocks writes and pending creation without recreating folders', async () => {
+  const d = new Cloud(), task = prepare(); await C.commit(d, task, noop);
+  for (const key of d.files.keys()) if (key.startsWith(task.path + '/')) d.files.delete(key);
+  for (const dir of d.dirs) if (dir === task.path || dir.startsWith(task.path + '/')) d.dirs.delete(dir);
+  const before = [...d.dirs];
+  await assert.rejects(L.assertActive(d, task.path, task.projectId), e => e.code === 'PROJECT_DELETED');
+  await assert.rejects(C.commit(d, copy(task), noop), /отсутствует/);
+  assert.deepEqual([...d.dirs], before); assert.equal(d.files.size, 0);
+});
