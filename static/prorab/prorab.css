@@ -118,7 +118,8 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 
 /* ───────── объекты, календарь, ведомость ───────── */
 .pp-desk-note { grid-column: 1 / -1; grid-row: auto; max-width: 420px; color: #fff; background: rgba(0,0,0,.35); padding: 10px 12px; border-radius: 10px; font-size: 14px; }
-.pp-icons > .pp-desk-note { position: absolute; right: 16px; top: 16px; }
+.pp-icons > .pp-desk-note { position: static; grid-column: span 4; grid-row: span 3; overflow: auto; margin: 0; }
+@media (max-width: 720px) { .pp-icons > .pp-desk-note { grid-column: 1 / -1; grid-row: span 3; } }
 .pp-project h2 { font-size: 20px; }
 .pp-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 10px 0; }
 .pp-cal-head { text-align: center; font-size: 12px; color: var(--pp-muted); padding: 2px 0; }
@@ -225,3 +226,5 @@ details summary { cursor: pointer; margin: 12px 0 4px; color: var(--pp-accent); 
 /* шаблоны */
 .pp-dialog.pp-wide { width: min(900px, 96vw); max-width: 96vw; }
 .pp-card code { background: var(--pp-bg); padding: 1px 5px; border-radius: 5px; font-size: 0.95em; }
+.pp-report-choices { max-height: 270px; overflow: auto; padding: 8px; border: 1px solid #64748b; border-radius: 8px; }
+.pp-report-choices .pp-check { display: flex; align-items: flex-start; padding: 7px; gap: 10px; overflow-wrap: anywhere; }

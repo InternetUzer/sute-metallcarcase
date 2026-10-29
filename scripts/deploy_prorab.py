@@ -129,6 +129,10 @@ journal=client.get('/admin/prorab',base_url=base)
 assert journal.headers['X-Robots-Tag']=='noindex, nofollow'
 assert 'no-store' in journal.headers['Cache-Control']
 assert b'/static/prorab/persistence.js' in journal.data
+for name in ['remarks-report.js', 'project-lifecycle.js', 'document-index.js', 'diagnostics.js']:
+    assert ('/static/prorab/'+name).encode() in journal.data
+    response=client.get('/static/prorab/'+name,base_url=base)
+    assert response.status_code==200 and 'javascript' in response.mimetype
 assert b'/admin/prorab' in client.get('/admin',base_url=base).data
 assert b'Disallow: /prorab' in client.get('/robots.txt',base_url=base).data
 for name in ['app.js', 'persistence.js', 'vault.js', 'economy.js', 'economy-store.js', 'id.js', 'document-store.js', 'templates.js', 'fixation.js', 'fixation-store.js', 'office.js', 'shapes.js', 'grid.js', 'viewer.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/libredwg/libredwg-web.js']:

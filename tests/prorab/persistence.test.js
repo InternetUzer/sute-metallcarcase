@@ -84,6 +84,7 @@ test('quota and corrupt drafts are reported, never silently discarded', () => {
 function application() {
   const raw = memory();
   const window = { ProrabSync: S, ProrabModel: M, ProrabPersistence: R, ProrabVault: V, ProrabEconomy: E, ProrabEconomyStore: ES,
+    ProrabLifecycle: require('../../static/prorab/project-lifecycle.js'),
     ProrabDisk: { normalize: (p) => p }, addEventListener() {} };
   const root = { dataset: {}, classList: { remove() {} } };
   const ctx = { window, localStorage: raw, navigator: {}, location: {}, history: {},
@@ -97,7 +98,7 @@ function application() {
     window.review = { save, refreshCtx, persistAll, changed, takeTokenFromUrl, beginYandexLogin,
       changedEcon, saveEcon, lockEcon, econ,
       setup(c, fakeDisk) {
-        disk = fakeDisk; me = 'web-test';
+        disk = { ...fakeDisk, list: (path) => path.endsWith('/.prorab-lifecycle') ? Promise.resolve([]) : fakeDisk.list(path) }; me = 'web-test';
         store = R.accountStorage(rawStorage, PREFIX, 'test-account');
         c.drafts = new R.Drafts(store, c.path, c.project.projectId, me);
         ctxs[c.path] = c; watchChanges(c);
@@ -116,6 +117,7 @@ test('edit while upload is in flight remains durable after the earlier upload su
   let complete, uploaded;
   api.setup(c, { putText: async (path, text) => { uploaded = JSON.parse(text); await new Promise((r) => { complete = r; }); } });
   const saving = api.save(c);
+  await new Promise((resolve) => setImmediate(resolve));
   p.put('projects', 'p', { address: 'Added during upload' });
   await Promise.resolve();
   complete(); await saving;

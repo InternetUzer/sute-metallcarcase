@@ -217,7 +217,7 @@ def test_drawing_viewer_files_are_served(app):
     client = app.test_client()
     login(client, 1)
     html = client.get('/admin/prorab').get_data(as_text=True)
-    for name in ('catalog.js', 'dxf.js', 'shapes.js', 'grid.js', 'viewer.js'):
+    for name in ('catalog.js', 'dxf.js', 'shapes.js', 'grid.js', 'viewer.js', 'remarks-report.js', 'project-lifecycle.js', 'document-index.js', 'diagnostics.js'):
         assert f'src="/static/prorab/{name}?v=' in html
         assert client.get(f'/static/prorab/{name}').status_code == 200
     assert 'data-pdfjs="/static/prorab/vendor/pdf.min.js?v=' in html
