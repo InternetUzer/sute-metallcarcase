@@ -26,7 +26,8 @@
   // выбирается в меню «Папка рабочего стола»): объекты (папки с data) и всё, что создано на рабочем столе
   // Порядок: своя папка этого браузера (у приглашённого общая папка может называться иначе) → папка,
   // закреплённая владельцем на сайте (data-root) → «Прораб+»
-  let ROOT = D.normalize(app.dataset.root || '/Прораб+');
+  const DEFAULT_ROOT = '/Диск Прораб+';
+  let ROOT = D.normalize(app.dataset.root || DEFAULT_ROOT);
   const ROOT_SAVE = app.dataset.rootSave || '';
   let HOME = ROOT;
 
@@ -253,34 +254,61 @@
     return !!(items && items.some((i) => i.type === 'dir' && i.name === 'data'));
   }
 
-  /** Объекты: папки «Прораб+/…» с папкой data (так их создаёт телефон) и добавленные вручную. */
+  /** События удаления неизменяемые — прочитанные один раз не перечитываются. */
+  const lifecycleCache = new Map();
+  let projectsRefreshing = false;
+  const CACHE_KEY = 'projects-cache.v1';
+  /** Список с прошлого раза — показать сразу, пока идёт проверка Диска. */
+  function cachedProjects() {
+    try {
+      const c = store.json(CACHE_KEY, null);
+      if (!c || c.root !== ROOT || !Array.isArray(c.list) || !Array.isArray(c.removed)) return;
+      const ok = (x) => x && typeof x.path === 'string' && typeof x.name === 'string';
+      projects = c.list.filter(ok); deletedProjects = c.removed.filter(ok);
+    } catch (_) { /* нет — ищем как обычно */ }
+  }
+
+  /**
+   * Объекты: папки «Прораб+/…» с папкой data (так их создаёт телефон) и добавленные вручную.
+   * Один запрос на папку: отметку об удалении видно в том же списке. Проверка идёт непрерывным потоком
+   * (до 8 папок одновременно); без списка с прошлого раза объекты показываются по мере нахождения.
+   */
   async function loadProjects() {
     const scan = ++projectScan;
     projectsError = null;
+    projectsRefreshing = true;
     try {
       const root = (await disk.list(ROOT)) || [];
       const paths = root.filter((i) => i.type === 'dir' && !i.name.startsWith('.')).map((i) => ROOT + '/' + i.name);
       for (const p of extraProjects()) if (!paths.includes(p)) paths.push(p);
       const list = [], removed = [], errors = [];
       const previous = (projects || []).concat(deletedProjects);
-      for (let i = 0; i < paths.length; i += 6) {
-        const part = paths.slice(i, i + 6);
-        await Promise.all(part.map(async (p) => {
+      const byName = (a, b) => a.name.localeCompare(b.name, 'ru');
+      const progressive = projects === null;
+      let next = 0, shown = 0;
+      const worker = async () => {
+        while (next < paths.length) {
+          const p = paths[next++];
           try {
-            if (!await hasData(p)) return;
-            const lifecycle = await L.read(disk, p);
+            const items = await disk.list(p);
+            if (!items || !items.some((i) => i.type === 'dir' && i.name === 'data')) continue;
+            const lifecycle = items.some((i) => i.type === 'dir' && i.name === L.DIR) ? await L.read(disk, p, undefined, lifecycleCache) : null;
             (lifecycle && lifecycle.action === 'delete' ? removed : list).push({ path: p, name: projName(p), lifecycle });
           } catch (e) {
             const old = previous.find((x) => x.path === p);
             if (old) (old.lifecycle && old.lifecycle.action === 'delete' ? removed : list).push(old);
             errors.push(lastName(p) + ': ' + e.message); log('error', 'Список объектов', e.message, p, e.status);
           }
-        }));
-      }
+          // Первого открытия без списка с прошлого раза: показываем найденное сразу
+          if (progressive && scan === projectScan && list.length !== shown && !modalOpen()) { shown = list.length; projects = list.slice().sort(byName); render(); }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(8, paths.length) }, worker));
       if (scan !== projectScan) return;
-      projects = list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-      deletedProjects = removed.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      projects = list.sort(byName);
+      deletedProjects = removed.sort(byName);
       projectsError = errors.length ? 'Не все папки удалось проверить. Повторите обновление. ' + errors.join('; ') : null;
+      if (!errors.length) store.set(CACHE_KEY, JSON.stringify({ root: ROOT, list: projects, removed: deletedProjects }));
       if (!projects.length && !projectsError && found === null) discover();
       const isProject = new Set(list.concat(removed).map((p) => p.path));
       home.items = sortItems(root.filter((i) => !isProject.has(ROOT + '/' + i.name)));
@@ -290,6 +318,8 @@
       projects = projects || [];
       projectsError = e.message;
       if (e.status === 401) return fail(e);
+    } finally {
+      if (scan === projectScan) projectsRefreshing = false;
     }
     render();
   }
@@ -338,7 +368,7 @@
         if (!confirm('Не получилось закрепить папку на сайте для всех (' + e.message + '). Сделать её рабочим столом только в этом браузере?')) return;
       }
     }
-    store.set('root', p === D.normalize(app.dataset.root || '/Прораб+') ? null : p);
+    store.set('root', p === D.normalize(app.dataset.root || DEFAULT_ROOT) ? null : p);
     location.reload();
   }
 
@@ -513,14 +543,14 @@
 
   function trashView() {
     return h('main', null, button('Обновить', loadProjects),
-      h('p', { class: 'pp-muted' }, 'Данные удалённых объектов сохранены на Диске. Восстановление вернёт объект в активные. Синхронизация удаления с телефоном требует поддержки этой функции в приложении.'),
+      h('p', { class: 'pp-muted' }, 'Здесь — объекты, отмеченные удалёнными, папки которых ещё на Диске. Новые удаления убирают папку в Корзину Яндекс Диска: её можно вернуть на disk.yandex.ru в течение 30 дней.'),
       deletedProjects.length ? deletedProjects.map((p) => h('section', { class: 'pp-card' }, h('strong', null, p.name),
         h('p', null, 'Удалён: ' + new Date(p.lifecycle.at).toLocaleString('ru-RU')),
         button('Восстановить', () => changeProjectState(p, 'restore')))) : h('p', { class: 'pp-card' }, 'Удалённых объектов нет.'));
   }
   async function changeProjectState(p, action) {
     const removing = action === 'delete';
-    if (!confirm((removing ? 'Удалить «' + p.name + '» из активных объектов? Данные останутся на Диске и будут доступны для восстановления. Старые версии телефона продолжат показывать объект до обновления приложения.' : 'Восстановить «' + p.name + '»?'))) return;
+    if (!confirm((removing ? 'Удалить «' + p.name + '» на всех устройствах? Папка объекта уйдёт в Корзину Яндекс Диска — вернуть её можно там в течение 30 дней. Телефон с приложением 1.0.136 и новее уберёт объект из списка и сохранит свои данные в «Удалённых объектах». Обновите приложение на всех телефонах: старые версии могут вернуть папку.' : 'Восстановить «' + p.name + '»?'))) return;
     const c = ctxs[p.path];
     if (c && (c.saving || c.project && c.project.dirty || c.reporting || c.reportSaving)) return notify('Сначала дождитесь сохранения изменений и документов объекта.', true);
     try {
@@ -530,12 +560,17 @@
         if (!pid || files.some((f) => f.projectId !== pid)) throw new Error('Нельзя определить объект: проверьте файлы устройств.');
       }
       await L.change(disk, p.path, pid, action, me, S.newId());
+      // Удаление — целиком: после события папка объекта уходит в Корзину Диска
+      let trashed = false, trashError = null;
+      if (removing) { try { await disk.remove(p.path); trashed = true; } catch (e) { trashError = e.message; log('error', 'Удаление объекта', 'Папка не убрана в Корзину: ' + e.message, p.path, e.status); } }
       for (const w of wins.filter((w) => w.folder === p.path)) if (w.viewer) w.viewer.destroy();
       wins = wins.filter((w) => w.folder !== p.path);
       if (c) clearTimeout(c.saveTimer);
       delete ctxs[p.path];
       log('info', removing ? 'Удаление объекта' : 'Восстановление объекта', 'Состояние подтверждено на Диске', p.path);
-      await loadProjects(); notify(removing ? 'Объект перемещён в «Удалённые объекты».' : 'Объект восстановлен.');
+      await loadProjects();
+      notify(!removing ? 'Объект восстановлен.' : trashed ? 'Объект удалён, папка — в Корзине Яндекс Диска (30 дней).' :
+        'Объект перемещён в «Удалённые объекты», но папку убрать в Корзину не удалось: ' + trashError + '. Удалите её на disk.yandex.ru.', removing && !trashed);
     } catch (e) { log('error', 'Состояние объекта', e.message, p.path, e.status); notify(e.message, true); }
   }
 
@@ -830,6 +865,7 @@
       wallEl(h('div', { class: 'pp-desktop', oncontextmenu: (e) => { if (e.target.classList.contains('pp-desktop') || e.target.classList.contains('pp-icons')) { e.preventDefault(); homeMenu(e.clientX, e.clientY); } } },
         h('div', { class: 'pp-icons', onclick: (e) => { if (e.target.classList.contains('pp-icons')) { home.selected = null; render(); } } },
           projects === null ? h('p', { class: 'pp-desk-note' }, 'Ищу объекты на Диске…') : null,
+          projects !== null && projectsRefreshing && home.loading ? h('p', { class: 'pp-desk-note pp-desk-refresh' }, 'Обновляю список объектов…') : null,
           projects && !projects.length && !projectsError ? h('div', { class: 'pp-desk-note' },
             h('p', null, 'Рабочий стол — папка «' + lastName(ROOT) + '» на вашем Яндекс Диске. Объектов в ней пока нет.'),
             found === null ? h('p', null, 'Ищу объекты в других папках Диска…') :
@@ -3926,7 +3962,7 @@
           (ROOT_SAVE ? 'Выбранная здесь папка закрепится для всех ваших устройств и всех, с кем вы поделились папкой.' : 'Если вас пригласили в общую папку и она у вас называется иначе, выберите её здесь — только для этого браузера.')),
         h('div', { class: 'pp-row pp-wrap pp-toolbar' }, button('←', () => { if (up0) go0(up0); }, 'pp-icon'), h('span', { class: 'pp-crumbs' }, path),
           path !== '/' ? button(ROOT_SAVE ? 'Сделать рабочим столом для всех' : 'Сделать рабочим столом', () => chooseRoot(path), 'pp-primary') : null,
-          store.get('root') ? button('Вернуть общую папку «' + lastName(D.normalize(app.dataset.root || '/Прораб+')) + '»', () => { store.set('root', null); location.reload(); }) : null),
+          store.get('root') ? button('Вернуть общую папку «' + lastName(D.normalize(app.dataset.root || DEFAULT_ROOT)) + '»', () => { store.set('root', null); location.reload(); }) : null),
         w.items === null ? h('p', { class: 'pp-muted' }, 'Загружаю…') : h('div', { class: 'pp-list' },
           w.items.filter((i) => i.type === 'dir').map((d) => h('button', { type: 'button', class: 'pp-item', onclick: () => go0(path.replace(/\/$/, '') + '/' + d.name) }, '📁 ' + d.name))));
     }
@@ -4127,7 +4163,9 @@
       diagnostics = new window.ProrabDiagnostics.Log(store, [token]);
       writerLease = await R.acquireWriter(store, navigator.locks);
       me = writerLease.id;
-      ROOT = D.normalize(store.get('root') || app.dataset.root || '/Прораб+');
+      ROOT = D.normalize(store.get('root') || app.dataset.root || DEFAULT_ROOT);
+      // Прежняя общая папка «Прораб+» заменена на «Диск Прораб+» (старые папки убираются в Корзину)
+      if (ROOT === '/Прораб+') ROOT = D.normalize(app.dataset.root || DEFAULT_ROOT);
       HOME = ROOT;
       DESK_FILE = ROOT + '/.prorab-desktop.json';
       wall = store.json('wall', { kind: 'preset', id: 'default' });
@@ -4138,10 +4176,15 @@
       log('info', 'Вход', 'Кабинет открыт, версия ' + (app.dataset.version || '23'));
     } catch (e) { starting = false; return fail(e); }
     starting = false;
-    render();
     home.loading = true;
-    // Сначала настройки стола с Диска (в них объекты из других папок), затем объекты
-    loadDesk().finally(() => loadProjects().then(() => { home.loading = false; checkEcon(); }));
+    // Список с прошлого раза — сразу; настройки стола и поиск объектов — одновременно
+    cachedProjects();
+    render();
+    const extraBefore = JSON.stringify(extraProjects());
+    const desk = loadDesk().catch(() => {});
+    loadProjects().then(() => { home.loading = false; checkEcon(); });
+    // В настройках стола оказались объекты из других папок — досмотреть их
+    desk.then(() => { if (JSON.stringify(extraProjects()) !== extraBefore) loadProjects(); });
     clearInterval(refreshTimer);
     refreshTimer = setInterval(refreshAll, 60000);
     setInterval(() => { const el = document.querySelector('.pp-clock'); if (el) el.textContent = time(); }, 30000);

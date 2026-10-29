@@ -190,7 +190,8 @@ def test_upload_enforces_site_request_limit_and_rejects_unrelated_target(app, mo
 def test_owner_pins_desktop_folder_for_everyone(app):
     """Папка рабочего стола закрепляется владельцем на сайте и подставляется всем (и приглашённым на /prorab)."""
     client = app.test_client()
-    assert 'data-root="/Прораб+"' in client.get('/prorab').get_data(as_text=True)
+    # Общая папка по умолчанию — «Диск Прораб+»
+    assert 'data-root="/Диск Прораб+"' in client.get('/prorab').get_data(as_text=True)
     assert 'data-root-save' not in client.get('/prorab').get_data(as_text=True)
     login(client, 2)
     assert client.post('/admin/prorab/root', data={'root': '/x'}).status_code == 400  # без формы CSRF
@@ -205,6 +206,9 @@ def test_owner_pins_desktop_folder_for_everyone(app):
     assert r.status_code == 200 and r.get_json() == {'ok': True, 'root': '/Технадзор'}
     other = app.test_client()
     assert 'data-root="/Технадзор"' in other.get('/prorab').get_data(as_text=True)
+    # Прежняя общая папка «Прораб+» заменяется на «Диск Прораб+»
+    assert client.post('/admin/prorab/root', data={'csrf_token': token, 'root': '/Прораб+'}).status_code == 200
+    assert 'data-root="/Диск Прораб+"' in app.test_client().get('/prorab').get_data(as_text=True)
     login(other, 2)  # клиент сайта не может менять папку
     other.get('/request')  # страница с формой — в сессии появится CSRF
     with other.session_transaction() as s:

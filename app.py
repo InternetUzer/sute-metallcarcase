@@ -39,7 +39,9 @@ PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https:/
 # Место объекта для погоды по адресу — те же сервисы, что в приложении (OpenStreetMap и Open-Meteo)
 PRORAB_GEO = 'https://nominatim.openstreetmap.org https://geocoding-api.open-meteo.com'
 PRORAB_VERSION = '24'
-PRORAB_DEFAULT_ROOT = '/Прораб+'
+PRORAB_DEFAULT_ROOT = '/Диск Прораб+'
+# Прежняя общая папка: её объекты убраны в Корзину, теперь общая — «Диск Прораб+»
+PRORAB_OLD_ROOTS = ('/Прораб+',)
 # Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
 # он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.
 PRORAB_CLIENT_ID = '637047bceacd46c9b55023e0658d2a6e'
@@ -664,6 +666,8 @@ def create_app(test_config=None):
         client_id = os.environ.get('YANDEX_CLIENT_ID') or setting('prorab_client_id') or PRORAB_CLIENT_ID
         # Папка рабочего стола на Диске владельца — одна для всех устройств и всех, с кем поделились папкой
         root = setting('prorab_root') or PRORAB_DEFAULT_ROOT
+        if root in PRORAB_OLD_ROOTS:
+            root = PRORAB_DEFAULT_ROOT
         return render_template('prorab.html', client_id=client_id, version=PRORAB_VERSION, shared=shared, root=root,
                                can_set_root=not shared and g.user is not None and g.user['role'] == 'admin')
 
