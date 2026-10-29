@@ -129,7 +129,7 @@ journal=client.get('/admin/prorab',base_url=base)
 assert journal.headers['X-Robots-Tag']=='noindex, nofollow'
 assert 'no-store' in journal.headers['Cache-Control']
 assert b'/static/prorab/persistence.js' in journal.data
-for name in ['remarks-report.js', 'project-lifecycle.js', 'document-index.js', 'diagnostics.js']:
+for name in ['remarks-report.js', 'project-lifecycle.js', 'project-create.js', 'document-index.js', 'diagnostics.js']:
     assert ('/static/prorab/'+name).encode() in journal.data
     response=client.get('/static/prorab/'+name,base_url=base)
     assert response.status_code==200 and 'javascript' in response.mimetype

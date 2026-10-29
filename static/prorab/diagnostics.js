@@ -30,7 +30,7 @@
     clear() { this.entries = []; this.persistent = this.storage.set(this.key, '[]') !== false; }
     export() { return JSON.stringify({ format: 1, source: 'prorab-web', scope: 'this-browser', exportedAt: new Date().toISOString(), entries: this.rows() }, null, 2); }
     watch(disk) {
-      for (const name of ['list', 'getBytes', 'putBlob', 'putText', 'mkdir', 'remove', 'move', 'copy']) {
+      for (const name of ['list', 'getBytes', 'putBlob', 'putText', 'mkdir', 'mkdirExclusive', 'remove', 'move', 'copy']) {
         if (typeof disk[name] !== 'function') continue;
         const original = disk[name].bind(disk);
         disk[name] = async (...args) => {
