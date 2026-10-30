@@ -1,0 +1,9 @@
+<section class="section-small" id="messengers"><h2>Кнопки мессенджеров рядом с телефоном</h2><p>Кнопки появляются рядом с телефоном в шапке, подвале, контактах и форме заявки. На небольшом экране телефон и кнопки переносятся в отдельную строку шапки.</p>
+<form method="post" class="info-box messenger-settings">{{ hidden_csrf() }}<input type="hidden" name="action" value="messengers">
+<label>Ссылка на ваш профиль MAX<input type="url" name="max_url" maxlength="1000" value="{{ company.get('max_url','') }}" placeholder="https://max.ru/u/…"></label>
+<p class="field-note">В MAX откройте «Контакты» → «+» → «Пригласить по ссылке» и скопируйте свою ссылку. Пока поле пустое, кнопка MAX не показывается.</p>
+<label>Ссылка на Telegram<input type="url" name="telegram" maxlength="1000" value="{{ company.get('telegram','') }}" placeholder="https://t.me/…"></label><p class="field-note">Оставьте поле пустым, чтобы убрать кнопку Telegram.</p>
+<label class="check-label"><input type="checkbox" name="whatsapp_enabled" value="1"{% if company.get('whatsapp_enabled','1')=='1' %} checked{% endif %}>Показывать кнопку WhatsApp</label>
+<label>Отдельный номер WhatsApp <span class="optional">необязательно</span><input name="whatsapp_phone" type="tel" maxlength="40" value="{{ company.get('whatsapp_phone','') }}" placeholder="{{ company.phone }}"></label>
+<p class="field-note">Пустое поле — использовать основной телефон сайта. Для другого номера укажите код страны. Номер должен быть зарегистрирован в WhatsApp.</p>
+<button class="button button-orange">Сохранить мессенджеры {{ arrow() }}</button></form></section>

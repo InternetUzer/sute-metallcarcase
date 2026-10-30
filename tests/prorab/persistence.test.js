@@ -1,0 +1,220 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const S = require('../../static/prorab/sync.js');
+const M = require('../../static/prorab/model.js');
+const R = require('../../static/prorab/persistence.js');
+const V = require('../../static/prorab/vault.js');
+const E = require('../../static/prorab/economy.js');
+const ES = require('../../static/prorab/economy-store.js');
+
+function memory() {
+  const data = new Map();
+  return { get length() { return data.size; }, key: (i) => [...data.keys()][i],
+    getItem: (k) => data.has(k) ? data.get(k) : null,
+    setItem: (k, v) => data.set(k, String(v)), removeItem: (k) => data.delete(k) };
+}
+function locks() {
+  const held = new Set();
+  return { async request(name, opts, callback) {
+    if (held.has(name)) return callback(null);
+    held.add(name);
+    try { return await callback({ name }); } finally { held.delete(name); }
+  } };
+}
+const file = (text) => ({ format: 1, app: 'technadzor', projectId: 'p', tables: { projects: [{ id: 'p', name: text }] } });
+
+test('same folder and project id under another Yandex account cannot read or upload old drafts', () => {
+  const raw = memory();
+  const a = R.accountStorage(raw, 'prorab.', 'alice');
+  const b = R.accountStorage(raw, 'prorab.', 'bob');
+  const da = new R.Drafts(a, '/Прораб+/Объект', 'p', 'web-A');
+  da.write(file('private'));
+  a.set('extra', '["/private"]');
+  assert.equal(new R.Drafts(b, '/Прораб+/Объект', 'p', 'web-B').read().length, 0);
+  assert.equal(b.get('extra'), null);
+  assert.equal(new R.Drafts(R.accountStorage(raw, 'prorab.', 'alice'), '/Прораб+/Объект', 'p', 'web-C').read()[0].file.tables.projects[0].name, 'private');
+  assert.throws(() => R.accountStorage(raw, 'prorab.', ''));
+});
+
+test('two tabs reserve distinct writer files, closed slot is reused without an ever-growing file per reload', async () => {
+  const store = R.accountStorage(memory(), 'prorab.', 'alice');
+  const manager = locks();
+  const a = await R.acquireWriter(store, manager);
+  const b = await R.acquireWriter(store, manager);
+  assert.notEqual(a.id, b.id);
+  a.release();
+  await new Promise((r) => setImmediate(r));
+  const c = await R.acquireWriter(store, manager);
+  assert.equal(c.id, a.id);
+  b.release(); c.release();
+  const d = await R.acquireWriter(store, null), e = await R.acquireWriter(store, null);
+  assert.notEqual(d.id, e.id);
+});
+
+test('successful old upload cannot erase a newer draft or a draft from another project', () => {
+  const store = R.accountStorage(memory(), 'prorab.', 'alice');
+  const a = new R.Drafts(store, '/object', 'p', 'web-A');
+  const b = new R.Drafts(store, '/object', 'p', 'web-B');
+  const other = new R.Drafts(store, '/object', 'other', 'web-A');
+  a.write(file('old')); b.write(file('second tab'));
+  other.write({ ...file('elsewhere'), projectId: 'other' });
+  const sending = a.read();
+  a.write(file('new while uploading'));
+  a.acknowledge(sending);
+  assert.equal(a.read().length, 1);
+  assert.equal(a.read()[0].file.tables.projects[0].name, 'new while uploading');
+  assert.equal(other.read().length, 1);
+});
+
+test('quota and corrupt drafts are reported, never silently discarded', () => {
+  const raw = memory();
+  const store = R.accountStorage(raw, 'prorab.', 'alice');
+  const draft = new R.Drafts(store, '/object', 'p', 'web-A');
+  store.set(draft.key, '{broken');
+  assert.throws(() => draft.read(), /сохранённые правки/);
+  raw.setItem = () => { throw new Error('QuotaExceededError'); };
+  assert.equal(draft.write(file('new')), false);
+  assert.equal(store.get(draft.key), '{broken');
+});
+
+// Exercise the real application save/refresh functions with a delayed Disk. No live
+// API, tokens, DOM, or production records are used. Only rendering and timers are stubbed.
+function application() {
+  const raw = memory();
+  const window = { ProrabSync: S, ProrabModel: M, ProrabPersistence: R, ProrabVault: V, ProrabEconomy: E, ProrabEconomyStore: ES,
+    ProrabLifecycle: require('../../static/prorab/project-lifecycle.js'),
+    ProrabDisk: { normalize: (p) => p }, addEventListener() {} };
+  const root = { dataset: {}, classList: { remove() {} } };
+  const ctx = { window, localStorage: raw, navigator: {}, location: {}, history: {},
+    document: { getElementById: (id) => id === 'prorab' ? root : null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
+    setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {}, queueMicrotask,
+    URLSearchParams, console };
+  vm.runInNewContext(fs.readFileSync('static/prorab/schema.js', 'utf8'), ctx);
+  let source = fs.readFileSync('static/prorab/app.js', 'utf8');
+  source = source.replace(/  start\(\);\s*\}\)\(\);\s*$/, `
+    render = () => {};
+    window.review = { save, refreshCtx, readFiles, persistAll, changed, takeTokenFromUrl, beginYandexLogin,
+      changedEcon, saveEcon, lockEcon, econ,
+      setup(c, fakeDisk) {
+        disk = { ...fakeDisk, list: (path) => path.endsWith('/.prorab-lifecycle') ? Promise.resolve([]) : fakeDisk.list ? fakeDisk.list(path) : Promise.resolve([]) }; me = 'web-test';
+        store = R.accountStorage(rawStorage, PREFIX, 'test-account');
+        c.drafts = new R.Drafts(store, c.path, c.project.projectId, me);
+        ctxs[c.path] = c; watchChanges(c);
+      }
+    };
+  })();`);
+  vm.runInNewContext(source, ctx);
+  const p = new M.Project({}, window.PRORAB_SCHEMA, 'p', 'web-test', new S.Clock());
+  p.put('projects', 'p', { name: 'Объект' });
+  const c = { path: '/object', project: p, saving: false };
+  return { api: window.review, c, p, ctx, raw };
+}
+
+test('edit while upload is in flight remains durable after the earlier upload succeeds', async () => {
+  const { api, c, p } = application();
+  let complete, uploaded;
+  let stored;
+  api.setup(c, { getText: async () => stored, putText: async (path, text) => { uploaded = JSON.parse(text); await new Promise((r) => { complete = r; }); stored = text; } });
+  const saving = api.save(c);
+  await new Promise((resolve) => setImmediate(resolve));
+  p.put('projects', 'p', { address: 'Added during upload' });
+  await Promise.resolve();
+  complete(); await saving;
+  assert.equal(uploaded.tables.projects[0].address, '');
+  assert.equal(p.dirty, true);
+  assert.equal(c.drafts.read()[0].file.tables.projects[0].address, 'Added during upload');
+});
+
+test('network error retains draft and retry acknowledges it only after success', async () => {
+  const { api, c, p } = application();
+  let failing = true;
+  let stored;
+  api.setup(c, { getText: async () => stored, putText: async (path, text) => { if (failing) throw new Error('offline'); stored = text; } });
+  await api.save(c);
+  assert.equal(p.dirty, true); assert.equal(c.drafts.read().length, 1);
+  failing = false; await api.save(c);
+  assert.equal(p.dirty, false); assert.equal(c.drafts.read().length, 0);
+});
+
+test('refresh preserves Project reference captured by an ongoing drawing upload', async () => {
+  const { api, c, p } = application();
+  const phone = S.toFile(p.state, 'p', 'Объект', 'phone');
+  api.setup(c, { list: async () => [{ type: 'file', name: 'phone.json' }], getText: async () => JSON.stringify(phone) });
+  await api.refreshCtx(c);
+  assert.equal(c.project, p);
+  p.addDrawing({ id: 'drawing', name: 'План', kind: 'pdf', file: 'drawing.pdf', pages: 1 });
+  await Promise.resolve();
+  assert.equal(c.drafts.read()[0].file.tables.drawings[0].id, 'drawing');
+});
+
+test('accepted upload without confirmed readback retains edits for retry', async () => {
+  const { api, c, p } = application();
+  let stored = null, confirm = false;
+  api.setup(c, { putText: async (path, text) => { stored = text; }, getText: async () => confirm ? stored : null });
+  await api.save(c);
+  assert.equal(p.dirty, true); assert.equal(c.drafts.read().length, 1);
+  confirm = true; await api.save(c);
+  assert.equal(p.dirty, false); assert.equal(c.drafts.read().length, 0);
+});
+
+test('missing directory, vanished JSON and foreign project cannot become a successful refresh', async () => {
+  for (const kind of ['directory', 'file', 'foreign', 'empty']) {
+    const { api, c, p } = application();
+    const foreign = { ...S.toFile(p.state, 'p', 'Объект', 'phone'), projectId: 'other' };
+    api.setup(c, { list: async () => kind === 'directory' ? null : kind === 'empty' ? [] : [{ type: 'file', name: 'phone.json' }], getText: async () => kind === 'file' ? null : JSON.stringify(foreign) });
+    const before = JSON.stringify(p.state);
+    await api.refreshCtx(c);
+    assert.equal(JSON.stringify(p.state), before);
+    assert.ok(!c.status.startsWith('Обновлено'), kind);
+  }
+});
+
+test('a restored remote object clears the previous deleted error and retains unsent edits', async () => {
+  const { api, c, p } = application();
+  c.error = 'Объект удалён';
+  const phone = S.toFile(p.state, 'p', 'Объект', 'phone');
+  api.setup(c, { list: async () => [{ type: 'file', name: 'phone.json' }], getText: async () => JSON.stringify(phone) });
+  p.put('projects', 'p', { address: 'Несохранённый адрес' });
+  await api.refreshCtx(c);
+  assert.equal(c.error, null); assert.equal(p.project.address, 'Несохранённый адрес');
+  assert.equal(p.dirty, true); assert.equal(c.drafts.read()[0].file.tables.projects[0].address, 'Несохранённый адрес');
+});
+
+
+test('OAuth callback requires a recent state created by this browser, preserves current account on unsolicited token', () => {
+  const { api, ctx, raw } = application();
+  ctx.history.replaceState = () => {};
+  ctx.location.pathname = '/prorab'; ctx.location.search = '';
+  ctx.location.hash = '#access_token=unrequested-token';
+  raw.setItem('prorab.token', 'existing-account');
+  assert.throws(() => api.takeTokenFromUrl(), /проверить возврат/);
+  assert.equal(raw.getItem('prorab.token'), 'existing-account');
+  let opened;
+  ctx.window.open = (url, target, features) => { opened = { url, target, features }; };
+  api.beginYandexLogin('https://oauth.yandex.ru/authorize?client_id=public');
+  const state = JSON.parse(raw.getItem('prorab.oauth-state'));
+  assert.equal(opened.features, 'noopener');
+  ctx.location.hash = '#access_token=requested-token&state=' + encodeURIComponent(state.value);
+  api.takeTokenFromUrl();
+  assert.equal(raw.getItem('prorab.token'), 'requested-token');
+  assert.equal(raw.getItem('prorab.oauth-state'), null);
+});
+
+test('actual app: an accepted finance edit survives immediate lock before autosave runs', async () => {
+  const { api, raw } = application();
+  const store = R.accountStorage(raw, 'prorab.', 'owner');
+  const fakeDisk = { getText: async () => { throw new Error('offline'); } };
+  const session = new ES.Session(fakeDisk, store, '/economy/economy.prorab.json');
+  await session.initialize((await V.create('only-a-test-code', { iterations: 1000 })).vault);
+  api.econ.session = session;
+  await api.changedEcon((data) => E.setFields(data, 'p', { note: 'accepted before timer' }));
+  await api.saveEcon(); // network fails; the UI cannot discard the edit on lock
+  await api.lockEcon('Closed');
+  assert.equal(api.econ.session, null); assert.equal(api.econ.vault, null);
+  assert.ok(session.pending());
+  const restored = new ES.Session(fakeDisk, store, '/economy/economy.prorab.json');
+  await restored.unlock('only-a-test-code');
+  assert.equal(restored.data.projects.p.note, 'accepted before timer');
+});

@@ -1,0 +1,65 @@
+{
+  "base_commit": "43582ef68f54dd62648e2e446524b425d41ef2e4",
+  "files": [
+    {
+      "path": "app.py",
+      "sha256": "840b345ab5c2b7d1643925e0248d47b312aeec33d704197f7c2424f5e233c98b",
+      "base_sha256": "d8f334561420d8d7139f0ba34407e9f1fb75b56231a17d420d0283ea13480adc"
+    },
+    {
+      "path": "lead_analytics.py",
+      "sha256": "7e8abb8941154c3aceae4ce18ec47823b20616c935955e469b54042ad55209a2",
+      "base_sha256": "ced1573065dd06339a182e8de1bbb0b171805c6208d4e151bebfe85db5c5e36e"
+    },
+    {
+      "path": "messengers.py",
+      "sha256": "5d01f28d97d392bed2fbd07c1df73e4bc4d77f6231c9ca8b9e53919d073b6d3e",
+      "base_sha256": null
+    },
+    {
+      "path": "static/analytics.js",
+      "sha256": "59e6cb9b6d0c3696842ad376618021d7d17707bbdf647db9cc7012d7218021ac",
+      "base_sha256": "4289983e47bda7e95fb3fe8c1342a7f35b2109b27f4e4cd7c6ef89af0dedde83"
+    },
+    {
+      "path": "static/messengers.css",
+      "sha256": "be98e994845732a1857c37396209389a12f7d488c27d0f90e409ae5cfd5e83dd",
+      "base_sha256": null
+    },
+    {
+      "path": "templates/admin.html",
+      "sha256": "228f0ec6c5d3f4d46ee7d3923ffd3c8dc8238969cfc2e7526848f610e9d28892",
+      "base_sha256": "dddf6412078ca1dfe02967aff4fd07371e84ef0d5109ac8edde84a601363882e"
+    },
+    {
+      "path": "templates/base.html",
+      "sha256": "e5fce9af0ce5dd90c64273263ec3b2ff2915704dab2c1dd59bd8da028e8f21fe",
+      "base_sha256": "cf42dc4a6bf727bf9b575fd4839b63df0c1171e7e070c43062d9985a410f8a7c"
+    },
+    {
+      "path": "templates/contacts.html",
+      "sha256": "a2fc273dfae7db3f2680072843290a07bf10d4b563cfa2cfe2d93494cd3ba588",
+      "base_sha256": "85c2fc04ab222f25f3d0b62a339ec8b7fc57abd53319954fd23ce3a84262be93"
+    },
+    {
+      "path": "templates/content_admin.html",
+      "sha256": "600290b6ea0549ecd9bb83b2afccd8d7586663e9132c12776a6356854e284016",
+      "base_sha256": "48ccb29994037dcdfd9b764ac4af2df9facd32e972983ba1b87bf0b5f85fb66f"
+    },
+    {
+      "path": "templates/content_editor.html",
+      "sha256": "28a0b979c43daaa494c7a336801b07d7537c2f3bf482285b982ce0e60be7ee9e",
+      "base_sha256": "75c9a2b2006af31f6b2558767a837caea1226db6091f43f16e63f1aebb3bf574"
+    },
+    {
+      "path": "templates/messenger_settings.html",
+      "sha256": "4a21e79138ea6cbfe364d27c5399d26f390e6ac71efb803317f3dcae476ee81a",
+      "base_sha256": null
+    },
+    {
+      "path": "templates/request.html",
+      "sha256": "db44cf65d7487f391278f7011b910f552dddf00626b9a3b7a40bc413bc913906",
+      "base_sha256": "4b2c388ba500740af3d4fb978e95a93bd427fe985525e2620a3a1f6f47c81be9"
+    }
+  ]
+}

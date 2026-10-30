@@ -1,0 +1,210 @@
+{
+  "base_commit": "7dd0d52d9379f533516329ad5894a04e5b340d63",
+  "files": [
+    {
+      "path": "app.py",
+      "sha256": "ecdfeef80408499d60a7606493abe0bf26f875265c3f2546e729d14b5f3c5ae7",
+      "base_sha256": "42b35d3f4981a0638b9fd6e21e2e2a5c595de1754b435e923be418763dc5a743"
+    },
+    {
+      "path": "prorab_anchor.py",
+      "sha256": "79434c36c1acd8e03fb8adcba5d53037bf459e4fc2005fd0a19fde4c75f81cfc",
+      "base_sha256": "79434c36c1acd8e03fb8adcba5d53037bf459e4fc2005fd0a19fde4c75f81cfc"
+    },
+    {
+      "path": "prorab_transfer.py",
+      "sha256": "b68955edde85a96db9d420b6811baeb0bc283982d01f33241b1a6754ced925fa",
+      "base_sha256": "b68955edde85a96db9d420b6811baeb0bc283982d01f33241b1a6754ced925fa"
+    },
+    {
+      "path": "seo_panel.py",
+      "sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b",
+      "base_sha256": "d633b1eae47deeb741fcc17ea231a2c970e39ce551c4233891b33910e75f4b7b"
+    },
+    {
+      "path": "static/prorab/app.js",
+      "sha256": "43b20d80813560973bae5599807bcc1c97200407b1b347939b567d35069da6a0",
+      "base_sha256": "3d3f748ff5c2a83bbe737baedaa0f45c8e7f58c8186ff2317dcccbe1f3741fa6"
+    },
+    {
+      "path": "static/prorab/catalog.js",
+      "sha256": "4dcb77beb709643d348354df6f1db72e94b21c1136d5fe939fe266bec1c3588f",
+      "base_sha256": "4dcb77beb709643d348354df6f1db72e94b21c1136d5fe939fe266bec1c3588f"
+    },
+    {
+      "path": "static/prorab/composition.js",
+      "sha256": "d3be9912dfa72fbb5b3316c024db51dc96670cf69f550599c8ed603771ba8a69",
+      "base_sha256": null
+    },
+    {
+      "path": "static/prorab/diagnostics.js",
+      "sha256": "6fb925cabebc62e6d592afb82e163d7d86fa2657d976a8b437a72dcac577829e",
+      "base_sha256": "6fb925cabebc62e6d592afb82e163d7d86fa2657d976a8b437a72dcac577829e"
+    },
+    {
+      "path": "static/prorab/disk.js",
+      "sha256": "b7ba3b51888d089359af5b0a6f4779ccdbac9541932b25ac513c70bf91424ff5",
+      "base_sha256": "b7ba3b51888d089359af5b0a6f4779ccdbac9541932b25ac513c70bf91424ff5"
+    },
+    {
+      "path": "static/prorab/document-index.js",
+      "sha256": "19e2094520e840e2a43e8602ffcfd024671b347c1bffda23d7339737e0216abd",
+      "base_sha256": "19e2094520e840e2a43e8602ffcfd024671b347c1bffda23d7339737e0216abd"
+    },
+    {
+      "path": "static/prorab/document-store.js",
+      "sha256": "f19f309bcaea3920bee203b622903a50423238f38e8e496470b9eb359b9415f8",
+      "base_sha256": "f19f309bcaea3920bee203b622903a50423238f38e8e496470b9eb359b9415f8"
+    },
+    {
+      "path": "static/prorab/dxf.js",
+      "sha256": "2883ead1b33847d4bfc88215e436fe263f4b07daa89c8031ed8e1dd6da4efca6",
+      "base_sha256": "2883ead1b33847d4bfc88215e436fe263f4b07daa89c8031ed8e1dd6da4efca6"
+    },
+    {
+      "path": "static/prorab/economy-store.js",
+      "sha256": "fb74e39a6eb3d501df652efb69a6441a9f3e8bf04354a140d5fcd1f5505fc116",
+      "base_sha256": "fb74e39a6eb3d501df652efb69a6441a9f3e8bf04354a140d5fcd1f5505fc116"
+    },
+    {
+      "path": "static/prorab/economy.js",
+      "sha256": "51e9036601d506e997a2fd8fe86317586a9f687aaa0ae995aeea9683e18f0e57",
+      "base_sha256": "51e9036601d506e997a2fd8fe86317586a9f687aaa0ae995aeea9683e18f0e57"
+    },
+    {
+      "path": "static/prorab/fixation-store.js",
+      "sha256": "0a9676214dde5c3519689d3957d0969139c1ec845f9539dd33af90f8150df094",
+      "base_sha256": "0a9676214dde5c3519689d3957d0969139c1ec845f9539dd33af90f8150df094"
+    },
+    {
+      "path": "static/prorab/fixation.js",
+      "sha256": "d3fa61028fcabc2c3617a3cfd1d0125f9ec229929708600b3b5fe2df61919966",
+      "base_sha256": "d3fa61028fcabc2c3617a3cfd1d0125f9ec229929708600b3b5fe2df61919966"
+    },
+    {
+      "path": "static/prorab/grid.js",
+      "sha256": "0088f6daf91f805bd49934df04d4667944535a136830d4c4966a26164c6ecbea",
+      "base_sha256": "0088f6daf91f805bd49934df04d4667944535a136830d4c4966a26164c6ecbea"
+    },
+    {
+      "path": "static/prorab/id.js",
+      "sha256": "7a4cc07284f12558f1bf6f3877a3360fca61d98acc7e60f8dce5fb200b1c895a",
+      "base_sha256": "7a4cc07284f12558f1bf6f3877a3360fca61d98acc7e60f8dce5fb200b1c895a"
+    },
+    {
+      "path": "static/prorab/model.js",
+      "sha256": "a04e16495c0d7ede8b61d9c6c31f23fb80298ee0402d299e4884fbbb2149de76",
+      "base_sha256": "68048620b53478f93d12a13bdd6d51c847551cf651f07d0d344944985ce2684a"
+    },
+    {
+      "path": "static/prorab/office.js",
+      "sha256": "f3440f90b1da92a949dc670d04788a387132ca3a7b655b7119bf2a5c0a75525f",
+      "base_sha256": "f3440f90b1da92a949dc670d04788a387132ca3a7b655b7119bf2a5c0a75525f"
+    },
+    {
+      "path": "static/prorab/persistence.js",
+      "sha256": "9ce593d8ac280080b61eabf80d0cbc43344cb39d5c980ec92b6cae04e29d5e27",
+      "base_sha256": "9ce593d8ac280080b61eabf80d0cbc43344cb39d5c980ec92b6cae04e29d5e27"
+    },
+    {
+      "path": "static/prorab/project-create.js",
+      "sha256": "0390ec2d6a33428ca3437f94895dd320cfed265537db8a39a57c9185ef520a1b",
+      "base_sha256": "0390ec2d6a33428ca3437f94895dd320cfed265537db8a39a57c9185ef520a1b"
+    },
+    {
+      "path": "static/prorab/project-lifecycle.js",
+      "sha256": "f65941791ab5ae2d22671c122a77b3c4a7192672d04cbec4493d428fa02d74f7",
+      "base_sha256": "39e85bc555afe8c13179625bff619308bd72ad22d2b22e462ce95db5531978d9"
+    },
+    {
+      "path": "static/prorab/prorab.css",
+      "sha256": "2174acf42c6ca4502c7f1536ac7c821f68a5cbfbb8a2921c2d13667cd1126a4e",
+      "base_sha256": "94585a6f54c56e6b970a4845ee2a11f05486ee1daf532d24566023f8b59ffb59"
+    },
+    {
+      "path": "static/prorab/remarks-report.js",
+      "sha256": "f99adf45ef4af0ff1464dd439e49579fb5400eb0ca91b387b46eaee041ecb20f",
+      "base_sha256": "f99adf45ef4af0ff1464dd439e49579fb5400eb0ca91b387b46eaee041ecb20f"
+    },
+    {
+      "path": "static/prorab/schema.js",
+      "sha256": "c268c1b5f38361282ab2064740e9c1123943b911df3b4af034fc4c0aec63f82d",
+      "base_sha256": "c268c1b5f38361282ab2064740e9c1123943b911df3b4af034fc4c0aec63f82d"
+    },
+    {
+      "path": "static/prorab/shapes.js",
+      "sha256": "173058ec7b26b51ec5706daadbd5fc333b937f27bf185a76b4cd7a670268a475",
+      "base_sha256": "656240880fd162dd08fb6ffcab84297f6e37a3c113d336e11ab4c89c38d0ae01"
+    },
+    {
+      "path": "static/prorab/sync.js",
+      "sha256": "65ad44bc739f64b68dd8798c3e83a0c18afc77cdcbba9296c297c24c8c8eeba0",
+      "base_sha256": "65ad44bc739f64b68dd8798c3e83a0c18afc77cdcbba9296c297c24c8c8eeba0"
+    },
+    {
+      "path": "static/prorab/templates.js",
+      "sha256": "13b917f0d787a4e0e150e5453e1fcd0c2226f9a3b46c0336aacbc56d971a068a",
+      "base_sha256": "13b917f0d787a4e0e150e5453e1fcd0c2226f9a3b46c0336aacbc56d971a068a"
+    },
+    {
+      "path": "static/prorab/vault.js",
+      "sha256": "8df32ad30c851ffd510545efc1e0a06299f7615c8a811700d6d46a8dbaf7c097",
+      "base_sha256": "8df32ad30c851ffd510545efc1e0a06299f7615c8a811700d6d46a8dbaf7c097"
+    },
+    {
+      "path": "static/prorab/vendor/PDFJS-LICENSE.txt",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "base_sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+    },
+    {
+      "path": "static/prorab/vendor/libredwg/COPYING.txt",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "base_sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "path": "static/prorab/vendor/libredwg/README.txt",
+      "sha256": "4610acc2ab3eaf8b0840ad5e6a66ca7d46e85819f241f6096388304821aabdba",
+      "base_sha256": "4610acc2ab3eaf8b0840ad5e6a66ca7d46e85819f241f6096388304821aabdba"
+    },
+    {
+      "path": "static/prorab/vendor/libredwg/libredwg-web.js",
+      "sha256": "62deaef11c2d6cf8fd0a0ee83d29120ca40bdabc2cdd9baa1f7911410bf9d73f",
+      "base_sha256": "62deaef11c2d6cf8fd0a0ee83d29120ca40bdabc2cdd9baa1f7911410bf9d73f"
+    },
+    {
+      "path": "static/prorab/vendor/libredwg/libredwg-web.wasm",
+      "sha256": "afb887f6fe784b14bdafd1f335b201ddb50cb24e521a07d2f2581ee2bd87bd9c",
+      "base_sha256": "afb887f6fe784b14bdafd1f335b201ddb50cb24e521a07d2f2581ee2bd87bd9c"
+    },
+    {
+      "path": "static/prorab/vendor/pdf.min.js",
+      "sha256": "27fc2a057a00f92a4334ad06e17dbd7259912954e9fb7f76400bcca5fd190a9c",
+      "base_sha256": "27fc2a057a00f92a4334ad06e17dbd7259912954e9fb7f76400bcca5fd190a9c"
+    },
+    {
+      "path": "static/prorab/vendor/pdf.worker.min.js",
+      "sha256": "1baa1844c89c80a5b2797c916e75ab29254be46d8e9cb53cb6364d7aad84be36",
+      "base_sha256": "1baa1844c89c80a5b2797c916e75ab29254be46d8e9cb53cb6364d7aad84be36"
+    },
+    {
+      "path": "static/prorab/viewer.js",
+      "sha256": "fb65d3a11dedae512fff258b67d77b54755591ff7bbd986ae5e516e0d4e6dc19",
+      "base_sha256": "e92619e5154293280c76a18615f21680091e3ea336841ec6f96ef7a7f99ae6da"
+    },
+    {
+      "path": "static/prorab/work-templates.js",
+      "sha256": "eb62a77bd1a689295265b9f305d03c23d5168c7109883fb62135a3c3d545eaa1",
+      "base_sha256": null
+    },
+    {
+      "path": "templates/admin.html",
+      "sha256": "4cd28cd0528830bd1b17dcfb8b4ca361512cf29f52cf94b993ab8968a34271dd",
+      "base_sha256": "4cd28cd0528830bd1b17dcfb8b4ca361512cf29f52cf94b993ab8968a34271dd"
+    },
+    {
+      "path": "templates/prorab.html",
+      "sha256": "048f231a181d260fd047d6ed1d9c6ecb53a2fdcfb242774fa782d40bcdfbdbdd",
+      "base_sha256": "50e92217c82667bffba03b72f64a64e02f90c9b2edcbb6d41a74d44992a42435"
+    }
+  ]
+}
