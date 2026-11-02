@@ -14,7 +14,17 @@
     <p><b>Оператор (публично):</b> {{ park.operator or 'Не установлен' }} · <b>Телефон:</b> {{ park.operator_phone or 'Не установлен' }}</p>
     <p><b>Точность геопозиции:</b> {{ park.accuracy }} · {{ park.radius_flag }}</p>
     {% if park.public_note %}<p><b>Данные исследования:</b> {{ park.public_note }}</p>{% endif %}
-    <p>{% if park.source_url %}<a href="{{ park.source_url }}" target="_blank" rel="noopener noreferrer">Проверить первоисточник</a> · {% endif %}<a href="https://yandex.ru/maps/?text={{ park.address|urlencode }}" target="_blank" rel="noopener noreferrer">Навигация в Яндекс Картах</a></p>
+    {% set nav = park|park_yandex_links %}
+    <div class="outreach-navigation" role="group" aria-label="Навигация к парку">
+      {% if nav.route_url %}
+        <a class="button button-orange" href="{{ nav.route_url }}" target="_blank" rel="noopener noreferrer">{% if nav.entrance_confirmed %}Маршрут в Яндекс Картах{% else %}Маршрут к ориентиру в Яндекс Картах{% endif %}</a>
+      {% endif %}
+      <a class="button button-outline" href="{{ nav.search_url }}" target="_blank" rel="noopener noreferrer">Найти парк по адресу</a>
+      {% if park.source_url %}<a href="{{ park.source_url }}" target="_blank" rel="noopener noreferrer">Проверить первоисточник</a>{% endif %}
+    </div>
+    {% if not nav.entrance_confirmed %}
+      <p class="outreach-navigation-warning">Точный въезд в парк не подтверждён. Координатный маршрут ведёт к ориентиру, перед поездкой проверьте адрес и ворота въезда в Яндекс Картах.</p>
+    {% endif %}
   </div>
   <div class="outreach-columns">
     <section class="info-box outreach-form-box"><h2>Записать результат выезда</h2><form method="post" action="/parks/{{ park.id }}/visits">
