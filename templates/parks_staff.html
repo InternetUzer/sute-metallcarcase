@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% block content %}
+<section class="container section admin-page outreach-page">
+  <nav class="outreach-links"><a href="/parks">← Карта и реестр</a><a href="/admin">Панель владельца</a></nav>
+  <span class="eyebrow">Только администратор</span><h1>Сотрудники и зоны</h1>
+  <p class="muted">Сотрудники входят через обычную страницу /login. Каждый видит объекты своей зоны, администратор — все.</p>
+  {% if invitation %}<div class="invitation"><h2>Одноразовая ссылка для первого пароля</h2><p>Передайте её сотруднику лично. Срок — 24 часа; ссылка отображается только сейчас.</p><input readonly aria-label="Ссылка приглашения" value="{{ invitation }}"></div>{% endif %}
+  <div class="outreach-columns">
+    <section class="info-box outreach-form-box"><h2>Создать сотрудника</h2>
+      <form method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="create">
+        <label>Имя сотрудника <input name="name" maxlength="160" required></label>
+        <label>Рабочая почта / логин <input name="email" type="email" maxlength="200" required></label>
+        <label>Географическая зона <select name="zone">{% for z in zones %}<option value="{{ z }}">{{ z }}</option>{% endfor %}</select></label>
+        <button class="button button-orange">Создать учётную запись</button>
+      </form>
+    </section>
+    <section class="info-box outreach-form-box"><h2>Назначенные сотрудники</h2>
+      {% for s in staff %}<form class="outreach-staff-item" method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="assign"><input type="hidden" name="user_id" value="{{ s.id }}">
+        <div><strong>{{ s.name }}</strong><small>{{ s.email }}</small></div>
+        <select name="zone">{% for z in zones %}<option value="{{ z }}" {% if z==s.zone %}selected{% endif %}>{{ z }}</option>{% endfor %}</select>
+        <button class="button button-outline">Сохранить</button>
+      </form>{% else %}<p class="muted">Пока нет сотрудников.</p>{% endfor %}
+    </section>
+  </div>
+</section>
+{% endblock %}
