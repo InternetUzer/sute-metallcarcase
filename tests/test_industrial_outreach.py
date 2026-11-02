@@ -172,3 +172,46 @@ def test_admin_can_create_employee_without_exposing_password(app, client):
         assert user['password'].startswith('scrypt:') or user['password'].startswith('pbkdf2:')
         assert db.execute('SELECT zone FROM sales_staff_zones WHERE user_id=?',
                           (user['id'],)).fetchone()[0]==ZONES[0]
+
+
+def test_yandex_maps_routes_are_universal_and_accurate(client, app):
+    """No Yandex key, no native scheme; safe search when entrance is uncertain."""
+    from yandex_park_routes import (
+        yandex_route_url, yandex_search_url, precise_entrance, park_yandex_links,
+    )
+    from urllib.parse import unquote
+    assert unquote(yandex_route_url(55.75, 37.62)) == (
+        'https://yandex.ru/maps/?rtext=~55.7500000,37.6200000&rtt=auto'
+    )
+    assert yandex_route_url(None, 37.62) == ''
+    assert yandex_route_url(float('nan'), 37.62) == ''
+    assert yandex_route_url(555.75, 37.62) == ''
+    assert '%D0%9A%D1%83%D0%BF%D0%B0%D0%B2%D0%BD%D0%B0' in yandex_search_url(
+        'М7 Купавна', 'Московская область, Старая Купавна'
+    )
+    assert not precise_entrance('ориентир населенного пункта')
+    assert not precise_entrance('по предыдущему реестру; требует проверки')
+    assert precise_entrance('Точка въезда подтверждена')
+
+    users(app)
+    login(client,1)
+    approximate=park('IP-101',ZONES[0],'М7 Купавна')
+    approximate['accuracy']='ориентир населённого пункта'
+    no_coords=park('IP-102',ZONES[1],'Парк без геометки')
+    no_coords.update(lat=None,lon=None)
+    assert import_parks(client,[approximate,no_coords]).status_code==302
+    data={x['id']:x for x in client.get('/parks/map-data').json}
+    assert data['IP-101']['route_url'].startswith('https://yandex.ru/maps/?rtext=~')
+    assert data['IP-101']['entrance_confirmed'] is False
+    assert data['IP-102']['route_url']==''
+    assert data['IP-102']['search_url'].startswith('https://yandex.ru/maps/?text=')
+    page=client.get('/parks/IP-101').text
+    assert 'Маршрут к ориентиру в Яндекс Картах' in page
+    assert 'Найти парк по адресу' in page
+    assert 'въезд в парк не подтверждён' in page
+    assert 'yandexnavi://' not in page
+    assert 'rtt=auto' in page
+    assert 'href="https://yandex.ru/maps/?' in page
+    page_without_coords=client.get('/parks/IP-102').text
+    assert 'Найти парк по адресу' in page_without_coords
+    assert 'Маршрут к ориентиру' not in page_without_coords
