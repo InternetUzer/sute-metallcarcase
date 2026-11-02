@@ -47,3 +47,12 @@
 .outreach-page .leaflet-popup-content a{display:inline-block;margin-top:8px}
 @media(max-width:900px){.outreach-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.outreach-columns{grid-template-columns:1fr}.outreach-filter label{min-width:145px}}
 @media(max-width:550px){.outreach-kpis{gap:7px}.outreach-kpis>div{padding:12px}.outreach-kpis strong{font-size:22px}.outreach-filter{padding:10px}.outreach-filter label,.outreach-filter .outreach-search{min-width:100%;flex:1}#outreach-map{height:335px}.outreach-staff-item{grid-template-columns:1fr}.outreach-form-box{padding:14px!important}}
+
+/* Universal navigation to Yandex Maps; full route when coordinates exist. */
+.outreach-navigation{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:17px 0 9px}
+.outreach-navigation a:not(.button){color:#174f85;font-size:13px;font-weight:600}
+.outreach-navigation-warning{color:#7d5517!important;background:#fffaeb;border-left:3px solid #d39a37;padding:10px 12px;max-width:870px}
+.outreach-navigation-cell{display:flex;flex-direction:column;gap:5px;min-width:124px}
+.outreach-navigation-cell a{color:#174d82;font-weight:700;text-decoration:none;font-size:12px;line-height:1.3}
+.outreach-navigation-cell a:hover{text-decoration:underline}
+@media(max-width:550px){.outreach-navigation>.button{width:100%;justify-content:center;text-align:center}}
