@@ -1,0 +1,49 @@
+/* Private sales / fieldwork pages, compatible with the existing light admin theme. */
+.outreach-page{max-width:1480px}.outreach-page h1{line-height:1.12}
+.outreach-links{display:flex;flex-wrap:wrap;gap:22px;margin:0 0 24px}
+.outreach-links a{color:#1b5b9b;text-decoration:none;font-weight:600}
+.outreach-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}
+.outreach-kpis>div{border:1px solid #d9e1ec;background:#f7fafc;border-radius:12px;padding:17px}
+.outreach-kpis span{font-size:12px;color:#637287;display:block}
+.outreach-kpis strong{display:block;font-size:27px;color:#16395e;line-height:1.25;margin-top:5px}
+.outreach-filter{display:flex;align-items:end;flex-wrap:wrap;gap:12px;margin:18px 0;padding:16px;background:#eaf0f7;border-radius:13px}
+.outreach-filter label{min-width:190px;flex:1}.outreach-filter .outreach-search{flex:1.4}
+.outreach-filter input,.outreach-filter select{display:block;width:100%;margin-top:5px}
+.outreach-filter button{flex-shrink:0}
+.outreach-map-wrap{background:#fff;border:1px solid #d9e1ec;border-radius:14px;overflow:hidden;margin-bottom:16px}
+#outreach-map{height:430px;width:100%;min-height:320px;background:#eaf0f4}
+#outreach-map p{padding:20px}
+.outreach-map-wrap .field-note{padding:12px 18px;margin:0;color:#637287;font-size:12px}
+.outreach-table-scroll{overflow-x:auto;border:1px solid #d7e2ee;border-radius:14px;margin-top:20px;background:#fff}
+.outreach-table{width:100%;min-width:1040px;border-collapse:collapse;text-align:left;font-size:13px}
+.outreach-table th{background:#183e66;color:#fff;font-size:12px;font-weight:700;letter-spacing:.01em;padding:14px 12px;white-space:nowrap}
+.outreach-table td{padding:13px 12px;border-bottom:1px solid #e7edf3;vertical-align:top}
+.outreach-table tr:hover td{background:#f5f9ff}.outreach-table small{display:block;color:#6a788a;line-height:1.45;margin-top:4px}
+.outreach-name{display:block;font-weight:700;color:#174d82;text-decoration:none;min-width:165px}
+.outreach-status{display:inline-block;padding:5px 9px;border-radius:8px;background:#e9eff7;color:#1b5280;font-weight:700;font-size:12px}
+.outreach-import{border:1px solid #d5e2ed;background:#f7fafc;border-radius:10px;padding:12px 16px}
+.outreach-import summary{cursor:pointer;font-weight:700}.outreach-import form{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.outreach-info{border:1px solid #dbe5ee;background:#f8fbfd;padding:18px 22px;border-radius:12px;margin:15px 0 25px}
+.outreach-info p{font-size:14px;margin:6px 0}
+.outreach-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.outreach-form-box{display:block;padding:22px!important;min-width:0}
+.outreach-form-box h2{font-size:21px;margin:0 0 18px}.outreach-form-box h3{font-size:18px}
+.outreach-form-box form{display:flex;flex-direction:column;gap:13px;margin-bottom:21px}
+.outreach-form-box label{display:block;font-weight:600;font-size:13px;color:#324d68}
+.outreach-form-box label input:not([type=checkbox]),.outreach-form-box label select,.outreach-form-box label textarea{display:block;width:100%;margin-top:5px}
+.outreach-form-box .outreach-checkbox{display:flex;align-items:center;gap:8px}
+.outreach-form-box .outreach-checkbox input{margin:0;width:auto}
+.outreach-log-card{padding:13px 14px;border:1px solid #d9e4ee;border-radius:10px;background:#fff;margin:10px 0;overflow-wrap:anywhere}
+.outreach-log-card p{font-size:13px;margin:5px 0;white-space:pre-wrap}
+.outreach-log-card small{font-size:11px;color:#6e7888;display:block;margin-top:10px}
+.outreach-log-card .outreach-status{float:right}
+.outreach-history{margin-top:35px;max-width:1020px}
+.outreach-history-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.outreach-staff-item{border-bottom:1px solid #d9e4ee;padding:12px 0;display:grid!important;grid-template-columns:1.1fr 1fr auto;gap:10px;align-items:center}
+.outreach-staff-item small{display:block;font-size:12px;color:#657689;overflow-wrap:anywhere}
+.outreach-staff-item select{width:100%}
+.outreach-page .leaflet-container{font:13px/1.3 system-ui,Arial,sans-serif}
+.outreach-page .leaflet-popup-content strong{font-size:14px}
+.outreach-page .leaflet-popup-content a{display:inline-block;margin-top:8px}
+@media(max-width:900px){.outreach-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.outreach-columns{grid-template-columns:1fr}.outreach-filter label{min-width:145px}}
+@media(max-width:550px){.outreach-kpis{gap:7px}.outreach-kpis>div{padding:12px}.outreach-kpis strong{font-size:22px}.outreach-filter{padding:10px}.outreach-filter label,.outreach-filter .outreach-search{min-width:100%;flex:1}#outreach-map{height:335px}.outreach-staff-item{grid-template-columns:1fr}.outreach-form-box{padding:14px!important}}
