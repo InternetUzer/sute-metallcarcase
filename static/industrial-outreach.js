@@ -59,6 +59,30 @@
         link.href = '/parks/' + encodeURIComponent(park.id);
         link.textContent = 'Открыть карточку и заполнить отчёт';
         popup.appendChild(link);
+        popup.appendChild(document.createElement('br'));
+        if (park.route_url) {
+          const route = document.createElement('a');
+          route.href = park.route_url;
+          route.target = '_blank';
+          route.rel = 'noopener noreferrer';
+          route.textContent = park.entrance_confirmed
+            ? 'Маршрут в Яндекс Картах'
+            : 'Маршрут к ориентиру в Яндекс Картах';
+          popup.appendChild(route);
+          popup.appendChild(document.createElement('br'));
+        }
+        const search = document.createElement('a');
+        search.href = park.search_url;
+        search.target = '_blank';
+        search.rel = 'noopener noreferrer';
+        search.textContent = 'Найти парк по адресу';
+        popup.appendChild(search);
+        if (!park.entrance_confirmed) {
+          popup.appendChild(document.createElement('br'));
+          const warning = document.createElement('small');
+          warning.textContent = 'Координаты ориентировочные — уточните въезд перед поездкой';
+          popup.appendChild(warning);
+        }
         marker.bindPopup(popup);
         markers.push(marker);
       }
