@@ -7,7 +7,6 @@ from datetime import date
 import json
 import math
 import re
-import secrets
 import sqlite3
 import click
 
@@ -19,6 +18,7 @@ ZONES = ('СЕВЕР / ЗАПАД', 'ВОСТОК / СЕВЕРО-ВОСТОК', 
 STATUSES = ('Не посещён', 'Запланирован', 'Выезд выполнен', 'Контакт найден',
             'Переговоры', 'Запрошен расчёт', 'КП отправлено', 'Повторный визит',
             'Нет перспективы')
+PARK_ROLES = ('admin', 'field', 'outreach')
 
 
 def register(app, db, protected, render, issue_token):
@@ -26,6 +26,8 @@ def register(app, db, protected, render, issue_token):
     app.add_template_filter(park_yandex_links, "park_yandex_links")
     with app.app_context():
         db().executescript("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_outreach_shared
+            ON users(role) WHERE role='outreach';
         CREATE TABLE IF NOT EXISTS sales_parks (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -96,7 +98,7 @@ def register(app, db, protected, render, issue_token):
         return request.form.get(field, '').strip()[:length]
 
     def employee():
-        if g.user['role'] not in ('field', 'admin'):
+        if g.user['role'] not in PARK_ROLES:
             abort(403)
         return g.user
 
@@ -110,7 +112,7 @@ def register(app, db, protected, render, issue_token):
         park = db().execute('SELECT * FROM sales_parks WHERE id=?', (park_id,)).fetchone()
         if park is None:
             abort(404)
-        if g.user['role'] != 'admin' and park['zone'] != user_zone():
+        if g.user['role'] == 'field' and park['zone'] != user_zone():
             abort(404)
         return park
 
@@ -168,9 +170,10 @@ def register(app, db, protected, render, issue_token):
         return parks, zone, rank, query
 
     @app.get('/parks')
-    @protected(roles=('admin', 'field'))
+    @protected(roles=PARK_ROLES)
     def sales_parks_index():
         parks, zone, rank, query = filtered_parks()
+        map_key = db().execute("SELECT value FROM settings WHERE key='parks_yandex_tiles_key'").fetchone()
         counts_where = ' WHERE zone=?' if g.user['role'] == 'field' and zone else (
             ' WHERE 1=0' if g.user['role'] == 'field' else '')
         counts_params = (zone,) if g.user['role'] == 'field' and zone else ()
@@ -184,10 +187,29 @@ def register(app, db, protected, render, issue_token):
                       selected_zone=zone or '', selected_rank=rank, query=query,
                       map_url=url_for('sales_parks_map_data', zone=zone or '',
                                       rank=rank, q=query),
-                      counts=counts, is_admin=g.user['role'] == 'admin')
+                      counts=counts, is_admin=g.user['role'] == 'admin',
+                      can_filter_zones=g.user['role'] != 'field',
+                      yandex_tiles_key=map_key['value'] if map_key else '')
+
+    @app.route('/parks/map-settings', methods=['GET', 'POST'])
+    @protected(admin=True)
+    def sales_parks_map_settings():
+        if request.method == 'POST':
+            key = request.form.get('api_key', '').strip()
+            if not re.fullmatch(r'[a-zA-Z0-9_-]{20,200}', key):
+                abort(422, 'Вставьте ключ Tiles API из кабинета разработчика Яндекса')
+            db().execute("INSERT INTO settings(key,value) VALUES('parks_yandex_tiles_key',?) "
+                         'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key,))
+            db().commit()
+            flash('Ключ сохранён. Карта переключена на Яндекс. Новый ключ может активироваться до 15 минут.')
+            return redirect(url_for('sales_parks_map_settings'))
+        configured = bool(db().execute(
+            "SELECT value FROM settings WHERE key='parks_yandex_tiles_key' AND value!=''"
+        ).fetchone())
+        return render('parks_map_settings.html', 'Карта промпарков — настройки', configured=configured)
 
     @app.get('/parks/map-data')
-    @protected(roles=('admin', 'field'))
+    @protected(roles=PARK_ROLES)
     def sales_parks_map_data():
         parks, _, _, _ = filtered_parks()
         fields = ('id', 'name', 'address', 'zone', 'category', 'focus_rank',
@@ -196,7 +218,7 @@ def register(app, db, protected, render, issue_token):
                         for p in parks])
 
     @app.get('/parks/<park_id>')
-    @protected(roles=('admin', 'field'))
+    @protected(roles=PARK_ROLES)
     def sales_park_detail(park_id):
         park = park_for_user(park_id)
         contacts = db().execute(
@@ -212,7 +234,7 @@ def register(app, db, protected, render, issue_token):
                       statuses=STATUSES, today=date.today().isoformat())
 
     @app.post('/parks/<park_id>/contacts')
-    @protected(roles=('admin', 'field'))
+    @protected(roles=PARK_ROLES)
     def sales_park_add_contact(park_id):
         park_for_user(park_id)
         name = text_field('name', 180)
@@ -227,10 +249,10 @@ def register(app, db, protected, render, issue_token):
              text_field('note', 3000)))
         db().commit()
         flash('Контакт сохранён.')
-        return redirect(url_for('sales_park_detail', park_id=park_id))
+        return redirect(url_for('sales_park_detail', park_id=park_id, _anchor='contacts'))
 
     @app.post('/parks/<park_id>/visits')
-    @protected(roles=('admin', 'field'))
+    @protected(roles=PARK_ROLES)
     def sales_park_add_visit(park_id):
         park_for_user(park_id)
         status = text_field('status', 60)
@@ -260,62 +282,48 @@ def register(app, db, protected, render, issue_token):
             (status, next_action, next_date, park_id))
         db().commit()
         flash('Отчёт о выезде сохранён.')
-        return redirect(url_for('sales_park_detail', park_id=park_id))
+        return redirect(url_for('sales_park_detail', park_id=park_id, _anchor='history'))
 
     @app.route('/parks/staff', methods=['GET', 'POST'])
     @protected(admin=True)
     def sales_parks_staff():
-        invitation = None
+        shared = db().execute(
+            "SELECT id,email,name FROM users WHERE role='outreach'").fetchone()
         if request.method == 'POST':
             action = text_field('action', 30)
-            zone = text_field('zone', 80)
-            if action in ('create', 'assign') and zone not in ZONES:
-                abort(422, 'Неизвестная географическая зона')
+            if action not in ('create', 'password'):
+                abort(400)
+            if action == 'create' and shared:
+                abort(409, 'Общий вход уже создан. Второй общий аккаунт не требуется.')
+            if action == 'password' and not shared:
+                abort(404)
+            password = request.form.get('password', '')
+            if len(password) < 8 or len(password) > 200:
+                abort(422, 'Пароль общего входа должен содержать от 8 до 200 символов')
+            if password != request.form.get('confirm', ''):
+                abort(422, 'Пароли не совпадают')
             if action == 'create':
-                name = text_field('name', 160)
-                email = text_field('email', 200).lower()
-                if not name or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
-                    abort(422, 'Укажите имя и действительный email')
+                login = request.form.get('login', '').strip().lower()
+                if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{2,63}', login):
+                    abort(422, 'Логин: 3–64 символа, латинские буквы, цифры, точка, дефис или подчёркивание')
                 try:
-                    cursor = db().execute(
-                        "INSERT INTO users(email,name,password,role) VALUES(?,?,?,'field')",
-                        (email, name, generate_password_hash(secrets.token_urlsafe(48))))
-                    user_id = cursor.lastrowid
                     db().execute(
-                        'INSERT INTO sales_staff_zones(user_id,zone) VALUES(?,?)',
-                        (user_id, zone))
+                        "INSERT INTO users(email,name,password,role) VALUES(?,?,?,'outreach')",
+                        (login, 'Сотрудники', generate_password_hash(password)))
                     db().commit()
-                    invitation = issue_token(user_id)
                 except sqlite3.IntegrityError:
                     db().rollback()
-                    abort(422, 'Email уже существует: нельзя перезаписать чужую учётную запись')
-            elif action in ('assign', 'invite'):
-                try:
-                    user_id = int(request.form.get('user_id', ''))
-                except ValueError:
-                    abort(422)
-                existing = db().execute(
-                    "SELECT id FROM users WHERE id=? AND role='field'", (user_id,)).fetchone()
-                if not existing:
-                    abort(404)
-                if action == 'invite':
-                    invitation = issue_token(user_id)
-                else:
-                    db().execute(
-                        'INSERT INTO sales_staff_zones(user_id,zone) VALUES(?,?) '
-                        'ON CONFLICT(user_id) DO UPDATE SET zone=excluded.zone',
-                        (user_id, zone))
-                    db().commit()
-                    flash('Географическая зона сотрудника изменена.')
+                    abort(422, 'Общий вход или этот логин уже существует. Другие учётные записи не изменены.')
+                flash('Общий вход сотрудников создан. Передайте команде логин и пароль.')
             else:
-                abort(400)
-        staff = db().execute(
-            "SELECT u.id,u.email,u.name,z.zone FROM users u "
-            "LEFT JOIN sales_staff_zones z ON z.user_id=u.id "
-            "WHERE u.role='field' ORDER BY u.name"
-        ).fetchall()
-        return render('parks_staff.html', 'Сотрудники — Металл-Каркас',
-                      zones=ZONES, staff=staff, invitation=invitation)
+                db().execute('UPDATE users SET password=?,version=version+1 WHERE id=?',
+                             (generate_password_hash(password), shared['id']))
+                db().execute('DELETE FROM tokens WHERE user_id=?', (shared['id'],))
+                db().commit()
+                flash('Общий пароль изменён. Сотрудникам нужно войти заново.')
+            return redirect(url_for('sales_parks_staff'))
+        return render('parks_staff.html', 'Общий вход сотрудников — Металл-Каркас',
+                      shared=shared)
 
     def import_registry(raw):
         if len(raw) > 2_000_000:

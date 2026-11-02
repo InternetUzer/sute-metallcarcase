@@ -50,7 +50,7 @@ for path in ['/', '/uslugi', '/request', '/produkciya', '/prorab', '/robots.txt'
 assert client.get('/parks', base_url=base).status_code == 302
 with client.session_transaction(base_url=base) as session:
     session['user_id'], session['user_version'] = owner
-for path in ['/admin', '/admin/prorab', '/parks', '/parks?rank=', '/parks/IP-001', '/parks/staff']:
+for path in ['/admin', '/admin/prorab', '/parks', '/parks?rank=', '/parks/IP-001', '/parks/staff', '/parks/map-settings']:
     response = client.get(path, base_url=base)
     assert response.status_code == 200, (path, response.status_code)
     assert response.headers['Cache-Control'] == 'no-store'
@@ -59,6 +59,8 @@ assert len(client.get('/parks/map-data?rank=', base_url=base).json) >= 117
 for path in ['/static/industrial-outreach.js', '/static/vendor/leaflet-1.9.4/leaflet.js']:
     response = client.get(path, base_url=base)
     assert response.status_code == 200 and 'javascript' in response.mimetype
+response = client.get('/static/vendor/yandex-tiles/yandex-logo-ru.svg', base_url=base)
+assert response.status_code == 200 and response.mimetype == 'image/svg+xml'
 print('Staging database, 117-park import, owner pages, login protection and assets passed.')
 '''
 

@@ -169,7 +169,7 @@ def create_app(test_config=None):
         if request.path.startswith('/parks'):
             # Leaflet is bundled locally; only map tiles need an external origin.
             csp = response.headers['Content-Security-Policy']
-            csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https://tile.openstreetmap.org")
+            csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https://tile.openstreetmap.org https://tiles.api-maps.yandex.ru")
             response.headers['Content-Security-Policy'] = csp
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
@@ -406,7 +406,7 @@ def create_app(test_config=None):
                 session.clear()
                 session.update(user_id=user['id'],user_version=user['version'])
                 session.permanent=True
-                return redirect('/admin' if user['role']=='admin' else '/parks' if user['role']=='field' else '/cabinet')
+                return redirect('/admin' if user['role']=='admin' else '/parks' if user['role'] in ('field', 'outreach') else '/cabinet')
             error='Проверьте email и пароль.'
         return render('auth.html','Личный кабинет — Металл-Каркас',mode='login',error=error), (401 if error else 200)
 

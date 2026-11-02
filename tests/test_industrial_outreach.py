@@ -106,6 +106,36 @@ def test_roles_zones_and_map_protect_private_content(app, client):
     assert client.get('/parks/IP-101').status_code == 403
 
 
+def test_yandex_tiles_configuration_is_owner_only_and_validated(app, client):
+    users(app)
+    login(client, 1)
+    # Synthetic API key, never submitted to an external map service.
+    key = 'synthetic-yandex-tiles-test-key'
+    response = client.post('/parks/map-settings', data={'api_key': key})
+    assert response.status_code == 400
+    token = csrf(client, '/parks/map-settings')
+    response = client.post('/parks/map-settings', data={'csrf_token': token, 'api_key': key})
+    assert response.status_code == 302
+    assert key not in client.get('/parks/map-settings').get_data(as_text=True)
+    page = client.get('/parks')
+    assert f'data-yandex-key="{key}"' in page.get_data(as_text=True)
+    assert 'https://tiles.api-maps.yandex.ru' in page.headers['Content-Security-Policy']
+    # The browser key belongs only on the private map, never on public pages.
+    assert key not in client.get('/').get_data(as_text=True)
+    for bad in ['', 'short', '<script>alert(1)</script>', 'x'*201]:
+        assert client.post('/parks/map-settings', data={
+            'csrf_token': token, 'api_key': bad}).status_code == 422
+    with connect(app) as database:
+        assert database.execute("SELECT value FROM settings WHERE key='parks_yandex_tiles_key'").fetchone()[0] == key
+        database.execute("INSERT INTO users(email,name,password,role) VALUES('sharedqa','QA','unused','outreach')")
+        shared_id = database.execute("SELECT id FROM users WHERE role='outreach'").fetchone()[0]
+    for uid in [2, 5, shared_id]:
+        login(client, uid)
+        assert client.get('/parks/map-settings').status_code == 403
+        assert client.post('/parks/map-settings', data={'csrf_token': csrf(client), 'api_key': key}).status_code == 403
+    assert 'Настройка карты' not in client.get('/parks').get_data(as_text=True)
+
+
 def test_visits_contacts_and_import_do_not_erase_notes(app, client):
     users(app)
     login(client,1)
@@ -160,21 +190,21 @@ def test_bad_import_is_atomic_and_all_forms_require_csrf(app, client):
         assert db.execute("SELECT COUNT(*) FROM sales_visits").fetchone()[0]==0
 
 
-def test_admin_can_create_employee_without_exposing_password(app, client):
+def test_admin_can_create_shared_login_without_exposing_password(app, client):
+    from werkzeug.security import check_password_hash
     users(app)
-    login(client,1)
-    token=csrf(client,'/parks/staff')
-    result=client.post('/parks/staff',data={
-        'csrf_token':token,'action':'create','name':'Новый менеджер',
-        'email':'new.sales@example.com','zone':ZONES[0]})
-    assert result.status_code==200
-    assert '/reset/' in result.get_data(as_text=True)
+    login(client, 1)
+    result = client.post('/parks/staff', data={
+        'csrf_token': csrf(client, '/parks/staff'), 'action': 'create',
+        'login': 'shared_team', 'password': 'qa-only-pass', 'confirm': 'qa-only-pass'})
+    assert result.status_code == 302 and result.location == '/parks/staff'
+    page = client.get('/parks/staff').text
+    assert 'shared_team' in page and 'qa-only-pass' not in page
     with connect(app) as db:
-        user=db.execute("SELECT id,role,password FROM users WHERE email='new.sales@example.com'").fetchone()
-        assert user['role']=='field'
-        assert user['password'].startswith('scrypt:') or user['password'].startswith('pbkdf2:')
-        assert db.execute('SELECT zone FROM sales_staff_zones WHERE user_id=?',
-                          (user['id'],)).fetchone()[0]==ZONES[0]
+        user = db.execute("SELECT * FROM users WHERE email='shared_team'").fetchone()
+        assert user['role'] == 'outreach' and user['name'] == 'Сотрудники'
+        assert check_password_hash(user['password'], 'qa-only-pass')
+        assert db.execute('SELECT zone FROM sales_staff_zones WHERE user_id=?', (user['id'],)).fetchone() is None
 
 
 def test_yandex_maps_routes_are_universal_and_accurate(client, app):
@@ -263,36 +293,89 @@ def test_field_cannot_override_zone_or_access_client_cabinet(app, client):
     assert client.get('/parks/IP-101').status_code == 404
 
 
-def test_reinvitation_password_login_and_zone_change(app, client):
+def test_shared_login_all_reports_two_sessions_and_password_rotation(app, client):
     users(app)
     login(client, 1)
     import_parks(client, [park('IP-101', ZONES[0], 'Северный парк'),
-                          park('IP-102', ZONES[1], 'Восточный парк')])
-    data = {'csrf_token': csrf(client), 'action': 'invite', 'user_id': '2'}
-    first = client.post('/parks/staff', data=data)
-    first_url = urlparse(re.search(r'aria-label="Ссылка приглашения" value="([^"]+)"', first.text)[1]).path
-    second = client.post('/parks/staff', data=data)
-    second_url = urlparse(re.search(r'aria-label="Ссылка приглашения" value="([^"]+)"', second.text)[1]).path
-    employee = app.test_client()
-    assert employee.get(first_url).status_code == 410
-    password = 'qa-only-employee-password'
-    assert employee.post(second_url, data={
-        'csrf_token': csrf(employee, second_url), 'password': password,
-        'confirm': password}).status_code == 302
-    assert employee.get(second_url).status_code == 410
-    response = employee.post('/login', data={
-        'csrf_token': csrf(employee, '/login'), 'email': 'north@example.com',
-        'password': password})
+                          park('IP-102', ZONES[1], 'Восточный парк'),
+                          park('IP-103', ZONES[2], 'Южный парк')])
+    token = csrf(client)
+    client.post('/parks/IP-101/visits', data={'csrf_token': token,
+        'visit_date': '2026-11-02', 'status': 'Переговоры', 'note': 'Отчёт владельца'})
+    assert client.post('/parks/staff', data={'csrf_token': token, 'action': 'create',
+        'login': 'shared_team', 'password': 'qa-pass-1', 'confirm': 'qa-pass-1'}).status_code == 302
+    employees = [app.test_client(), app.test_client()]
+    for employee in employees:
+        response = employee.post('/login', data={'csrf_token': csrf(employee, '/login'),
+            'email': 'SHARED_TEAM', 'password': 'qa-pass-1'})
+        assert response.status_code == 302 and response.location == '/parks'
+        assert len(employee.get('/parks/map-data?rank=').json) == 3
+        for i, zone in enumerate(ZONES):
+            data = employee.get('/parks/map-data', query_string={'zone': zone, 'rank': ''}).json
+            assert [p['id'] for p in data] == ['IP-' + str(101 + i)]
+            assert employee.get('/parks/IP-' + str(101 + i)).status_code == 200
+        assert 'Отчёт владельца' in employee.get('/parks/IP-101').text
+        page = employee.get('/parks').text
+        assert 'name="zone"' in page and 'href="/parks" aria-label="Личный кабинет"' in page
+        assert 'href="/admin"' not in page and 'href="/parks/staff"' not in page
+        assert 'action="/parks/import"' not in page
+        for path in ['/admin', '/admin/prorab', '/admin/photos', '/admin/seo', '/parks/staff', '/cabinet']:
+            assert employee.get(path).status_code == 403, path
+        assert employee.post('/parks/import', data={'csrf_token': csrf(employee)}).status_code == 403
+    a, b = employees
+    assert a.post('/parks/IP-103/contacts', data={'csrf_token': csrf(a),
+        'name': 'Контакт команды'}).status_code == 302
+    assert a.post('/parks/IP-103/visits', data={'csrf_token': csrf(a),
+        'visit_date': '2026-11-02', 'status': 'Выезд выполнен', 'note': 'Общий отчёт'}).status_code == 302
+    for viewer in (b, client):
+        page = viewer.get('/parks/IP-103').text
+        assert 'Общий отчёт' in page and 'Контакт команды' in page and 'Сотрудники' in page
+    assert client.post('/parks/staff', data={'csrf_token': token, 'action': 'password',
+        'password': 'qa-pass-2', 'confirm': 'qa-pass-2'}).status_code == 302
+    for employee in employees:
+        response = employee.get('/parks')
+        assert response.status_code == 302 and response.location == '/login'
+    assert client.get('/admin').status_code == 200
+    response = a.post('/login', data={'csrf_token': csrf(a, '/login'),
+        'email': 'shared_team', 'password': 'qa-pass-2'})
     assert response.status_code == 302 and response.location == '/parks'
-    assert employee.get('/parks/IP-101').status_code == 200
-    assert client.post('/parks/staff', data={**data, 'action': 'assign',
-                       'zone': ZONES[1]}).status_code == 200
-    assert employee.get('/parks/IP-101').status_code == 404
-    assert employee.get('/parks/IP-102').status_code == 200
-    assert employee.post('/parks/staff', data={**data, 'csrf_token': csrf(employee)}).status_code == 403
-    # The staff screen cannot issue an invitation for an administrator/client.
-    for user_id in (1, 5):
-        assert client.post('/parks/staff', data={**data, 'user_id': user_id}).status_code == 404
+
+
+def test_shared_account_is_single_and_cannot_access_misassigned_client_files(app, client):
+    users(app)
+    login(client, 1)
+    data = {'csrf_token': csrf(client), 'action': 'create', 'login': 'shared_team',
+            'password': 'qa-pass-1', 'confirm': 'qa-pass-1'}
+    assert client.post('/parks/staff', data=data).status_code == 302
+    assert client.post('/parks/staff', data={**data, 'login': 'another_team'}).status_code == 409
+    assert client.post('/parks/staff', data={**data, 'csrf_token': ''}).status_code == 400
+    with connect(app) as db:
+        shared_id = db.execute("SELECT id FROM users WHERE role='outreach'").fetchone()[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO users(email,name,password,role) VALUES('other','other','unusable','outreach')")
+        db.execute("INSERT INTO projects(id,user_id,title) VALUES(1,?,'Private project')", (shared_id,))
+        db.execute("INSERT INTO files(id,project_id,original_name,storage_name) VALUES(1,1,'private.txt','private.txt')")
+    (Path(app.config['DATA_DIR']) / 'files/private.txt').write_text('private client content')
+    login(client, shared_id)
+    for path in ['/cabinet/projects/1', '/files/1']:
+        assert client.get(path).status_code == 403
+    assert client.post('/parks/staff', data={**data, 'action': 'password'}).status_code == 403
+
+
+@pytest.mark.parametrize('change', [
+    {'login': 'a'}, {'login': 'not a login'}, {'password': 'short', 'confirm': 'short'},
+    {'confirm': 'mismatch'}, {'login': 'north@example.com'},
+])
+def test_invalid_shared_account_does_not_change_users(app, client, change):
+    users(app)
+    login(client, 1)
+    data = {'csrf_token': csrf(client), 'action': 'create', 'login': 'shared_team',
+            'password': 'qa-pass-1', 'confirm': 'qa-pass-1'}
+    with connect(app) as db:
+        before = [tuple(row) for row in db.execute('SELECT * FROM users ORDER BY id')]
+    assert client.post('/parks/staff', data={**data, **change}).status_code == 422
+    with connect(app) as db:
+        assert [tuple(row) for row in db.execute('SELECT * FROM users ORDER BY id')] == before
 
 
 def test_canonical_117_registry_cli_import_is_repeatable(app, client):

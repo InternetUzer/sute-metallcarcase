@@ -3,12 +3,12 @@
   "files": [
     {
       "path": "app.py",
-      "sha256": "9b7ccf73dfb88a65beec00d0419b63e1788974dc0e25b0b5b5bb61abda823c45",
+      "sha256": "c90da8b1fc18ed13c0d4ac4e93c71ef3c8aa3ee5a955eb1f336b9837d584338e",
       "base_sha256": "ecdfeef80408499d60a7606493abe0bf26f875265c3f2546e729d14b5f3c5ae7"
     },
     {
       "path": "industrial_outreach.py",
-      "sha256": "2689e672cdf05d7d6902857e8619ff27cff3d04b7838895dbab94eb4e3cb58a6",
+      "sha256": "ea85833cb3b456a31c0c954d41fdadb23c31066d9b9926ecc652ab7d5ad0f713",
       "base_sha256": null
     },
     {
@@ -28,12 +28,12 @@
     },
     {
       "path": "static/industrial-outreach.css",
-      "sha256": "fb1f725568fefe7c67474390a23738613cad7caca1e7738a56b2c8be54761e4a",
+      "sha256": "1963b281dd990f963132dfd57514b037377137368033e0ddbb06324ed5dbffac",
       "base_sha256": null
     },
     {
       "path": "static/industrial-outreach.js",
-      "sha256": "b0ee2b6b053d938377587dfbd5b07f1cf29d87617a0ca8de544452b77e90c832",
+      "sha256": "3e582a00608641603f88d53c020f257fee98d3e3ae13a8469b292989177a26d5",
       "base_sha256": null
     },
     {
@@ -257,28 +257,43 @@
       "base_sha256": null
     },
     {
+      "path": "static/vendor/yandex-tiles/yandex-logo-ru.svg",
+      "base_sha256": null,
+      "sha256": "a0afcc1fb36937df080ea96dcb561dd770f9bb1faaea50d8023cc5c73ff64308"
+    },
+    {
       "path": "templates/admin.html",
       "sha256": "6130c49247c122f8b09bb6ce92b1d2826ff50eeccd5843f52f5ec9255c3171a1",
       "base_sha256": "4cd28cd0528830bd1b17dcfb8b4ca361512cf29f52cf94b993ab8968a34271dd"
     },
     {
+      "path": "templates/auth.html",
+      "base_sha256": "8b199aec3b91e7a952ca1f14679806496437685820e8b248e407bd599afbd7b7",
+      "sha256": "b1ee4abaf620ff332f997016386c6c1b56414c30c11047765f24b44e5f4e1e2c"
+    },
+    {
       "path": "templates/base.html",
-      "sha256": "7dfc25ca3cee4a0d836c6d30513f616bd4b19c52ac4c3a37a621c3ba8195e42e",
+      "sha256": "959f47df2e75bf3c1d98214de97be2ee61050972df97e5aea648bfe9a60b18bf",
       "base_sha256": "e5fce9af0ce5dd90c64273263ec3b2ff2915704dab2c1dd59bd8da028e8f21fe"
     },
     {
       "path": "templates/parks_detail.html",
-      "sha256": "d35c9a5b9aebde1f13186a0fb378ca376429e1ecb396e780f73053d7ff0ad347",
+      "sha256": "6054af140ac607025cb8bf64aee366c48631482d8b85cbf6896bb4393e09cea1",
       "base_sha256": null
     },
     {
       "path": "templates/parks_index.html",
-      "sha256": "72dfad6897eab4f6e8fe963f8ed27de48e0651ce03393546c304de55f2857959",
+      "sha256": "8162ba328b26e644edd401fa6a1b3eb1434cbbbd55da5b0e528dbd569d99a521",
       "base_sha256": null
     },
     {
+      "path": "templates/parks_map_settings.html",
+      "base_sha256": null,
+      "sha256": "8f059dccae6c44a68855ccee8827d04ca9902310074c8e7c6c6c64a11599b597"
+    },
+    {
       "path": "templates/parks_staff.html",
-      "sha256": "311b11e5b616c3659ecdab159f848c0bd7adfac1ba7e7b6ef2902f2780c99d3f",
+      "sha256": "17d991b20025eb7a271006818c283405038e81fb2cda0ab6c387277dfec5cd52",
       "base_sha256": null
     },
     {

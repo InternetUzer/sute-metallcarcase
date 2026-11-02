@@ -1,25 +1,36 @@
 {% extends 'base.html' %}{% block content %}
 <section class="container section admin-page outreach-page">
   <nav class="outreach-links"><a href="/parks">← Карта и реестр</a><a href="/admin">Панель владельца</a></nav>
-  <span class="eyebrow">Только администратор</span><h1>Сотрудники и зоны</h1>
-  <p class="muted">Сотрудники входят через обычную страницу /login. Каждый видит объекты своей зоны, администратор — все.</p>
-  {% if invitation %}<div class="invitation"><h2>Одноразовая ссылка для установки пароля</h2><p>Передайте её сотруднику лично. Срок — 24 часа; ссылка отображается только сейчас. Ранее выданные ссылки этого сотрудника больше не действуют.</p><input readonly aria-label="Ссылка приглашения" value="{{ invitation }}"></div>{% endif %}
+  <span class="eyebrow">Только администратор</span><h1>Общий вход сотрудников</h1>
+  <p class="muted">Один логин и пароль для всей команды. Всем доступны все парки, контакты и отчёты о выездах, в том числе добавленные администратором.</p>
   <div class="outreach-columns">
-    <section class="info-box outreach-form-box"><h2>Создать сотрудника</h2>
-      <form method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="create">
-        <label>Имя сотрудника <input name="name" maxlength="160" required></label>
-        <label>Рабочая почта / логин <input name="email" type="email" maxlength="200" required></label>
-        <label>Географическая зона <select name="zone">{% for z in zones %}<option value="{{ z }}">{{ z }}</option>{% endfor %}</select></label>
-        <button class="button button-orange">Создать учётную запись</button>
+    <section class="info-box outreach-form-box">
+      {% if shared %}
+      <h2>Общая учётная запись</h2>
+      <p><strong>Логин:</strong> {{ shared.email }}</p>
+      <p>Страница входа: <a href="/login">Вход в кабинет</a>. После входа откроется карта промпарков.</p>
+      <form method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="password">
+        <label>Новый общий пароль <input name="password" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <label>Повторите новый пароль <input name="confirm" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <button class="button button-outline">Изменить общий пароль</button>
       </form>
+      <p class="field-note">После смены общего пароля сотрудникам потребуется войти заново. Ваш пароль администратора не меняется.</p>
+      {% else %}
+      <h2>Создать общий доступ</h2>
+      <form method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="create">
+        <label>Общий логин <input name="login" minlength="3" maxlength="64" required autocomplete="off" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{2,63}" placeholder="Например, technopark"></label>
+        <label>Общий пароль <input name="password" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <label>Повторите пароль <input name="confirm" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <p class="field-note">Логин — латинские буквы и цифры, пароль — от 8 символов. Пароль администратора использовать не нужно.</p>
+        <button class="button button-orange">Создать общий доступ</button>
+      </form>
+      {% endif %}
     </section>
-    <section class="info-box outreach-form-box"><h2>Назначенные сотрудники</h2>
-      {% for s in staff %}<form class="outreach-staff-item" method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="user_id" value="{{ s.id }}">
-        <div><strong>{{ s.name }}</strong><small>{{ s.email }}</small></div>
-        <select name="zone" aria-label="Зона: {{ s.name }}">{% for z in zones %}<option value="{{ z }}" {% if z==s.zone %}selected{% endif %}>{{ z }}</option>{% endfor %}</select>
-        <button class="button button-outline" name="action" value="assign">Сохранить зону</button>
-        <button class="button button-outline" name="action" value="invite">Новая ссылка для пароля</button>
-      </form>{% else %}<p class="muted">Пока нет сотрудников.</p>{% endfor %}
+    <section class="info-box outreach-form-box"><h2>Права команды</h2>
+      <p>Все сотрудники работают в одном реестре: видят все зоны, карточки парков, контакты и историю выездов.</p>
+      <p>Географическая зона — фильтр карты. Для применения приоритета, зоны или поиска нажмите «Показать».</p>
+      <p>Можно добавлять контакты и отчёты. Управление сайтом, импорт реестра, клиентские документы и настройки доступа сотрудникам недоступны.</p>
+      <p>В истории автором записей общего аккаунта будет указано «Сотрудники».</p>
     </section>
   </div>
 </section>

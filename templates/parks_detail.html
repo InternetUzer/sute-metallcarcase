@@ -3,6 +3,7 @@
 <section class="container section admin-page outreach-page">
   <nav class="outreach-links"><a href="/parks">← Назад к карте и списку</a></nav>
   <div class="section-heading"><div><span class="eyebrow">{{ park.id }} · {{ park.zone }}</span><h1>{{ park.name }}</h1><p class="muted">{{ park.address }}</p></div><span class="outreach-status">{{ park.visit_status }}</span></div>
+  <nav class="outreach-jumps" aria-label="Разделы карточки"><a href="#visit-form">Новый отчёт</a><a href="#contacts">Контакты · {{ contacts|length }}</a><a href="#history">История · {{ visits|length }}</a></nav>
   <div class="outreach-kpis">
     <div><span>Площадь территории</span><strong>{{ park.area_ha if park.area_ha is not none else '—' }}{% if park.area_ha is not none %} га{% endif %}</strong></div>
     <div><span>Приоритет</span><strong>{{ park.focus_rank[:1] }}</strong></div>
@@ -27,22 +28,24 @@
     {% endif %}
   </div>
   <div class="outreach-columns">
-    <section class="info-box outreach-form-box"><h2>Записать результат выезда</h2><form method="post" action="/parks/{{ park.id }}/visits">
+    <section id="visit-form" class="info-box outreach-form-box"><h2>Записать результат выезда</h2><form method="post" action="/parks/{{ park.id }}/visits">
       {{ hidden_csrf() }}
       <label>Дата выезда <input name="visit_date" type="date" value="{{ today }}" required></label>
       <label>Статус <select name="status" aria-label="Статус">{% for s in statuses %}<option value="{{ s }}" {% if s==park.visit_status %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+      <label>Итоги переговоров / примечания <textarea name="note" maxlength="5000" rows="5"></textarea></label>
+      <details class="outreach-extra"><summary>Данные о строительстве и собственнике <span>Необязательно</span></summary><div>
       <label>Собственник / руководитель парка (если известен) <input name="owner_name" maxlength="220" placeholder="Отдельно от управляющей компании"></label>
       <label>Кадастровый номер (если известен) <input name="cadastral_number" maxlength="120"></label>
       <label>Что планируют построить? <input name="building_type" maxlength="240" placeholder="Склад, ангар, производственный цех"></label>
       <label>Ориентировочная площадь здания, м² <input name="building_m2" type="number" min="0" max="100000000" step="any"></label>
       <label>Стадия проекта / РНС <input name="project_stage" maxlength="240" placeholder="Земля куплена, проектирование, РНС, тендер"></label>
       <label>Действующий подрядчик <input name="contractor" maxlength="240"></label>
-      <label>Итоги переговоров / примечания <textarea name="note" maxlength="5000" rows="5"></textarea></label>
+      </div></details>
       <label>Следующее действие <input name="next_action" maxlength="1200" value="{{ park.next_action }}" placeholder="Позвонить собственнику, отправить КП"></label>
       <label>Дата следующего контакта <input name="next_date" type="date" value="{{ park.next_date }}"></label>
       <button class="button button-orange">Сохранить отчёт</button>
     </form></section>
-    <section class="info-box outreach-form-box"><h2>Добавить контакт</h2><form method="post" action="/parks/{{ park.id }}/contacts">
+    <section id="contacts" class="info-box outreach-form-box"><h2>Добавить контакт</h2><form method="post" action="/parks/{{ park.id }}/contacts">
       {{ hidden_csrf() }}
       <label>Имя и фамилия <input name="name" maxlength="180" required></label>
       <label>Телефон <input name="phone" type="tel" maxlength="60"></label>
@@ -59,7 +62,7 @@
     {% else %}<p class="muted">Пока контактов нет. Внесите ФИО и номер после встречи.</p>{% endfor %}
     </section>
   </div>
-  <section class="outreach-history"><h2>История выездов и переговоров</h2>
+  <section id="history" class="outreach-history"><h2>История выездов и переговоров</h2>
   {% for v in visits %}<article class="outreach-log-card"><div class="outreach-history-head"><strong>{{ v.visit_date }} · {{ v.status }}</strong><small>{{ v.entered_by }} · запись {{ v.created_at }}</small></div>
     {% if v.owner_name %}<p><b>Собственник:</b> {{ v.owner_name }}</p>{% endif %}
     {% if v.cadastral_number %}<p><b>Кадастровый номер:</b> {{ v.cadastral_number }}</p>{% endif %}
