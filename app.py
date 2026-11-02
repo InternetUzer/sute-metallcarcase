@@ -29,6 +29,7 @@ from owner_content import OwnerContent
 from messengers import public_links, validate_settings as validate_messengers
 from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
+import industrial_outreach
 from prorab_transfer import register_transfer
 from prorab_anchor import APP_PATHS as ANCHOR_APP_PATHS, register_anchor
 
@@ -165,9 +166,16 @@ def create_app(test_config=None):
                 "script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'").replace(
                 "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT + ' ' + PRORAB_GEO).replace(
                 "img-src 'self' data:", "img-src 'self' data: blob: " + PRORAB_CONNECT)
+        if request.path.startswith('/parks'):
+            # Leaflet JS/CSS and OpenStreetMap raster tiles only on private fieldwork pages.
+            csp = response.headers['Content-Security-Policy']
+            csp = csp.replace("script-src 'self'", "script-src 'self' https://unpkg.com")
+            csp = csp.replace("style-src 'self'", "style-src 'self' https://unpkg.com")
+            csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https://tile.openstreetmap.org https://unpkg.com")
+            response.headers['Content-Security-Policy'] = csp
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
-        private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab'))
+        private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab', '/parks'))
         page_seo = seo.get(request.path)
         if private or not seo.enabled() or (page_seo and page_seo['noindex']) or response.status_code >= 400:
             response.headers['X-Robots-Tag'] = 'noindex, nofollow'
@@ -398,7 +406,7 @@ def create_app(test_config=None):
                 session.clear()
                 session.update(user_id=user['id'],user_version=user['version'])
                 session.permanent=True
-                return redirect('/admin' if user['role']=='admin' else '/cabinet')
+                return redirect('/admin' if user['role']=='admin' else '/parks' if user['role']=='field' else '/cabinet')
             error='Проверьте email и пароль.'
         return render('auth.html','Личный кабинет — Металл-Каркас',mode='login',error=error), (401 if error else 200)
 
@@ -695,6 +703,8 @@ def create_app(test_config=None):
         # Для тех, с кем владелец поделился папкой «Прораб+» на Яндекс Диске: вход своим Яндексом,
         # видно только то, к чему у этого аккаунта есть доступ на Диске. Сайт данных не выдаёт.
         return prorab_page(True)
+
+    industrial_outreach.register(app, db, protected, render, issue_token)
 
     return app
 
