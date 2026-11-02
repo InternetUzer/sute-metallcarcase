@@ -12,6 +12,7 @@ import sqlite3
 
 from flask import abort, flash, g, jsonify, redirect, request, url_for
 from werkzeug.security import generate_password_hash
+from yandex_park_routes import park_yandex_links
 
 ZONES = ('СЕВЕР / ЗАПАД', 'ВОСТОК / СЕВЕРО-ВОСТОК', 'ЮГ / ЮГО-ЗАПАД')
 STATUSES = ('Не посещён', 'Запланирован', 'Выезд выполнен', 'Контакт найден',
@@ -21,6 +22,7 @@ STATUSES = ('Не посещён', 'Запланирован', 'Выезд вы�
 
 def register(app, db, protected, render, issue_token):
     """Зарегистрировать внутренние страницы. db/protected/render — из app.py."""
+    app.add_template_filter(park_yandex_links, "park_yandex_links")
     with app.app_context():
         db().executescript("""
         CREATE TABLE IF NOT EXISTS sales_parks (
@@ -186,7 +188,7 @@ def register(app, db, protected, render, issue_token):
                 'SELECT id,name,address,zone,category,focus_rank,lat,lon,'
                 'radius_km,accuracy,visit_status FROM sales_parks WHERE zone=?',
                 (zone,)).fetchall() if zone else []
-        return jsonify([dict(p) for p in parks])
+        return jsonify([{**dict(p), **park_yandex_links(p)} for p in parks])
 
     @app.get('/parks/<park_id>')
     @protected()
