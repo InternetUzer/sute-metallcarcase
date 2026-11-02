@@ -1,4 +1,4 @@
-/* Map is an optional enhancement. All records and forms work without CDN/tiles. */
+/* Map is an optional enhancement. All records and forms work without tiles. */
 (() => {
   const el = document.getElementById('outreach-map');
   if (!el) return;
@@ -6,11 +6,18 @@
     el.textContent = 'Картографическая библиотека недоступна. Пользуйтесь таблицей ниже и ссылками на Яндекс Карты в карточках.';
     return;
   }
+  el.replaceChildren();
   const map = L.map(el).setView([55.7558, 37.6173], 9);
+  const tileNote = document.createElement('p');
+  tileNote.className = 'field-note';
+  tileNote.hidden = true;
+  tileNote.setAttribute('role', 'status');
+  tileNote.textContent = 'Подложка карты загрузилась не полностью. Точки и список доступны; для поездки используйте ссылки на Яндекс Карты.';
+  el.insertAdjacentElement('afterend', tileNote);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors',
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>',
     maxZoom: 18
-  }).addTo(map);
+  }).on('tileerror', () => { tileNote.hidden = false; }).addTo(map);
   L.circle([55.7558, 37.6173], {
     radius: 50000, weight: 2, fill: false, color: '#334d6b', dashArray: '7 6'
   }).addTo(map).bindPopup('Ориентировочный радиус 50 км по прямой от центра Москвы — не от МКАД.');
@@ -19,11 +26,7 @@
     'ВОСТОК / СЕВЕРО-ВОСТОК': '#e38a22',
     'ЮГ / ЮГО-ЗАПАД': '#159b79'
   };
-  const url = new URL(window.location.href);
-  const rank = url.searchParams.get('rank') ?? 'A';
-  const zone = url.searchParams.get('zone') || '';
-  const query = (url.searchParams.get('q') || '').toLocaleLowerCase('ru-RU');
-  fetch('/parks/map-data', {credentials: 'same-origin'})
+  fetch(el.dataset.url, {credentials: 'same-origin'})
     .then(response => {
       if (!response.ok) throw new Error('Список точек недоступен');
       return response.json();
@@ -32,9 +35,6 @@
       const markers = [];
       let noGeo = 0;
       for (const park of data) {
-        if (rank && !park.focus_rank.startsWith(rank)) continue;
-        if (zone && park.zone !== zone) continue;
-        if (query && !(park.name + park.address + park.id).toLocaleLowerCase('ru-RU').includes(query)) continue;
         if (park.lat == null || park.lon == null) {noGeo++; continue;}
         const top = park.focus_rank.startsWith('A');
         const marker = L.circleMarker([park.lat, park.lon], {
@@ -94,7 +94,6 @@
         const note = document.createElement('div');
         note.className = 'outreach-geonote';
         note.textContent = 'Без подтверждённых координат: ' + noGeo + '. Смотрите список.';
-        note.style.cssText = 'position:absolute;z-index:400;left:12px;bottom:24px;background:#fff;padding:5px 9px;border-radius:6px;font-size:11px;max-width:230px';
         el.appendChild(note);
       }
     })
@@ -102,7 +101,6 @@
       const note = document.createElement('div');
       note.className = 'outreach-geonote';
       note.textContent = 'Не удалось загрузить точки. Список объектов ниже доступен.';
-      note.style.cssText = 'position:absolute;z-index:400;left:12px;bottom:24px;background:#fff;padding:7px;border-radius:6px;';
       el.appendChild(note);
     });
 })();

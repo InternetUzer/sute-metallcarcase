@@ -30,8 +30,9 @@
     <section class="info-box outreach-form-box"><h2>Записать результат выезда</h2><form method="post" action="/parks/{{ park.id }}/visits">
       {{ hidden_csrf() }}
       <label>Дата выезда <input name="visit_date" type="date" value="{{ today }}" required></label>
-      <label>Статус <select name="status">{% for s in statuses %}<option value="{{ s }}" {% if s==park.visit_status %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+      <label>Статус <select name="status" aria-label="Статус">{% for s in statuses %}<option value="{{ s }}" {% if s==park.visit_status %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
       <label>Собственник / руководитель парка (если известен) <input name="owner_name" maxlength="220" placeholder="Отдельно от управляющей компании"></label>
+      <label>Кадастровый номер (если известен) <input name="cadastral_number" maxlength="120"></label>
       <label>Что планируют построить? <input name="building_type" maxlength="240" placeholder="Склад, ангар, производственный цех"></label>
       <label>Ориентировочная площадь здания, м² <input name="building_m2" type="number" min="0" max="100000000" step="any"></label>
       <label>Стадия проекта / РНС <input name="project_stage" maxlength="240" placeholder="Земля куплена, проектирование, РНС, тендер"></label>
@@ -61,6 +62,7 @@
   <section class="outreach-history"><h2>История выездов и переговоров</h2>
   {% for v in visits %}<article class="outreach-log-card"><div class="outreach-history-head"><strong>{{ v.visit_date }} · {{ v.status }}</strong><small>{{ v.entered_by }} · запись {{ v.created_at }}</small></div>
     {% if v.owner_name %}<p><b>Собственник:</b> {{ v.owner_name }}</p>{% endif %}
+    {% if v.cadastral_number %}<p><b>Кадастровый номер:</b> {{ v.cadastral_number }}</p>{% endif %}
     {% if v.building_type %}<p><b>Объект:</b> {{ v.building_type }}{% if v.building_m2 is not none %}, {{ v.building_m2 }} м²{% endif %}</p>{% endif %}
     {% if v.project_stage %}<p><b>Стадия:</b> {{ v.project_stage }}</p>{% endif %}{% if v.contractor %}<p><b>Подрядчик:</b> {{ v.contractor }}</p>{% endif %}
     {% if v.note %}<p>{{ v.note }}</p>{% endif %}

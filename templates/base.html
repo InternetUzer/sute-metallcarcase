@@ -24,10 +24,10 @@
   <link rel="stylesheet" href="/static/messengers.css?v=1">
   <script src="/static/site.js?v=owner-content-1" defer></script>
   {% if request.path.startswith('/parks') %}
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/static/industrial-outreach.css?v=1">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/industrial-outreach.js?v=1" defer></script>
+  <link rel="stylesheet" href="/static/vendor/leaflet-1.9.4/leaflet.css">
+  <link rel="stylesheet" href="/static/industrial-outreach.css?v=2">
+  <script src="/static/vendor/leaflet-1.9.4/leaflet.js" defer></script>
+  <script src="/static/industrial-outreach.js?v=2" defer></script>
   {% endif %}
   {% if analytics_public %}<meta name="analytics-csrf" content="{{ csrf_token() }}"><script src="/static/analytics.js?v=messengers-1" data-counter="{{ metrica_id }}" defer></script>{% endif %}
 </head>

@@ -2,6 +2,9 @@
 import io
 import json
 import sqlite3
+from pathlib import Path
+import re
+from urllib.parse import urlparse, unquote
 
 import pytest
 from werkzeug.security import generate_password_hash
@@ -80,7 +83,7 @@ def test_roles_zones_and_map_protect_private_content(app, client):
         park('IP-102',ZONES[1],'Восточный парк'),
         park('IP-103',ZONES[2],'Южный парк')])
     assert response.status_code == 302
-    assert client.get('/parks/map-data').json[0]['id']=='IP-101'
+    assert {p['id'] for p in client.get('/parks/map-data').json} == {'IP-101', 'IP-102', 'IP-103'}
     assert len(client.get('/parks/map-data').json) == 3
 
     login(client,2)
@@ -215,3 +218,121 @@ def test_yandex_maps_routes_are_universal_and_accurate(client, app):
     page_without_coords=client.get('/parks/IP-102').text
     assert 'Найти парк по адресу' in page_without_coords
     assert 'Маршрут к ориентиру' not in page_without_coords
+
+
+@pytest.mark.parametrize('query,expected', [
+    ('rank=&q=сЕвЕр', ['IP-101']),
+    ('rank=B', ['IP-102']),
+    ('rank=invalid', ['IP-101', 'IP-102']),
+    ('rank=&q=%25', []),
+    ('rank=&q=IP-102', ['IP-102']),
+])
+def test_table_and_map_use_same_filters(app, client, query, expected):
+    from html import unescape
+    users(app)
+    login(client, 1)
+    north = park('IP-101', ZONES[0], 'Северный парк')
+    east = park('IP-102', ZONES[1], 'Восточный парк')
+    east['focus_rank'] = 'B — новый девелопмент'
+    import_parks(client, [north, east])
+    page = client.get('/parks?' + query).text
+    assert re.findall(r'class="outreach-name" href="/parks/(IP-\d+)"', page) == expected
+    map_url = unescape(re.search(r'id="outreach-map" data-url="([^"]+)"', page)[1])
+    assert [p['id'] for p in client.get(map_url).json] == expected
+    assert [p['id'] for p in client.get('/parks/map-data?' + query).json] == expected
+
+
+def test_field_cannot_override_zone_or_access_client_cabinet(app, client):
+    users(app)
+    login(client, 1)
+    import_parks(client, [park('IP-101', ZONES[0], 'Северный парк'),
+                          park('IP-102', ZONES[1], 'Восточный парк')])
+    # Even a legacy/misassigned project must not grant this role client access.
+    with connect(app) as db:
+        db.execute("INSERT INTO projects(id,user_id,title) VALUES(1,2,'Private client project')")
+        db.execute("INSERT INTO files(id,project_id,original_name,storage_name) VALUES(1,1,'private.txt','private.txt')")
+    (Path(app.config['DATA_DIR']) / 'files/private.txt').write_text('private client content')
+    login(client, 2)
+    assert [p['id'] for p in client.get('/parks/map-data', query_string={'zone': ZONES[1]}).json] == ['IP-101']
+    for path in ['/cabinet', '/cabinet/projects/1', '/files/1', '/admin', '/admin/prorab']:
+        assert client.get(path).status_code == 403, path
+    # A field user without an assigned zone has no default access.
+    with connect(app) as db:
+        db.execute('DELETE FROM sales_staff_zones WHERE user_id=2')
+    assert client.get('/parks/map-data').json == []
+    assert client.get('/parks/IP-101').status_code == 404
+
+
+def test_reinvitation_password_login_and_zone_change(app, client):
+    users(app)
+    login(client, 1)
+    import_parks(client, [park('IP-101', ZONES[0], 'Северный парк'),
+                          park('IP-102', ZONES[1], 'Восточный парк')])
+    data = {'csrf_token': csrf(client), 'action': 'invite', 'user_id': '2'}
+    first = client.post('/parks/staff', data=data)
+    first_url = urlparse(re.search(r'aria-label="Ссылка приглашения" value="([^"]+)"', first.text)[1]).path
+    second = client.post('/parks/staff', data=data)
+    second_url = urlparse(re.search(r'aria-label="Ссылка приглашения" value="([^"]+)"', second.text)[1]).path
+    employee = app.test_client()
+    assert employee.get(first_url).status_code == 410
+    password = 'qa-only-employee-password'
+    assert employee.post(second_url, data={
+        'csrf_token': csrf(employee, second_url), 'password': password,
+        'confirm': password}).status_code == 302
+    assert employee.get(second_url).status_code == 410
+    response = employee.post('/login', data={
+        'csrf_token': csrf(employee, '/login'), 'email': 'north@example.com',
+        'password': password})
+    assert response.status_code == 302 and response.location == '/parks'
+    assert employee.get('/parks/IP-101').status_code == 200
+    assert client.post('/parks/staff', data={**data, 'action': 'assign',
+                       'zone': ZONES[1]}).status_code == 200
+    assert employee.get('/parks/IP-101').status_code == 404
+    assert employee.get('/parks/IP-102').status_code == 200
+    assert employee.post('/parks/staff', data={**data, 'csrf_token': csrf(employee)}).status_code == 403
+    # The staff screen cannot issue an invitation for an administrator/client.
+    for user_id in (1, 5):
+        assert client.post('/parks/staff', data={**data, 'user_id': user_id}).status_code == 404
+
+
+def test_canonical_117_registry_cli_import_is_repeatable(app, client):
+    registry = Path(__file__).resolve().parents[1] / 'docs/industrial-outreach/industrial_parks_prospecting_import.json'
+    users(app)
+    runner = app.test_cli_runner()
+    first = runner.invoke(args=['import-parks', str(registry)])
+    assert first.exit_code == 0, first.output
+    login(client, 2)
+    token = csrf(client)
+    assert client.post('/parks/IP-001/contacts', data={
+        'csrf_token': token, 'name': 'Тестовый контакт'}).status_code == 302
+    assert client.post('/parks/IP-001/visits', data={
+        'csrf_token': token, 'visit_date': '2026-11-02', 'status': 'Переговоры',
+        'cadastral_number': '77:01:0000000:123', 'note': 'Сохранить после импорта'}).status_code == 302
+    second = runner.invoke(args=['import-parks', str(registry)])
+    assert second.exit_code == 0, second.output
+    with connect(app) as db:
+        assert db.execute('SELECT COUNT(*) FROM sales_parks').fetchone()[0] == 117
+        assert db.execute('SELECT COUNT(*) FROM sales_parks WHERE lat IS NOT NULL AND lon IS NOT NULL').fetchone()[0] == 115
+        assert [db.execute('SELECT COUNT(*) FROM sales_parks WHERE zone=?', (z,)).fetchone()[0] for z in ZONES] == [31, 55, 31]
+        assert db.execute('SELECT COUNT(*) FROM sales_contacts').fetchone()[0] == 1
+        assert db.execute('SELECT COUNT(*) FROM sales_visits').fetchone()[0] == 1
+        assert db.execute("SELECT visit_status FROM sales_parks WHERE id='IP-001'").fetchone()[0] == 'Переговоры'
+    assert '77:01:0000000:123' in client.get('/parks/IP-001').text
+
+
+def test_private_pages_and_bundled_map(app, client):
+    for path in ['/parks', '/parks/map-data', '/parks/IP-101', '/parks/staff']:
+        response = client.get(path)
+        assert response.status_code == 302 and response.location == '/login'
+        assert response.headers['Cache-Control'] == 'no-store'
+        assert 'noindex' in response.headers['X-Robots-Tag']
+    users(app)
+    login(client, 1)
+    page = client.get('/parks')
+    assert 'unpkg.com' not in page.text
+    assert 'unpkg.com' not in page.headers['Content-Security-Policy']
+    assert 'tile.openstreetmap.org' in page.headers['Content-Security-Policy']
+    assert 'tile.openstreetmap.org' not in client.get('/').headers['Content-Security-Policy']
+    js = client.get('/static/vendor/leaflet-1.9.4/leaflet.js')
+    assert js.status_code == 200 and 'javascript' in js.mimetype
+    assert client.get('/static/vendor/leaflet-1.9.4/leaflet.css').mimetype == 'text/css'

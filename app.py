@@ -167,11 +167,9 @@ def create_app(test_config=None):
                 "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT + ' ' + PRORAB_GEO).replace(
                 "img-src 'self' data:", "img-src 'self' data: blob: " + PRORAB_CONNECT)
         if request.path.startswith('/parks'):
-            # Leaflet JS/CSS and OpenStreetMap raster tiles only on private fieldwork pages.
+            # Leaflet is bundled locally; only map tiles need an external origin.
             csp = response.headers['Content-Security-Policy']
-            csp = csp.replace("script-src 'self'", "script-src 'self' https://unpkg.com")
-            csp = csp.replace("style-src 'self'", "style-src 'self' https://unpkg.com")
-            csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https://tile.openstreetmap.org https://unpkg.com")
+            csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https://tile.openstreetmap.org")
             response.headers['Content-Security-Policy'] = csp
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
@@ -211,13 +209,15 @@ def create_app(test_config=None):
         except (ValueError, TypeError):
             return []
 
-    def protected(admin=False):
+    def protected(admin=False, roles=('admin', 'client')):
         def decorator(f):
             @wraps(f)
             def wrapper(*args, **kwargs):
                 if not g.user:
                     return redirect(url_for('login'))
                 if admin and g.user['role'] != 'admin':
+                    abort(403)
+                if not admin and g.user['role'] not in roles:
                     abort(403)
                 return f(*args, **kwargs)
             return wrapper

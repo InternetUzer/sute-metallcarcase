@@ -9,6 +9,7 @@ import math
 import re
 import secrets
 import sqlite3
+import click
 
 from flask import abort, flash, g, jsonify, redirect, request, url_for
 from werkzeug.security import generate_password_hash
@@ -116,6 +117,8 @@ def register(app, db, protected, render, issue_token):
     def numeric(value, maximum):
         if value is None or value == '':
             return None
+        if isinstance(value, bool):
+            raise ValueError('Ожидается число, а не логическое значение')
         result = float(value)
         if not math.isfinite(result) or result < 0 or result > maximum:
             raise ValueError('Некорректное числовое значение')
@@ -129,9 +132,8 @@ def register(app, db, protected, render, issue_token):
         except ValueError:
             raise ValueError('Дата должна быть в формате ГГГГ-ММ-ДД')
 
-    @app.get('/parks')
-    @protected()
-    def sales_parks_index():
+    def filtered_parks():
+        """Use the same normalized, role-scoped selection for map and table."""
         employee()
         clauses, params = [], []
         zone = user_zone() if g.user['role'] == 'field' else request.args.get('zone', '')
@@ -150,8 +152,11 @@ def register(app, db, protected, render, issue_token):
             rank = ''
         query = request.args.get('q', '').strip()[:100]
         if query:
-            clauses.append('(p.name LIKE ? OR p.address LIKE ? OR p.id LIKE ?)')
-            params.extend(['%' + query + '%'] * 3)
+            # casefold also handles Cyrillic (SQLite LOWER/LIKE only fold ASCII).
+            clauses.append('(instr(casefold(p.name), ?) OR '
+                           'instr(casefold(p.address), ?) OR instr(casefold(p.id), ?))')
+            params.extend([query.casefold()] * 3)
+            db().create_function('casefold', 1, lambda value: value.casefold())
         where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
         parks = db().execute(
             'SELECT p.* FROM sales_parks p' + where +
@@ -160,6 +165,12 @@ def register(app, db, protected, render, issue_token):
             WHEN p.focus_rank LIKE 'B%' THEN 1
             WHEN p.focus_rank LIKE 'C%' THEN 2 ELSE 3 END,
             p.zone, p.name""", params).fetchall()
+        return parks, zone, rank, query
+
+    @app.get('/parks')
+    @protected(roles=('admin', 'field'))
+    def sales_parks_index():
+        parks, zone, rank, query = filtered_parks()
         counts_where = ' WHERE zone=?' if g.user['role'] == 'field' and zone else (
             ' WHERE 1=0' if g.user['role'] == 'field' else '')
         counts_params = (zone,) if g.user['role'] == 'field' and zone else ()
@@ -171,27 +182,21 @@ def register(app, db, protected, render, issue_token):
         return render('parks_index.html', 'Объезд промпарков — Металл-Каркас',
                       parks=parks, zones=ZONES, statuses=STATUSES,
                       selected_zone=zone or '', selected_rank=rank, query=query,
+                      map_url=url_for('sales_parks_map_data', zone=zone or '',
+                                      rank=rank, q=query),
                       counts=counts, is_admin=g.user['role'] == 'admin')
 
     @app.get('/parks/map-data')
-    @protected()
+    @protected(roles=('admin', 'field'))
     def sales_parks_map_data():
-        employee()
-        if g.user['role'] == 'admin':
-            parks = db().execute(
-                'SELECT id,name,address,zone,category,focus_rank,lat,lon,'
-                'radius_km,accuracy,visit_status FROM sales_parks'
-            ).fetchall()
-        else:
-            zone = user_zone()
-            parks = db().execute(
-                'SELECT id,name,address,zone,category,focus_rank,lat,lon,'
-                'radius_km,accuracy,visit_status FROM sales_parks WHERE zone=?',
-                (zone,)).fetchall() if zone else []
-        return jsonify([{**dict(p), **park_yandex_links(p)} for p in parks])
+        parks, _, _, _ = filtered_parks()
+        fields = ('id', 'name', 'address', 'zone', 'category', 'focus_rank',
+                  'lat', 'lon', 'radius_km', 'accuracy', 'visit_status')
+        return jsonify([{**{key: p[key] for key in fields}, **park_yandex_links(p)}
+                        for p in parks])
 
     @app.get('/parks/<park_id>')
-    @protected()
+    @protected(roles=('admin', 'field'))
     def sales_park_detail(park_id):
         park = park_for_user(park_id)
         contacts = db().execute(
@@ -207,7 +212,7 @@ def register(app, db, protected, render, issue_token):
                       statuses=STATUSES, today=date.today().isoformat())
 
     @app.post('/parks/<park_id>/contacts')
-    @protected()
+    @protected(roles=('admin', 'field'))
     def sales_park_add_contact(park_id):
         park_for_user(park_id)
         name = text_field('name', 180)
@@ -225,15 +230,15 @@ def register(app, db, protected, render, issue_token):
         return redirect(url_for('sales_park_detail', park_id=park_id))
 
     @app.post('/parks/<park_id>/visits')
-    @protected()
+    @protected(roles=('admin', 'field'))
     def sales_park_add_visit(park_id):
         park_for_user(park_id)
         status = text_field('status', 60)
         if status not in STATUSES:
             abort(422, 'Неизвестный статус выезда')
         try:
-            visit_date = valid_date(text_field('visit_date', 10))
-            next_date = valid_date(text_field('next_date', 10))
+            visit_date = valid_date(request.form.get('visit_date', '').strip())
+            next_date = valid_date(request.form.get('next_date', '').strip())
             building_m2 = numeric(text_field('building_m2', 25).replace(',', '.'), 100000000)
         except ValueError as exc:
             abort(422, str(exc))
@@ -262,10 +267,10 @@ def register(app, db, protected, render, issue_token):
     def sales_parks_staff():
         invitation = None
         if request.method == 'POST':
-            zone = text_field('zone', 80)
-            if zone not in ZONES:
-                abort(422, 'Неизвестная географическая зона')
             action = text_field('action', 30)
+            zone = text_field('zone', 80)
+            if action in ('create', 'assign') and zone not in ZONES:
+                abort(422, 'Неизвестная географическая зона')
             if action == 'create':
                 name = text_field('name', 160)
                 email = text_field('email', 200).lower()
@@ -284,7 +289,7 @@ def register(app, db, protected, render, issue_token):
                 except sqlite3.IntegrityError:
                     db().rollback()
                     abort(422, 'Email уже существует: нельзя перезаписать чужую учётную запись')
-            elif action == 'assign':
+            elif action in ('assign', 'invite'):
                 try:
                     user_id = int(request.form.get('user_id', ''))
                 except ValueError:
@@ -293,12 +298,15 @@ def register(app, db, protected, render, issue_token):
                     "SELECT id FROM users WHERE id=? AND role='field'", (user_id,)).fetchone()
                 if not existing:
                     abort(404)
-                db().execute(
-                    'INSERT INTO sales_staff_zones(user_id,zone) VALUES(?,?) '
-                    'ON CONFLICT(user_id) DO UPDATE SET zone=excluded.zone',
-                    (user_id, zone))
-                db().commit()
-                flash('Географическая зона сотрудника изменена.')
+                if action == 'invite':
+                    invitation = issue_token(user_id)
+                else:
+                    db().execute(
+                        'INSERT INTO sales_staff_zones(user_id,zone) VALUES(?,?) '
+                        'ON CONFLICT(user_id) DO UPDATE SET zone=excluded.zone',
+                        (user_id, zone))
+                    db().commit()
+                    flash('Географическая зона сотрудника изменена.')
             else:
                 abort(400)
         staff = db().execute(
@@ -309,22 +317,16 @@ def register(app, db, protected, render, issue_token):
         return render('parks_staff.html', 'Сотрудники — Металл-Каркас',
                       zones=ZONES, staff=staff, invitation=invitation)
 
-    @app.post('/parks/import')
-    @protected(admin=True)
-    def sales_parks_import():
-        uploaded = request.files.get('file')
-        if not uploaded or not uploaded.filename.lower().endswith('.json'):
-            abort(422, 'Загрузите JSON из реестра промпарков')
-        raw = uploaded.read(2_000_001)
+    def import_registry(raw):
         if len(raw) > 2_000_000:
-            abort(413)
+            raise ValueError('Размер реестра превышает 2 МБ')
         try:
             data = json.loads(raw.decode('utf-8'))
         except (UnicodeError, ValueError):
-            abort(422, 'Некорректный JSON')
+            raise ValueError('Некорректный JSON')
         records = data.get('parks') if isinstance(data, dict) else None
         if not isinstance(records, list) or not (1 <= len(records) <= 800):
-            abort(422, 'Ожидается объект с массивом parks (1–800 записей)')
+            raise ValueError('Ожидается объект с массивом parks (1–800 записей)')
         query = """INSERT INTO sales_parks
             (id,name,address,zone,category,stage,area_ha,buildings_m2,lat,lon,
              radius_km,radius_flag,focus_rank,target_fit,operator,operator_phone,
@@ -383,7 +385,32 @@ def register(app, db, protected, render, issue_token):
             db().commit()
         except (ValueError, TypeError, sqlite3.Error) as exc:
             db().rollback()
-            abort(422, 'Ошибка импорта: ' + str(exc)[:150])
-        flash('Реестр обновлён: ' + str(len(normalized)) +
+            raise ValueError('Ошибка импорта: ' + str(exc)[:150]) from exc
+        return len(normalized)
+
+    @app.cli.command('import-parks')
+    @click.argument('registry', type=click.File('rb'))
+    def import_parks_command(registry):
+        """Import the public parks registry, retaining contacts and visit history."""
+        try:
+            count = import_registry(registry.read(2_000_001))
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f'Imported {count} parks; contacts and visits retained.')
+
+    @app.post('/parks/import')
+    @protected(admin=True)
+    def sales_parks_import():
+        uploaded = request.files.get('file')
+        if not uploaded or not uploaded.filename.lower().endswith('.json'):
+            abort(422, 'Загрузите JSON из реестра промпарков')
+        raw = uploaded.read(2_000_001)
+        if len(raw) > 2_000_000:
+            abort(413)
+        try:
+            count = import_registry(raw)
+        except ValueError as exc:
+            abort(422, str(exc))
+        flash('Реестр обновлён: ' + str(count) +
               ' записей. Контакты и история выездов сохранены.')
         return redirect(url_for('sales_parks_index'))
