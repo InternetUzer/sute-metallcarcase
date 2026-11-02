@@ -30,20 +30,26 @@
   </form>
   <div class="outreach-map-wrap">
     <div id="outreach-map" aria-label="Карта промпарков; координаты части объектов ориентировочные"><p>Загрузка карты. Если карта недоступна, список ниже остаётся рабочим.</p></div>
-    <p class="field-note">Круг — 50 км <strong>по прямой от центра Москвы</strong>. Точки с пометкой «ориентир» не заменяют проверку въезда. Цвет показывает зону, крупный ободок — приоритет А. Действующие склады без незастроенной земли не входят в первичную очередь.</p>
+    <p class="field-note">Круг — 50 км <strong>по прямой от центра Москвы</strong>. Для большинства объектов координаты ориентировочные: проверяйте точный въезд по адресу перед поездкой. Цвет показывает зону, крупный ободок — приоритет А. Действующие склады без незастроенной земли не входят в первичную очередь.</p>
   </div>
   {% if is_admin %}<details class="outreach-import"><summary>Обновить реестр из JSON</summary><p>Обновляются только публичные данные о площадках. Контакты, сотрудники и история выездов не перезаписываются.</p>
     <form method="post" action="/parks/import" enctype="multipart/form-data">{{ hidden_csrf() }}<input type="file" name="file" accept=".json,application/json" required><button class="button button-outline">Импортировать реестр</button></form>
   </details>{% endif %}
-  <div class="outreach-table-scroll"><table class="outreach-table"><thead><tr><th>№ / объект</th><th>Где</th><th>Площадь</th><th>Предложение</th><th>Статус</th><th>Следующий шаг</th></tr></thead><tbody>
-    {% for park in parks %}<tr>
+  <div class="outreach-table-scroll"><table class="outreach-table"><thead><tr><th>№ / объект</th><th>Где</th><th>Площадь</th><th>Предложение</th><th>Статус</th><th>Следующий шаг</th><th>Яндекс Карты</th></tr></thead><tbody>
+    {% for park in parks %}{% set nav = park|park_yandex_links %}<tr>
       <td><a class="outreach-name" href="/parks/{{ park.id }}">{{ park.id }} · {{ park.name }}</a><small>{{ park.category }} · {{ park.focus_rank }}</small></td>
       <td>{{ park.zone }}<small>{{ park.address }}</small><small>{{ park.radius_km if park.radius_km is not none else '—' }} км · {{ park.radius_flag }}</small></td>
       <td>{% if park.area_ha is not none %}{{ park.area_ha }} га{% else %}—{% endif %}</td>
       <td>{{ park.stage }}<small>{{ park.target_fit }}</small></td>
       <td><span class="outreach-status">{{ park.visit_status }}</span></td>
       <td>{{ park.next_action or '—' }}{% if park.next_date %}<small>{{ park.next_date }}</small>{% endif %}</td>
-    </tr>{% else %}<tr><td colspan="6">Нет объектов по этим фильтрам или территория ещё не назначена. Администратор может настроить доступ в разделе «Сотрудники и зоны».</td></tr>{% endfor %}
+      <td><div class="outreach-navigation-cell">
+      {% if nav.route_url %}
+        <a href="{{ nav.route_url }}" target="_blank" rel="noopener noreferrer">{% if nav.entrance_confirmed %}Маршрут ↗{% else %}Маршрут к ориентиру ↗{% endif %}</a>
+      {% endif %}
+      <a href="{{ nav.search_url }}" target="_blank" rel="noopener noreferrer">Адрес на карте ↗</a>
+      </div></td>
+    </tr>{% else %}<tr><td colspan="7">Нет объектов по этим фильтрам или территория ещё не назначена. Администратор может настроить доступ в разделе «Сотрудники и зоны».</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endblock %}
