@@ -9,6 +9,7 @@
   el.replaceChildren();
   const touchScreen = window.matchMedia('(pointer: coarse)').matches;
   const map = L.map(el, {dragging: !touchScreen, scrollWheelZoom: false}).setView([55.7558, 37.6173], 9);
+  map.attributionControl.setPrefix(false);
   const controls = document.querySelector('.outreach-map-tools');
   const interaction = document.getElementById('map-interaction');
   if (touchScreen && controls && interaction) {
