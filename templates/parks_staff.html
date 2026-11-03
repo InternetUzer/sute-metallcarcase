@@ -1,0 +1,37 @@
+{% extends 'base.html' %}{% block content %}
+<section class="container section admin-page outreach-page">
+  <nav class="outreach-links"><a href="/parks">← Карта и реестр</a><a href="/admin">Панель владельца</a></nav>
+  <span class="eyebrow">Только администратор</span><h1>Общий вход сотрудников</h1>
+  <p class="muted">Один логин и пароль для всей команды. Всем доступны все парки, контакты и отчёты о выездах, в том числе добавленные администратором.</p>
+  <div class="outreach-columns">
+    <section class="info-box outreach-form-box">
+      {% if shared %}
+      <h2>Общая учётная запись</h2>
+      <p><strong>Логин:</strong> {{ shared.email }}</p>
+      <p>Страница входа: <a href="/login">Вход в кабинет</a>. После входа откроется карта промпарков.</p>
+      <form method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="password">
+        <label>Новый общий пароль <input name="password" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <label>Повторите новый пароль <input name="confirm" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <button class="button button-outline">Изменить общий пароль</button>
+      </form>
+      <p class="field-note">После смены общего пароля сотрудникам потребуется войти заново. Ваш пароль администратора не меняется.</p>
+      {% else %}
+      <h2>Создать общий доступ</h2>
+      <form method="post" action="/parks/staff">{{ hidden_csrf() }}<input type="hidden" name="action" value="create">
+        <label>Общий логин <input name="login" minlength="3" maxlength="64" required autocomplete="off" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{2,63}" placeholder="Например, technopark"></label>
+        <label>Общий пароль <input name="password" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <label>Повторите пароль <input name="confirm" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        <p class="field-note">Логин — латинские буквы и цифры, пароль — от 8 символов. Пароль администратора использовать не нужно.</p>
+        <button class="button button-orange">Создать общий доступ</button>
+      </form>
+      {% endif %}
+    </section>
+    <section class="info-box outreach-form-box"><h2>Права команды</h2>
+      <p>Все сотрудники работают в одном реестре: видят все зоны, карточки парков, контакты и историю выездов.</p>
+      <p>Географическая зона — фильтр карты. Для применения приоритета, зоны или поиска нажмите «Показать».</p>
+      <p>Можно добавлять контакты и отчёты. Управление сайтом, импорт реестра, клиентские документы и настройки доступа сотрудникам недоступны.</p>
+      <p>В истории автором записей общего аккаунта будет указано «Сотрудники».</p>
+    </section>
+  </div>
+</section>
+{% endblock %}

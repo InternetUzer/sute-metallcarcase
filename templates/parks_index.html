@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="container section admin-page outreach-page">
+  <div class="section-heading">
+    <div><span class="eyebrow">Внутренняя система · коммерческие выезды</span><h1>Объезд промышленных парков</h1><p class="muted">Одна карточка на парк; по умолчанию — парки с потенциалом нового строительства, как М7 Купавна.</p></div>
+    <form method="post" action="/logout">{{ hidden_csrf() }}<button class="button button-outline">Выйти</button></form>
+  </div>
+  <nav class="outreach-links"><a href="{{ '/admin' if is_admin else '/parks' }}">← {{ 'Панель владельца' if is_admin else 'Карта и реестр' }}</a>{% if is_admin %}<a href="/parks/staff">Доступ сотрудников</a><a href="/parks/map-settings">Настройка карты</a>{% endif %}</nav>
+  <nav class="outreach-jumps" aria-label="Разделы реестра"><a href="#park-filters">Фильтры</a><a href="#park-map">Карта</a><a href="#park-list">Список · {{ parks|length }}</a></nav>
+  <div class="outreach-kpis">
+    <div><span>Всего в доступе</span><strong>{{ counts.total or 0 }}</strong></div>
+    <div><span>Парков приоритета А</span><strong>{{ counts.priority or 0 }}</strong></div>
+    <div><span>Обработано / запланировано</span><strong>{{ counts.touched or 0 }}</strong></div>
+    <div><span>Показано по фильтрам</span><strong>{{ parks|length }}</strong></div>
+  </div>
+  <form id="park-filters" class="outreach-filter" method="get" action="/parks">
+    <label>Приоритет
+      <select name="rank">
+        <option value="A" {% if selected_rank=='A' %}selected{% endif %}>А — аналог М7 Купавна</option>
+        <option value="B" {% if selected_rank=='B' %}selected{% endif %}>B — новый девелопмент</option>
+        <option value="C" {% if selected_rank=='C' %}selected{% endif %}>C — действующие / вторичные</option>
+        <option value="X" {% if selected_rank=='X' %}selected{% endif %}>За пределами радиуса</option>
+        <option value="" {% if not selected_rank %}selected{% endif %}>Все объекты</option>
+      </select>
+    </label>
+    {% if can_filter_zones %}<label>Зона
+      <select name="zone"><option value="">Все зоны</option>{% for zone in zones %}<option value="{{ zone }}" {% if zone==selected_zone %}selected{% endif %}>{{ zone }}</option>{% endfor %}</select>
+    </label>{% endif %}
+    <label class="outreach-search">Название, адрес или ID <input type="search" name="q" value="{{ query }}" placeholder="Например, Купавна"></label>
+    <button class="button button-orange">Показать</button>
+  </form>
+  <p class="field-note">Выберите приоритет и зону, затем нажмите «Показать» — обновятся карта и список.</p>
+  {% if is_admin and not yandex_tiles_key %}<p class="field-note">Для перехода на Яндекс Карты <a href="/parks/map-settings">добавьте ключ Tiles API</a>. Пока используется OpenStreetMap.</p>{% endif %}
+  <div id="park-map" class="outreach-map-wrap">
+    <div class="outreach-map-tools" hidden><button type="button" class="button button-outline" id="map-interaction" aria-pressed="false">Двигать карту</button><span id="map-help">Двумя пальцами — масштаб. Одним — прокрутка страницы.</span></div>
+    <div id="outreach-map" data-url="{{ map_url }}" data-yandex-key="{{ yandex_tiles_key }}" aria-label="Карта промпарков; координаты части объектов ориентировочные" aria-describedby="map-help"><p>Загрузка карты. Если карта недоступна, список ниже остаётся рабочим.</p></div>
+    <p class="field-note">Круг — 50 км <strong>по прямой от центра Москвы</strong>. Для большинства объектов координаты ориентировочные: проверяйте точный въезд по адресу перед поездкой. Цвет показывает зону, крупный ободок — приоритет А. Действующие склады без незастроенной земли не входят в первичную очередь.</p>
+  </div>
+  {% if is_admin %}<details class="outreach-import"><summary>Обновить реестр из JSON</summary><p>Обновляются только публичные данные о площадках. Контакты, сотрудники и история выездов не перезаписываются.</p>
+    <form method="post" action="/parks/import" enctype="multipart/form-data">{{ hidden_csrf() }}<input type="file" name="file" accept=".json,application/json" required><button class="button button-outline">Импортировать реестр</button></form>
+  </details>{% endif %}
+  <h2 id="park-list" class="outreach-list-title">Объекты <span>{{ parks|length }}</span></h2>
+  <div class="outreach-table-scroll"><table class="outreach-table" role="table" aria-label="Промышленные парки"><thead role="rowgroup"><tr role="row"><th>№ / объект</th><th>Где</th><th>Площадь</th><th>Предложение</th><th>Статус</th><th>Следующий шаг</th><th>Яндекс Карты</th></tr></thead><tbody role="rowgroup">
+    {% for park in parks %}{% set nav = park|park_yandex_links %}<tr role="row">
+      <td role="cell" class="outreach-cell-name"><a class="outreach-name" href="/parks/{{ park.id }}">{{ park.id }} · {{ park.name }}</a><small>{{ park.category }} · {{ park.focus_rank }}</small></td>
+      <td role="cell" data-label="Где" class="outreach-cell-place">{{ park.zone }}<small>{{ park.address }}</small><small>{{ park.radius_km if park.radius_km is not none else '—' }} км · {{ park.radius_flag }}</small></td>
+      <td role="cell" data-label="Площадь" class="outreach-cell-area">{% if park.area_ha is not none %}{{ park.area_ha }} га{% else %}—{% endif %}</td>
+      <td role="cell" data-label="Предложение" class="outreach-cell-offer">{{ park.stage }}<small>{{ park.target_fit }}</small></td>
+      <td role="cell" data-label="Статус" class="outreach-cell-status"><span class="outreach-status">{{ park.visit_status }}</span></td>
+      <td role="cell" data-label="Следующий шаг" class="outreach-cell-next">{{ park.next_action or 'Пока не назначен' }}{% if park.next_date %}<small>{{ park.next_date }}</small>{% endif %}</td>
+      <td role="cell" class="outreach-cell-route"><div class="outreach-navigation-cell">
+      {% if nav.route_url %}
+        <a href="{{ nav.route_url }}" target="_blank" rel="noopener noreferrer">{% if nav.entrance_confirmed %}Маршрут ↗{% else %}Маршрут к ориентиру ↗{% endif %}</a>
+      {% endif %}
+      <a href="{{ nav.search_url }}" target="_blank" rel="noopener noreferrer">Адрес на карте ↗</a>
+      </div></td>
+    </tr>{% else %}<tr><td colspan="7">Нет объектов по этим фильтрам. Измените приоритет, зону или поисковый запрос.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

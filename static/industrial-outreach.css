@@ -1,0 +1,163 @@
+/* Private sales / fieldwork pages, compatible with the existing light admin theme. */
+.outreach-page{max-width:1480px;padding-top:36px;padding-bottom:50px}.outreach-page h1{font-size:clamp(28px,3vw,42px);line-height:1.15;margin:12px 0}
+.outreach-page .section-heading{gap:20px;margin-bottom:24px}
+.outreach-links{display:flex;flex-wrap:wrap;gap:22px;margin:0 0 24px}
+.outreach-links a{color:#1b5b9b;text-decoration:none;font-weight:600}
+.outreach-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}
+.outreach-kpis>div{border:1px solid #d9e1ec;background:#f7fafc;border-radius:12px;padding:17px}
+.outreach-kpis span{font-size:12px;color:#637287;display:block}
+.outreach-kpis strong{display:block;font-size:27px;color:#16395e;line-height:1.25;margin-top:5px}
+.outreach-filter{display:flex;align-items:end;flex-wrap:wrap;gap:12px;margin:18px 0;padding:16px;background:#eaf0f7;border-radius:13px}
+.outreach-filter label{min-width:190px;flex:1}.outreach-filter .outreach-search{flex:1.4}
+.outreach-filter input,.outreach-filter select{display:block;width:100%;margin-top:5px}
+.outreach-filter button{flex-shrink:0}
+.outreach-map-wrap{background:#fff;border:1px solid #d9e1ec;border-radius:14px;overflow:hidden;margin-bottom:16px}
+#outreach-map{height:430px;width:100%;min-height:320px;background:#eaf0f4}
+#outreach-map p{padding:20px}
+.outreach-geonote{position:absolute;z-index:400;left:12px;bottom:24px;background:#fff;color:#16395e;padding:7px 9px;border-radius:6px;font-size:11px;max-width:230px}
+.outreach-map-wrap .field-note{padding:12px 18px;margin:0;color:#637287;font-size:12px}
+.outreach-table-scroll{overflow-x:auto;border:1px solid #d7e2ee;border-radius:14px;margin-top:20px;background:#fff}
+.outreach-table{width:100%;min-width:1040px;border-collapse:collapse;text-align:left;font-size:13px}
+.outreach-table th{background:#183e66;color:#fff;font-size:12px;font-weight:700;letter-spacing:.01em;padding:14px 12px;white-space:nowrap}
+.outreach-table td{padding:13px 12px;border-bottom:1px solid #e7edf3;vertical-align:top}
+.outreach-table tr:hover td{background:#f5f9ff}.outreach-table small{display:block;color:#6a788a;line-height:1.45;margin-top:4px}
+.outreach-name{display:block;font-weight:700;color:#174d82;text-decoration:none;min-width:165px}
+.outreach-status{display:inline-block;padding:5px 9px;border-radius:8px;background:#e9eff7;color:#1b5280;font-weight:700;font-size:12px}
+.outreach-import{border:1px solid #d5e2ed;background:#f7fafc;border-radius:10px;padding:12px 16px}
+.outreach-import summary{cursor:pointer;font-weight:700}.outreach-import form{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.outreach-info{border:1px solid #dbe5ee;background:#f8fbfd;padding:18px 22px;border-radius:12px;margin:15px 0 25px}
+.outreach-info p{font-size:14px;margin:6px 0}
+.outreach-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.outreach-form-box{display:block;padding:22px!important;min-width:0}
+.outreach-form-box h2{font-size:21px;margin:0 0 18px}.outreach-form-box h3{font-size:18px}
+.outreach-form-box form{display:flex;flex-direction:column;gap:13px;margin-bottom:21px}
+.outreach-form-box label{display:block;font-weight:600;font-size:13px;color:#324d68}
+.outreach-form-box label input:not([type=checkbox]),.outreach-form-box label select,.outreach-form-box label textarea{display:block;width:100%;margin-top:5px}
+.outreach-form-box .outreach-checkbox{display:flex;align-items:center;gap:8px}
+.outreach-form-box .outreach-checkbox input{margin:0;width:auto}
+.outreach-log-card{padding:13px 14px;border:1px solid #d9e4ee;border-radius:10px;background:#fff;margin:10px 0;overflow-wrap:anywhere}
+.outreach-log-card p{font-size:13px;margin:5px 0;white-space:pre-wrap}
+.outreach-log-card small{font-size:11px;color:#6e7888;display:block;margin-top:10px}
+.outreach-log-card .outreach-status{float:right}
+.outreach-history{margin-top:35px;max-width:1020px}
+.outreach-history-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.outreach-staff-item{border-bottom:1px solid #d9e4ee;padding:12px 0;display:grid!important;grid-template-columns:1.1fr 1fr auto;gap:10px;align-items:center}
+.outreach-staff-item small{display:block;font-size:12px;color:#657689;overflow-wrap:anywhere}
+.outreach-staff-item select{width:100%}
+.outreach-page .leaflet-container{font:13px/1.3 system-ui,Arial,sans-serif}
+.outreach-page .leaflet-popup-content strong{font-size:14px}
+.outreach-page .leaflet-popup-content a{display:inline-block;margin-top:8px}
+@media(max-width:900px){.outreach-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.outreach-columns{grid-template-columns:1fr}.outreach-filter label{min-width:145px}}
+@media(max-width:550px){.outreach-kpis{gap:7px}.outreach-kpis>div{padding:12px}.outreach-kpis strong{font-size:22px}.outreach-filter{padding:10px}.outreach-filter label,.outreach-filter .outreach-search{min-width:100%;flex:1}#outreach-map{height:335px}.outreach-staff-item{grid-template-columns:1fr}.outreach-form-box{padding:14px!important}}
+
+/* Universal navigation to Yandex Maps; full route when coordinates exist. */
+.outreach-navigation{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:17px 0 9px}
+.outreach-navigation a:not(.button){color:#174f85;font-size:13px;font-weight:600}
+.outreach-navigation-warning{color:#7d5517!important;background:#fffaeb;border-left:3px solid #d39a37;padding:10px 12px;max-width:870px}
+.outreach-navigation-cell{display:flex;flex-direction:column;gap:5px;min-width:124px}
+.outreach-navigation-cell a{color:#174d82;font-weight:700;text-decoration:none;font-size:12px;line-height:1.3}
+.outreach-navigation-cell a:hover{text-decoration:underline}
+@media(max-width:550px){.outreach-navigation>.button{width:100%;justify-content:center;text-align:center}}
+
+/* The internal workspace has its own compact navigation, including on phones. */
+/* This stylesheet is loaded only under /parks; anchors account for its own header. */
+html{scroll-padding-top:0}
+.parks-screen .main-nav,.parks-screen .menu-toggle,.parks-screen .header-contact,
+.parks-screen .footer,.parks-screen .mobile-contact{display:none}
+.parks-screen .header-inner{height:76px;justify-content:space-between}
+.parks-screen .header-actions{margin-left:auto}
+.outreach-page{overflow-wrap:anywhere}
+.outreach-page [id]{scroll-margin-top:145px}
+.outreach-page .button{min-height:48px;white-space:normal;justify-content:center}
+.outreach-page input,.outreach-page select,.outreach-page textarea{min-width:0;max-width:100%;font-size:16px}
+.outreach-page input:not([type=checkbox]),.outreach-page select{min-height:48px}
+.outreach-page label{margin-bottom:0}
+.outreach-jumps{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;padding:8px 0;background:#eeede7;position:sticky;top:76px;z-index:20}
+.outreach-jumps a{display:flex;align-items:center;justify-content:center;min-height:44px;padding:8px 16px;border:1px solid #becde0;border-radius:8px;background:#fff;color:#183e66;font-weight:600;font-size:14px;text-decoration:none}
+.outreach-jumps a:hover{background:#eaf0f7}
+.outreach-links a{display:inline-flex;align-items:center;min-height:44px}
+.outreach-kpis strong{font-size:clamp(20px,2.6vw,27px);overflow-wrap:anywhere}
+.outreach-list-title{font-size:24px;margin:28px 0 0}
+.outreach-list-title span{display:inline-block;color:#637287;font-size:18px;margin-left:8px}
+.outreach-extra{border-block:1px solid #d9e4ee;padding:8px 0}
+.outreach-extra summary{min-height:44px;cursor:pointer;font-size:14px;font-weight:600;color:#234f78;padding:8px 0}
+.outreach-extra summary span{display:block;font-size:12px;color:#637287;font-weight:400}
+.outreach-extra>div{display:grid;gap:13px;padding:10px 0}
+.outreach-info,.outreach-log-card{min-width:0}
+.outreach-navigation>.button{min-width:0}
+.outreach-map-wrap{position:relative;isolation:isolate}
+.outreach-map-tools:not([hidden]){display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #d9e4ee;background:#f7fafc}
+.outreach-map-tools span{font-size:12px;line-height:1.4;color:#52657b}
+.outreach-map-tools .button{flex:none;font-size:13px;padding:10px 12px;min-height:44px}
+.outreach-map-tools button[aria-pressed=true]{background:#183e66;color:#fff}
+.outreach-yandex-logo{display:block;width:88px;height:48px;margin:0!important;background:#fff9;border-radius:4px}
+.outreach-yandex-logo img{display:block;width:88px;height:48px;max-width:none}
+.outreach-page .leaflet-control-zoom a{width:44px;height:44px;line-height:44px}
+.outreach-page .leaflet-popup-content{max-width:min(280px,calc(100vw - 90px));overflow-wrap:anywhere;line-height:1.45}
+.outreach-page .leaflet-popup-content a{min-height:44px;display:flex;align-items:center}
+.outreach-page .leaflet-popup-close-button{width:36px;height:36px;font-size:24px}
+.outreach-geonote{pointer-events:none;bottom:60px}
+@media(max-width:1100px){
+  /* Keep one semantic table in the DOM; show its rows as cards at narrow widths. */
+  .outreach-table-scroll{overflow:visible;border:0;background:transparent}
+  .outreach-table{display:block;min-width:0;font-size:14px}
+  .outreach-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .outreach-table tbody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  .outreach-table tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);align-content:start;gap:12px;border:1px solid #d7e2ee;border-radius:14px;padding:18px;background:#fff}
+  .outreach-table td{display:block;min-width:0;padding:0;border:0;grid-column:1/-1}
+  .outreach-table tr:hover td{background:transparent}
+  .outreach-table td::before{content:attr(data-label);display:block;color:#637287;font-size:12px;margin-bottom:4px}
+  .outreach-table td:not([data-label])::before{display:none}
+  .outreach-table .outreach-cell-area{grid-column:1;grid-row:3}
+  .outreach-table .outreach-cell-status{grid-column:2;grid-row:3}
+  .outreach-table small{font-size:13px}
+  .outreach-name{min-width:0;min-height:44px;display:flex;align-items:center;font-size:17px;line-height:1.35}
+  .outreach-navigation-cell{min-width:0;gap:8px;flex-direction:row;flex-wrap:wrap;border-top:1px solid #e7edf3;padding-top:12px}
+  .outreach-navigation-cell a{display:flex;align-items:center;min-height:44px;border:1px solid #d7e2ee;border-radius:8px;padding:8px 12px;font-size:13px}
+}
+@media(max-width:700px){
+  .parks-screen .header-inner{height:64px}
+  .parks-screen .brand{font-size:clamp(13px,4vw,18px);min-width:0}
+  .parks-screen .brand .brand-mark{width:38px;height:38px}
+  .parks-screen .brand small{display:none}
+  .parks-screen .account-link{min-width:44px;min-height:44px;padding:10px}
+  .outreach-page.container{width:calc(100% - 24px);padding-top:20px;padding-bottom:30px}
+  .outreach-page h1{font-size:27px;line-height:1.2}
+  .outreach-page .section-heading{display:block;margin-bottom:12px}
+  .outreach-page .section-heading p{font-size:14px;margin-top:12px}
+  .outreach-page .section-heading>form{margin-top:12px}
+  .outreach-links{gap:4px 18px;margin-bottom:8px;font-size:14px}
+  .outreach-jumps{top:64px;flex-wrap:nowrap;gap:6px;padding:6px 0}
+  .outreach-jumps a{padding:8px;flex:1;min-width:0;text-align:center;font-size:13px}
+  .outreach-page [id]{scroll-margin-top:130px}
+  .outreach-kpis{gap:8px;margin:12px 0}
+  .outreach-kpis>div{padding:12px}
+  .outreach-kpis span{font-size:12px;line-height:1.4}
+  .outreach-filter{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:12px;gap:12px}
+  .outreach-filter label,.outreach-filter .outreach-search{min-width:0;font-size:13px}
+  .outreach-filter .outreach-search,.outreach-filter .button{grid-column:1/-1}
+  .outreach-filter input,.outreach-filter select{padding:12px 8px;text-overflow:ellipsis}
+  .outreach-page>.field-note{font-size:13px;line-height:1.5}
+  #outreach-map{height:52vh;height:52svh;min-height:300px;max-height:460px}
+  .outreach-map-wrap .field-note{font-size:12px;padding:12px}
+  .outreach-table tbody{grid-template-columns:1fr;gap:12px}
+  .outreach-table tr{padding:16px;gap:12px}
+  .outreach-import{padding:12px}
+  .outreach-import summary{min-height:44px;display:flex;align-items:center;font-size:14px}
+  .outreach-import input[type=file]{width:100%;font-size:14px}
+  .outreach-info{padding:15px;margin-block:16px}
+  .outreach-info p{font-size:14px}
+  .outreach-form-box{padding:16px!important}
+  .outreach-form-box label{font-size:14px}
+  .outreach-form-box h2,.outreach-history h2{font-size:22px;line-height:1.25}
+  .outreach-form-box ol{padding-left:22px;font-size:14px;line-height:1.6}
+  .outreach-form-box li+li{margin-top:12px}
+  .outreach-form-box .outreach-checkbox{min-height:44px;align-items:flex-start}
+  .outreach-checkbox input{flex:none;min-height:22px;width:22px!important;margin-top:2px!important}
+  .outreach-history{margin-top:24px}
+  .outreach-log-card p{font-size:14px}
+  .outreach-log-card a[href^="tel:"]{display:inline-flex;align-items:center;min-height:44px}
+  .outreach-navigation>.button{width:100%;text-align:center}
+  .outreach-navigation-warning{font-size:13px!important}
+}
+@media(max-width:380px){.outreach-map-tools:not([hidden]){align-items:stretch;flex-direction:column;gap:7px}.outreach-page h1{font-size:25px}}

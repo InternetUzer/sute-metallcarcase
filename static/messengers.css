@@ -1,0 +1,17 @@
+.messenger-links{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.messenger-links .messenger-link{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink);font-size:.875rem;font-weight:600;line-height:1.25;text-decoration:none;white-space:nowrap}
+.messenger-links .messenger-link:hover{border-color:var(--accent);background:var(--wash);color:var(--accent)}
+.messenger-links .messenger-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.header-contact{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.header-contact .messenger-links{margin:0;gap:6px;flex-wrap:nowrap}
+.header-contact .messenger-link{padding:5px 8px;font-size:.75rem}
+.header-contact .header-phone{padding-top:6px}
+.contact-stack .messenger-links{margin:2px 0}
+.footer-top .messenger-links{margin:14px 0}
+.messenger-settings{margin-top:24px}.messenger-settings label{margin-top:20px}.messenger-settings .field-note{margin-top:-8px}
+.header-quick-contact{display:none}
+#messengers{scroll-margin-top:180px}
+@media(min-width:1201px){.header-inner{gap:18px}.header-actions{gap:16px}}
+@media(max-width:1200px){.header-contact{display:none}.header-quick-contact{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px 18px;padding-block:4px 8px;border-top:1px solid var(--line)}.header-quick-contact .quick-phone{font-size:.875rem;font-weight:600;white-space:nowrap}.header-quick-contact .messenger-links{margin:0;gap:6px}.header-quick-contact .messenger-link{padding:6px 10px;font-size:.8125rem}}
+@media(max-width:900px){.main-nav{top:100%}}
+@media print{.messenger-links{display:none!important}}

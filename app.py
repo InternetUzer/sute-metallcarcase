@@ -26,10 +26,27 @@ from seo_panel import SEOPanel
 from lead_analytics import LeadAnalytics, PUBLIC_ENDPOINTS
 from case_studies import CaseStudies, CATEGORIES
 from owner_content import OwnerContent
+from messengers import public_links, validate_settings as validate_messengers
 from service_catalog import ServiceCatalog
 from enquiry_fields import GROUPS, LABELS, parse_parameters
+import industrial_outreach
+from prorab_transfer import register_transfer
+from prorab_anchor import APP_PATHS as ANCHOR_APP_PATHS, register_anchor
 
 ROOT = Path(__file__).resolve().parent
+
+# Журнал «Прораб+» (/admin/prorab): адреса Яндекс Диска, к которым обращается браузер владельца
+PRORAB_CONNECT = 'https://cloud-api.yandex.net https://*.disk.yandex.net https://*.disk.yandex.ru https://*.storage.yandex.net https://*.dst.yandex.net'
+# Место объекта для погоды по адресу — те же сервисы, что в приложении (OpenStreetMap и Open-Meteo)
+PRORAB_GEO = 'https://nominatim.openstreetmap.org https://geocoding-api.open-meteo.com'
+PRORAB_VERSION = '24'
+PRORAB_DEFAULT_ROOT = '/Диск Прораб+'
+# Прежнее имя по умолчанию. Сами папки сервер не удаляет и не переносит.
+PRORAB_OLD_ROOT_RE = re.compile(r'/прораб\s*\+(?:\s+\(\d+\))?', re.IGNORECASE)
+# Приложение Яндекс OAuth «Прораб+» владельца (тип «доступ к API», права только к Диску). ClientID не секрет:
+# он виден в адресе страницы входа Яндекса. Можно заменить через YANDEX_CLIENT_ID или settings.prorab_client_id.
+PRORAB_CLIENT_ID = '637047bceacd46c9b55023e0658d2a6e'
+
 
 def create_app(test_config=None):
     app = Flask(__name__)
@@ -119,7 +136,8 @@ def create_app(test_config=None):
                 g.user = user
             else:
                 session.clear()
-        if request.method == 'POST':
+        # Квитанции фиксации для приложения на телефоне — без CSRF (только подпись отпечатка, см. prorab_anchor.py)
+        if request.method == 'POST' and request.path not in ANCHOR_APP_PATHS:
             token = request.form.get('csrf_token', '')
             if not token or not secrets.compare_digest(token, session.get('csrf','')):
                 abort(400, 'Сессия формы истекла. Обновите страницу и повторите отправку.')
@@ -138,9 +156,24 @@ def create_app(test_config=None):
             policy = policy.replace("connect-src 'self'", "connect-src 'self' https://mc.yandex.ru https://mc.yandex.com")
             policy = policy.replace("img-src 'self' data:", "img-src 'self' data: https://mc.yandex.ru https://mc.yandex.com")
             response.headers['Content-Security-Policy'] = policy
+        if request.endpoint in ('prorab', 'prorab_shared'):
+            # Журнал «Прораб+» читает и пишет папку объекта на Яндекс Диске владельца прямо из браузера
+            # Фото объекта показываются по временным ссылкам Яндекс Диска
+            # «Где я сейчас» в карточке объекта — только на этих страницах
+            response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
+            # 'wasm-unsafe-eval' — только сборка WebAssembly (перевод DWG в DXF библиотекой LibreDWG), не eval для JavaScript
+            response.headers['Content-Security-Policy'] = response.headers['Content-Security-Policy'].replace(
+                "script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'").replace(
+                "connect-src 'self'", "connect-src 'self' " + PRORAB_CONNECT + ' ' + PRORAB_GEO).replace(
+                "img-src 'self' data:", "img-src 'self' data: blob: " + PRORAB_CONNECT)
+        if request.path.startswith('/parks'):
+            # Leaflet is bundled locally; only map tiles need an external origin.
+            csp = response.headers['Content-Security-Policy']
+            csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https://tile.openstreetmap.org https://tiles.api-maps.yandex.ru")
+            response.headers['Content-Security-Policy'] = csp
         if production:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'
-        private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot'))
+        private = request.path.startswith(('/cabinet', '/admin', '/files', '/request', '/reset', '/login', '/forgot', '/prorab', '/parks'))
         page_seo = seo.get(request.path)
         if private or not seo.enabled() or (page_seo and page_seo['noindex']) or response.status_code >= 400:
             response.headers['X-Robots-Tag'] = 'noindex, nofollow'
@@ -153,7 +186,7 @@ def create_app(test_config=None):
         settings = {r['key']:r['value'] for r in db().execute('SELECT * FROM settings')}
         company = {**COMPANY, **settings}
         company['phone_link'] = '+' + re.sub(r'\D','',company['phone'])
-        return dict(company=company, services=catalog.all(published=True), all_services=catalog.all(), buildings=BUILDINGS, models=MODELS,
+        return dict(company=company, messenger_links=public_links(company), services=catalog.all(published=True), all_services=catalog.all(), buildings=BUILDINGS, models=MODELS,
                     assets=assets(), csrf_token=csrf_token, year=datetime.now().year,
                     canonical=app.config['SITE_URL'] + request.path,
                     site_url=app.config['SITE_URL'], indexable=app.config['SITE_INDEXABLE'],
@@ -176,13 +209,15 @@ def create_app(test_config=None):
         except (ValueError, TypeError):
             return []
 
-    def protected(admin=False):
+    def protected(admin=False, roles=('admin', 'client')):
         def decorator(f):
             @wraps(f)
             def wrapper(*args, **kwargs):
                 if not g.user:
                     return redirect(url_for('login'))
                 if admin and g.user['role'] != 'admin':
+                    abort(403)
+                if not admin and g.user['role'] not in roles:
                     abort(403)
                 return f(*args, **kwargs)
             return wrapper
@@ -371,7 +406,7 @@ def create_app(test_config=None):
                 session.clear()
                 session.update(user_id=user['id'],user_version=user['version'])
                 session.permanent=True
-                return redirect('/admin' if user['role']=='admin' else '/cabinet')
+                return redirect('/admin' if user['role']=='admin' else '/parks' if user['role'] in ('field', 'outreach') else '/cabinet')
             error='Проверьте email и пароль.'
         return render('auth.html','Личный кабинет — Металл-Каркас',mode='login',error=error), (401 if error else 200)
 
@@ -501,6 +536,12 @@ def create_app(test_config=None):
                         db().execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,value))
                     db().commit()
                     flash('Контакты обновлены.')
+                elif action=='messengers':
+                    for key, value in validate_messengers(request.form).items():
+                        db().execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
+                    db().commit()
+                    flash('Кнопки мессенджеров обновлены.')
+                    return redirect('/admin#messengers')
                 elif action=='showcase':
                     image=request.form.get('image','')
                     if image not in [a['src'] for a in assets().values()] and not db().execute(
@@ -625,6 +666,45 @@ def create_app(test_config=None):
     seo = SEOPanel(app, db, ROOT, catalog)
     seo.register(app, protected, render)
     catalog.register(protected, render)
+
+    def prorab_page(shared):
+        # Журнал работ «Прораб+»: данные — в папке «Прораб+» на Яндекс Диске (те же, что в приложении
+        # на телефоне), сайт их не хранит. ClientID приложения Яндекс OAuth — для кнопки «Войти через Яндекс».
+        setting = lambda key: (db().execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone() or [''])[0]
+        client_id = os.environ.get('YANDEX_CLIENT_ID') or setting('prorab_client_id') or PRORAB_CLIENT_ID
+        # Папка рабочего стола на Диске владельца — одна для всех устройств и всех, с кем поделились папкой
+        root = setting('prorab_root') or PRORAB_DEFAULT_ROOT
+        if PRORAB_OLD_ROOT_RE.fullmatch(root.strip().rstrip('/')):
+            root = PRORAB_DEFAULT_ROOT
+        return render_template('prorab.html', client_id=client_id, version=PRORAB_VERSION, shared=shared, root=root,
+                               can_set_root=not shared and g.user is not None and g.user['role'] == 'admin')
+
+    @app.get('/admin/prorab')
+    @protected(admin=True)
+    def prorab():
+        return prorab_page(False)
+
+    register_transfer(app, limited)
+    register_anchor(app, limited)
+
+    @app.post('/admin/prorab/root')
+    @protected(admin=True)
+    def prorab_root():
+        # Владелец закрепляет папку рабочего стола (путь на своём Яндекс Диске) — по умолчанию для всех
+        root = '/' + '/'.join(p for p in request.form.get('root', '').strip().split('/') if p)
+        if root == '/' or len(root) > 300 or any(part in ('.', '..') for part in root.split('/')) or any(ch in root for ch in '\\:*?"<>|\x00'):
+            return {'ok': False, 'error': 'Недопустимый путь папки'}, 400
+        db().execute("INSERT INTO settings(key,value) VALUES('prorab_root',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (root,))
+        db().commit()
+        return {'ok': True, 'root': root}
+
+    @app.get('/prorab')
+    def prorab_shared():
+        # Для тех, с кем владелец поделился папкой «Прораб+» на Яндекс Диске: вход своим Яндексом,
+        # видно только то, к чему у этого аккаунта есть доступ на Диске. Сайт данных не выдаёт.
+        return prorab_page(True)
+
+    industrial_outreach.register(app, db, protected, render, issue_token)
 
     return app
 

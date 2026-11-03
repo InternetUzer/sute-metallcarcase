@@ -81,7 +81,7 @@ class SEOPanel:
 
     def robots(self):
         # Crawlers must be able to see noindex; robots disallow is not an indexing guarantee.
-        text = 'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /cabinet\nDisallow: /files\nDisallow: /reset\n'
+        text = 'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /cabinet\nDisallow: /files\nDisallow: /reset\nDisallow: /prorab\n'
         if self.enabled(): text += 'Sitemap: ' + self.app.config['SITE_URL'] + '/sitemap.xml\n'
         return text
 

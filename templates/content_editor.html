@@ -3,7 +3,7 @@
 <p>Сначала сохраните черновик, затем откройте предпросмотр. «Опубликовать» сохраняет поля и обновляет сайт. Пустые дополнительные сведения посетителям не показываются.</p>
 {% if request.path.endswith('/home') %}<p><a href="/admin/photos/edit/asset/hero">Заменить главное фото и его ALT →</a> Подпись, которую видит посетитель, задаётся ниже.</p>{% endif %}
 {% if request.path.endswith('/company') %}<p><a href="/admin/content#team">Команда, производство и отзывы →</a> · <a href="/admin/photos/edit/asset/fabrication">Главное фото компании →</a></p>{% endif %}
-{% if request.path.endswith('/contacts') %}<p><a href="/admin#settings">Изменить телефон и email →</a></p>{% endif %}
+{% if request.path.endswith('/contacts') %}<p><a href="/admin#settings">Изменить телефон и email →</a> · <a href="/admin#messengers">MAX, Telegram и WhatsApp →</a></p>{% endif %}
 {% if error %}<div class="form-errors" role="alert" tabindex="-1">{{ error }} Публичные данные сохранены. <a href="{{ request.path }}">Загрузить сохранённую версию</a>. Если выбирали новый файл, выберите его повторно.</div>{% endif %}
 <form method="post" enctype="multipart/form-data" class="info-box owner-editor">{{ hidden_csrf() }}<input type="hidden" name="revision" value="{{ request.form.get('revision',revision) }}">
 {% for f in spec.fields %}<label>{{ f.label }}

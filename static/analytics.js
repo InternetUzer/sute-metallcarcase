@@ -29,7 +29,9 @@
     const href = link.getAttribute('href');
     let goal = href.startsWith('tel:') ? 'phone_click' : href.startsWith('mailto:') ? 'email_click' : '';
     if (!goal) {
-      try { if (new URL(href, location.origin).hostname === 't.me') goal = 'telegram_click'; } catch (_) { return; }
+      try {
+        goal = {'t.me': 'telegram_click', 'max.ru': 'max_click', 'wa.me': 'whatsapp_click'}[new URL(href, location.origin).hostname] || '';
+      } catch (_) { return; }
     }
     if (!goal) return;
     if (csrf) fetch('/analytics/event', {method: 'POST', credentials: 'same-origin', keepalive: true,

@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from flask import abort, flash, g, redirect, request, session
 
 EVENTS = {'phone_click': 'Нажатия на телефон', 'email_click': 'Нажатия на email',
-          'telegram_click': 'Переходы в Telegram'}
+          'telegram_click': 'Переходы в Telegram', 'max_click': 'Переходы в MAX', 'whatsapp_click': 'Переходы в WhatsApp'}
 PUBLIC_ENDPOINTS = {'home', 'services_page', 'buildings_page', 'detail', 'projects_page',
                     'models_page', 'faq_page', 'company_page', 'contacts', 'cooperation',
                     'enquiry', 'request_success', 'case_public'}
