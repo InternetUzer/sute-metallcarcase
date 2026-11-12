@@ -71,6 +71,11 @@ class Runner:
                 if self.store.setting("cloud_token") and time.time() - last_sync > 10:
                     last_sync = time.time()
                     self.service.sync()
+                # Includes remote claims whose response was lost during a previous crash.
+                if not self.current:
+                    for row in self.store.all():
+                        if row["kind"] == "run" and row["data"].get("status") == "running" and row["data"].get("device") == self.store.setting("device_id"):
+                            self.store.change(row["id"], {"status": "interrupted", "error": "Исполнитель был перезапущен. Проверьте результат перед повторным запуском."})
                 if self.store.setting("worker_enabled", False):
                     for row in self.store.all():
                         if row["kind"] == "run" and row["data"].get("status") == "queued":
@@ -132,6 +137,8 @@ class Runner:
                         self.service.sync()
                     except Error:
                         pass
+            if self.is_cancelled(run["id"]):
+                raise Error("Работа остановлена")
             self.store.change(run["id"], {"status": "done", "finished": time.time()})
         except (Error, OSError, ValueError) as exc:
             cancelled = self.is_cancelled(run["id"])

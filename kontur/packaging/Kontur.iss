@@ -9,7 +9,7 @@ DefaultGroupName=Контур
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=..\..\..\dist
+OutputDir=..\..\dist
 OutputBaseFilename=Kontur-Setup-0.1.0
 Compression=lzma2
 SolidCompression=yes
@@ -18,7 +18,7 @@ UninstallDisplayIcon={app}\Kontur.exe
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [Files]
-Source: "..\..\..\dist\Kontur\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\dist\Kontur\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{group}\Контур"; Filename: "{app}\Kontur.exe"
 Name: "{userdesktop}\Контур"; Filename: "{app}\Kontur.exe"

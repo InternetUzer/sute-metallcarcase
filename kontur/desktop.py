@@ -115,12 +115,45 @@ def main():
     parser.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     root = Path(args.data_dir) if args.data_dir else Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local/share"))) / "Kontur"
+    root.mkdir(parents=True, exist_ok=True)
+    lock = None
+    if not args.preview and not args.smoke_test:
+        lock = (root / "instance.lock").open("a+b")
+        lock.seek(0)
+        if not lock.read(1):
+            lock.write(b"1")
+            lock.flush()
+        lock.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock.close()
+            try:
+                info = json.loads((root / "instance.json").read_text())
+                if info.get("url", "").startswith("http://127.0.0.1:"):
+                    webbrowser.open(info["url"])
+            except (OSError, ValueError):
+                pass
+            return
     service = Service(root)
     server, url = make_server(service, args.port, args.preview)
     if args.smoke_test:
         server.server_close()
         print("Kontur desktop smoke test: OK")
         return
+    service.shutdown_callback = server.shutdown
+    if not args.preview:
+        info_file = root / "instance.json"
+        info_file.write_text(json.dumps({"url":url}), encoding="utf-8")
+        try:
+            info_file.chmod(0o600)
+        except OSError:
+            pass
     runner = Runner(service)
     service.runner = runner
     runner.start()
@@ -140,6 +173,9 @@ def main():
     finally:
         runner.stop()
         server.server_close()
+        if lock:
+            (root / "instance.json").unlink(missing_ok=True)
+            lock.close()
 
 
 if __name__ == "__main__":

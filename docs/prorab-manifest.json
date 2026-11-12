@@ -318,7 +318,7 @@
     },
     {
       "path": "kontur/desktop.py",
-      "sha256": "ebf4f5ecf3313a731210e66fc038d86211c1dcf955e385058c0d4a8a07f525ea",
+      "sha256": "396041723597cf5fe19cce467fc81489a36a592bd06dd1cddbc597b0a9fe3eee",
       "base_sha256": null
     },
     {
@@ -328,17 +328,17 @@
     },
     {
       "path": "kontur/runner.py",
-      "sha256": "b1e770c77eb6a9311cd816ce7824ae82204ff8ad397b887e58521377e74a7d70",
+      "sha256": "4636d1f71e416f76443c9f9dd0ccedf0cc61841b4e21ee03a562bc30390037e6",
       "base_sha256": null
     },
     {
       "path": "kontur/service.py",
-      "sha256": "c43b5b4f9106396f586c56885caf9f81c37d232fc4e5732384fa59a6653144e8",
+      "sha256": "4723b930f2a96f8927813a88f95a2c6b7aae1a0188c6fa0dc488637e9fb99393",
       "base_sha256": null
     },
     {
       "path": "kontur/static/app.js",
-      "sha256": "0a303cf2b4457348b66d61c38c4fcfa6b49a04767b7e133f222e45e80caefc73",
+      "sha256": "817192559fd14b83c0af25799f451d7ac0f944cee4c220cf24eadee153cba6ad",
       "base_sha256": null
     },
     {

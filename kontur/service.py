@@ -22,6 +22,7 @@ class Service:
         self.probes = None
         self.probes_at = 0
         self.sync_error = ""
+        self.shutdown_callback = None
         if not cloud:
             try:
                 self.root.chmod(0o700)
@@ -169,6 +170,9 @@ class Service:
             from .desktop import login_cli
             login_cli(body.get("provider"))
             self.probes = None
+            return {"ok": True}
+        if path == "/local/quit" and not self.cloud and self.shutdown_callback:
+            threading.Timer(0.3, self.shutdown_callback).start()
             return {"ok": True}
         if path == "/devices" and self.cloud:
             token = secrets.token_urlsafe(40)
