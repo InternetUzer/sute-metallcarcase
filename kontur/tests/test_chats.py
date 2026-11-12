@@ -59,6 +59,15 @@ class ChatsTest(unittest.TestCase):
         self.assertIn('First answer',prompts[1])
         answers=[r for r in self.store.all() if r['kind']=='message' and r['data'].get('run')==result['run']]
         self.assertEqual(len(answers),2);self.assertTrue(all(r['data']['conversation']==c for r in answers))
+    def test_queued_followup_sees_previous_answer_but_not_future_question(self):
+        c=self.imported()['conversation']
+        first=send_chat(self.store,{'project':self.project,'conversation':c,'prompt':'First question','mode':'chat-codex','request_id':'first-request'})
+        second=send_chat(self.store,{'project':self.project,'conversation':c,'prompt':'FOLLOWUP QUESTION','mode':'chat-codex','request_id':'second-request'})
+        runner=Runner(self.service)
+        r1=self.store.get(first['run']);self.assertNotIn('FOLLOWUP QUESTION',runner.prompt(r1,r1['data']['steps'][0]))
+        self.store.add_message(self.project,'codex','ANSWER TO FIRST QUESTION',first['run'],'chat',c)
+        r2=self.store.get(second['run']);self.assertIn('ANSWER TO FIRST QUESTION',runner.prompt(r2,r2['data']['steps'][0]))
+
     def test_bounded_context_stays_valid_json(self):
         c=self.imported()['conversation']
         for i in range(5): self.store.add_message(self.project,'user',str(i)*25000,conversation=c)

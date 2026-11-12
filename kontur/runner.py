@@ -101,7 +101,8 @@ class Runner:
         messages.sort(key=lambda r:(0 if r['data'].get('imported') else 1, r['data'].get('import_order',r['data'].get('at',r['updated']))))
         # The user's next queued messages must not leak into an earlier answer.
         cutoff=run['data'].get('created',float('inf'))
-        messages=[r for r in messages if r['data'].get('imported') or r['data'].get('at',r['updated'])<=cutoff or r['data'].get('run')==run['id']]
+        prior_runs={r['id'] for r in records if r['kind']=='run' and r['data'].get('created',0)<=cutoff}
+        messages=[r for r in messages if r['data'].get('imported') or r['data'].get('at',r['updated'])<=cutoff or r['data'].get('run') in prior_runs or r['data'].get('run')==run['id']]
         transcript=[{'author':r['data'].get('author'),'body':r['data'].get('body',''),'date':r['data'].get('at')} for r in messages]
         context={'project':project['data'],'memory_and_tasks':notes,'shared_chat':transcript,'older_messages_omitted':0}
         while len(json.dumps(context,ensure_ascii=False))>90000 and transcript:
