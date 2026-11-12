@@ -34,6 +34,8 @@ def request_json(url, token=None, data=None, method=None):
                 raise Error("Ответ слишком большой", 502)
             return json.loads(raw)
     except urllib.error.HTTPError as exc:
+        if exc.code == 426:
+            raise Error('Обновите Контур на ноутбуке до версии 0.2.0.',426) from None
         if exc.code in {401, 403}:
             raise Error("Нет доступа. Проверьте подключение и права аккаунта.", 401) from None
         if exc.code == 409:

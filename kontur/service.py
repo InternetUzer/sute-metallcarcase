@@ -48,8 +48,18 @@ class Service:
             if not token:
                 raise Error("Подключите облачную версию в настройках", 409)
             dirty = [r for r in self.store.all(True) if r["dirty"]]
-            result = request_json(self.store.setting("cloud_url") + "/api/sync", token, {"records": dirty})
-            self.store.merge_sync(result)
+            cursor=None;offset=0
+            while True:
+                batch=[];size=0
+                while offset<len(dirty):
+                    row=dirty[offset];cost=len(json.dumps(row,ensure_ascii=False).encode())
+                    if batch and size+cost>512*1024: break
+                    batch.append(row);size+=cost;offset+=1
+                result = request_json(self.store.setting("cloud_url") + "/api/sync", token,
+                    {"records": batch,"client_version":__version__,"cursor":cursor})
+                self.store.merge_sync(result)
+                cursor=result.get('next_cursor')
+                if not cursor and offset>=len(dirty): break
             self.sync_error = ""
             return {"ok": True, "conflicts": len(self.store.conflicts())}
         except Error as exc:
@@ -103,6 +113,12 @@ class Service:
             backup_dir.mkdir(exist_ok=True)
             s.backup(backup_dir / (str(time.time_ns()) + ".sqlite3"))
             return {"count": s.import_data(body)}
+        if path == "/chats/import":
+            from .chats import import_chat
+            return import_chat(s, body)
+        if path == "/chats/send":
+            from .chats import send_chat
+            return send_chat(s, body)
         if path == "/resolve":
             s.resolve(body.get("id"), body.get("choice"))
             return {"ok": True}
@@ -111,7 +127,11 @@ class Service:
         if path == "/github/summary":
             return self.github.summary(body.get("repo"))
         if path == "/sync":
-            return s.accept_sync(body.get("records")) if self.cloud else self.sync()
+            if self.cloud:
+                if body.get('client_version') not in {'0.2.0'}:
+                    raise Error('Обновите Windows-приложение Контур до версии 0.2.0 для синхронизации диалогов.',426)
+                return s.accept_sync(body.get("records"),body.get('cursor'),True)
+            return self.sync()
         if path == "/claim" and self.cloud:
             with s.lock:
                 row = s.get(body.get("id", ""))

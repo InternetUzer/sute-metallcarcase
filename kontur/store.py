@@ -6,8 +6,8 @@ import time
 import uuid
 from pathlib import Path
 
-KINDS = {"project", "task", "note", "message", "run"}
-ROLES = {"lead", "code", "deploy", "review"}
+KINDS = {"project", "task", "note", "message", "run", "conversation"}
+ROLES = {"lead", "code", "deploy", "review", "chat"}
 PROVIDERS = {"codex", "claude"}
 
 
@@ -34,7 +34,7 @@ def validate(kind, data):
         raise Error("Некорректный тип записи")
     if len(json.dumps(data, ensure_ascii=False)) > 180000:
         raise Error("Запись слишком большая", 413)
-    if kind in {"project", "task", "note"} and not str(data.get("title", "")).strip():
+    if kind in {"project", "task", "note", "conversation"} and not str(data.get("title", "")).strip():
         raise Error("Укажите название")
     if len(str(data.get("title", ""))) > 240:
         raise Error("Название длиннее 240 символов")
@@ -154,11 +154,11 @@ class Store:
                 raise Error("Запись не найдена", 404)
             return self.save(row["id"], row["kind"], {**row["data"], **patch}, row["rev"])
 
-    def add_message(self, project, author, body, run=None, role=None):
+    def add_message(self, project, author, body, run=None, role=None, conversation=None):
         return self.save(uid(), "message", {"project": project, "author": author, "body": body[:120000],
-             "run": run, "role": role, "at": time.time()}, "")
+             "run": run, "role": role, "at": time.time(), "conversation": conversation}, "")
 
-    def accept_sync(self, incoming):
+    def accept_sync(self, incoming, cursor=None, paged=False):
         """Server CAS. Retries with the same revision are idempotent."""
         if not self.cloud or not isinstance(incoming, list) or len(incoming) > 5000:
             raise Error("Некорректный пакет синхронизации")
@@ -181,8 +181,17 @@ class Store:
                     accepted.append({"id": row["id"], "rev": row["rev"]})
                 else:
                     conflicts.append({"local": row, "remote": old})
-            rows = [self.unpack(r) for r in db.execute("SELECT * FROM records ORDER BY updated")]
-        return {"accepted": accepted, "conflicts": conflicts, "records": rows}
+            if paged:
+                rows=[];size=0;next_cursor=None
+                for raw in db.execute("SELECT * FROM records WHERE id>? ORDER BY id", (cursor or '',)):
+                    row=self.unpack(raw);cost=len(json.dumps(row,ensure_ascii=False).encode())
+                    if rows and size+cost>512*1024:
+                        next_cursor=rows[-1]['id'];break
+                    rows.append(row);size+=cost
+            else:
+                rows = [self.unpack(r) for r in db.execute("SELECT * FROM records ORDER BY updated")]
+                next_cursor=None
+        return {"accepted": accepted, "conflicts": conflicts, "records": rows, "next_cursor":next_cursor}
 
     def merge_sync(self, payload):
         with self.lock, self.connect() as db:
@@ -247,7 +256,7 @@ class Store:
                 if row.get("deleted"):
                     continue
                 data = dict(row["data"])
-                for field in ("project", "run"):
+                for field in ("project", "run", "conversation"):
                     if data.get(field):
                         data[field] = mapping.get(data[field], data[field])
                 # Imported execution history can never silently run code again.

@@ -52,7 +52,7 @@ def test_device_scope_and_revocation(app):
     device=app.test_client()
     headers={'Authorization':'Bearer '+result['token']}
     assert device.get('/kontur/api/health',headers=headers).status_code==200
-    assert device.post('/kontur/api/sync',json={'records':[]},headers=headers).status_code==200
+    assert device.post('/kontur/api/sync',json={'records':[],'client_version':'0.2.0'},headers=headers).status_code==200
     assert device.post('/kontur/api/devices',json={},headers=headers).status_code==403
     assert device.get('/kontur/api/state',headers=headers).status_code==403
     client.post('/kontur/api/devices/revoke',json={'id':result['id']},headers={'X-Kontur-CSRF':csrf})
