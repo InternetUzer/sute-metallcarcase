@@ -26,6 +26,15 @@ def main():
     source=Path(__file__).resolve().parent
     app=root/'app.py'
     original=app.read_text(encoding='utf-8')
+    admin=root/'templates'/'admin.html'
+    original_admin=admin.read_text(encoding='utf-8')
+    nav_anchor='<a href="/admin/prorab">Журнал работ (Прораб+)</a>'
+    nav_link='<a href="/kontur/">Контур</a>'
+    updated_admin=original_admin
+    if nav_link not in updated_admin:
+        if updated_admin.count(nav_anchor)!=1:
+            raise SystemExit('Unrecognized admin navigation. Production was not modified.')
+        updated_admin=updated_admin.replace(nav_anchor,nav_anchor+nav_link)
     if str(root) == str(source.parent):
         raise SystemExit('Deploy from a separate release directory, not the production checkout.')
     updated=original
@@ -48,13 +57,14 @@ def main():
     backup=root/'backups'/('kontur-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
     backup.mkdir(parents=True)
     shutil.copy2(app,backup/'app.py')
+    shutil.copy2(admin,backup/'admin.html')
     if (root/'kontur').exists():
         shutil.copytree(root/'kontur',backup/'kontur',ignore=shutil.ignore_patterns('__pycache__'))
     stage=root/'kontur-next'
     if stage.exists():
         raise SystemExit('kontur-next already exists; inspect it before retrying.')
     shutil.copytree(source,stage,ignore=shutil.ignore_patterns('__pycache__','tests','packaging','*.cmd'))
-    if hashlib.sha256(app.read_bytes()).digest()!=digest:
+    if hashlib.sha256(app.read_bytes()).digest()!=digest or admin.read_text(encoding='utf-8')!=original_admin:
         shutil.rmtree(stage)
         raise SystemExit('Production app.py changed during deploy. No app.py replacement performed.')
     previous=root/'kontur-previous'
@@ -70,10 +80,15 @@ def main():
         temp.write_text(updated,encoding='utf-8')
         shutil.copymode(app,temp)
         os.replace(temp,app)
+        temp_admin=admin.with_suffix('.html.kontur-new')
+        temp_admin.write_text(updated_admin,encoding='utf-8')
+        shutil.copymode(admin,temp_admin)
+        os.replace(temp_admin,admin)
         (webroot/'tmp').mkdir(exist_ok=True)
         (webroot/'tmp'/'restart.txt').touch()
     except Exception:
         shutil.copy2(backup/'app.py',app)
+        shutil.copy2(backup/'admin.html',admin)
         if installed:
             shutil.rmtree(root/'kontur')
         if previous.exists():
