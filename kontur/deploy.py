@@ -16,9 +16,13 @@ REGISTER = "    # Контур owns JSON CSRF and paired-device authentication f
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--production',required=True)
+    parser.add_argument('--webroot',required=True)
     parser.add_argument('--check',action='store_true')
     args=parser.parse_args()
     root=Path(args.production).resolve()
+    webroot=Path(args.webroot).resolve()
+    if not (webroot/'passenger_wsgi.py').is_file():
+        raise SystemExit('Expected an existing Passenger webroot. No changes made.')
     source=Path(__file__).resolve().parent
     app=root/'app.py'
     original=app.read_text(encoding='utf-8')
@@ -66,8 +70,8 @@ def main():
         temp.write_text(updated,encoding='utf-8')
         shutil.copymode(app,temp)
         os.replace(temp,app)
-        (root/'tmp').mkdir(exist_ok=True)
-        (root/'tmp'/'restart.txt').touch()
+        (webroot/'tmp').mkdir(exist_ok=True)
+        (webroot/'tmp'/'restart.txt').touch()
     except Exception:
         shutil.copy2(backup/'app.py',app)
         if installed:

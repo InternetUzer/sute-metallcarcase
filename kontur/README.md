@@ -61,8 +61,8 @@ Flask-регистрация в `app.py` добавляет `/kontur/`. Дост
 Запуск сначала с `--check`, затем без него. При отличающемся коде останавливается.
 
 ```sh
-python3 kontur/deploy.py --production "$HOME/metalcarcase-production" --check
-python3 kontur/deploy.py --production "$HOME/metalcarcase-production"
+~/metalcarcase-production/.venv/bin/python kontur/deploy.py --production "$HOME/metalcarcase-production" --webroot "$HOME/www/metalcarcase.ru" --check
+~/metalcarcase-production/.venv/bin/python kontur/deploy.py --production "$HOME/metalcarcase-production" --webroot "$HOME/www/metalcarcase.ru"
 ```
 
 На сайте войти владельцем → `/kontur/` → «Подключения» → создать ключ ноутбука.
