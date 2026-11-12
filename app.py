@@ -137,7 +137,7 @@ def create_app(test_config=None):
             else:
                 session.clear()
         # Квитанции фиксации для приложения на телефоне — без CSRF (только подпись отпечатка, см. prorab_anchor.py)
-        if request.method == 'POST' and request.path not in ANCHOR_APP_PATHS:
+        if request.method == 'POST' and request.path not in ANCHOR_APP_PATHS and not request.path.startswith('/kontur/'):
             token = request.form.get('csrf_token', '')
             if not token or not secrets.compare_digest(token, session.get('csrf','')):
                 abort(400, 'Сессия формы истекла. Обновите страницу и повторите отправку.')
@@ -705,6 +705,10 @@ def create_app(test_config=None):
         return prorab_page(True)
 
     industrial_outreach.register(app, db, protected, render, issue_token)
+
+    # Контур owns JSON CSRF and paired-device authentication for its isolated routes.
+    from kontur.flask_adapter import register as register_kontur
+    register_kontur(app, csrf_token)
 
     return app
 
