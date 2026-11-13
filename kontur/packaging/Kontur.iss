@@ -1,4 +1,4 @@
-#define MyAppVersion "0.2.1"
+#define MyAppVersion "0.3.0"
 [Setup]
 AppId={{78D1E957-1A68-41DC-A7E3-9E33592E7A47}
 AppName=Контур
@@ -10,7 +10,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist
-OutputBaseFilename=Kontur-Setup-0.2.1
+OutputBaseFilename=Kontur-Setup-0.3.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

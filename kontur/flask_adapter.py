@@ -18,6 +18,12 @@ def register(app, csrf_token):
     def access():
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
         g.kontur_device = service.device_auth(token) if token else False
+        g.kontur_worker = service.workers.authenticate(token) if token else None
+        if g.kontur_worker:
+            if request.path not in {"/kontur/api/health", "/kontur/api/worker/heartbeat",
+                                    "/kontur/api/worker/sync", "/kontur/api/worker/claim", "/kontur/api/worker/result"}:
+                abort(403)
+            return
         if g.kontur_device:
             if request.path not in {"/kontur/api/health", "/kontur/api/sync", "/kontur/api/claim"}:
                 abort(403)
@@ -59,6 +65,10 @@ def register(app, csrf_token):
             body = request.get_json(silent=True) if request.method == "POST" else None
             if request.method == "POST" and not isinstance(body, dict):
                 raise Error("Ожидался JSON-объект")
+            if route.startswith("worker/"):
+                if request.method != "POST" or not g.kontur_worker:
+                    abort(403)
+                return jsonify(service.worker_request(g.kontur_worker, "/" + route, body))
             if route == "claim" and g.kontur_device:
                 body["device"] = body.get("device", g.kontur_device)
             return jsonify(service.handle(request.method, "/" + route, body))

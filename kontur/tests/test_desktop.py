@@ -134,7 +134,7 @@ class DesktopLifecycleTest(unittest.TestCase):
             self.assertIsNotNone(lock)
             lock.close()
 
-    def test_patch_release_syncs_with_existing_cloud(self):
+    def test_current_release_syncs_with_existing_cloud(self):
         with tempfile.TemporaryDirectory() as d:
             service = Service(d)
             service.store.set_setting("cloud_token", "test")
@@ -143,7 +143,7 @@ class DesktopLifecycleTest(unittest.TestCase):
                     patch("kontur.service.request_json", return_value={"accepted": [], "records": []}) as request:
                 service.sync()
                 self.assertEqual(request.call_args.args[2]["client_version"], "0.2.0")
-                self.assertEqual(service.config()["version"], "0.2.1")
+                self.assertEqual(service.config()["version"], "0.3.0")
 
 
 if __name__ == "__main__":

@@ -308,7 +308,7 @@
     },
     {
       "path": "kontur/__init__.py",
-      "sha256": "fd45ee485f95c0bc062de132c0fb6e6a0a23839bdcd6ecab5fb40073c8dc4920",
+      "sha256": "00370328727916ad144bcf756e85e99f245a51feb77da630ec035e5f357d7aa3",
       "base_sha256": null
     },
     {
@@ -323,22 +323,22 @@
     },
     {
       "path": "kontur/flask_adapter.py",
-      "sha256": "578b74efae04024a7ca50bd469e8f40906e7241b7e37acd257e646dfd32f3a9f",
+      "sha256": "800501e2ff26c78988916fb407d207c4a8ab375050b9fce6db5e83d9dd56cc5c",
       "base_sha256": null
     },
     {
       "path": "kontur/runner.py",
-      "sha256": "c8d939225009f47f343439fdd441d876699a23238ff1221de36133c81deb9e2c",
+      "sha256": "762269fd2ee832c7abeb3ac04c9513d35fde3ab20259b069336b331d761fbfb9",
       "base_sha256": null
     },
     {
       "path": "kontur/service.py",
-      "sha256": "7673a716e127f32d87f7a47612a08b5849d349bddee7a6d1beafd7c87eaba703",
+      "sha256": "36317c6f154dd072ce6d46e191b2cb887fa40c90d9b0383030a76cd3082c8876",
       "base_sha256": null
     },
     {
       "path": "kontur/static/app.js",
-      "sha256": "0d9ef0a633de0a7ab301e68a598f3551a03c05337b1b4ae9211335391c449618",
+      "sha256": "9558562fded9002b67a064b0257d9a6af6e6c8eef109c01fd69d460d3713735b",
       "base_sha256": null
     },
     {
@@ -358,7 +358,7 @@
     },
     {
       "path": "kontur/store.py",
-      "sha256": "5557cc5409a7a4f49482fab1445fa94391442f84f5473860c9fd4e01b038bde7",
+      "sha256": "282a21fa206204491419fc5b0d8e49061163d1d61eeffc8e65f56b71c1f2508a",
       "base_sha256": null
     },
     {
@@ -379,6 +379,16 @@
     {
       "path": "kontur/static/chat-import.mjs",
       "sha256": "46cb903284d3179b4c0dbdb7f76d2bf0f8860d066185cc752c4a673e330b2036",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/cloud_workers.py",
+      "sha256": "bee88f5bdf58cc42b34ffd71b2fdf55ab1a7dbbf7c50b16e4eb437907d78ab57",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/worker.py",
+      "sha256": "02c2f1efcfb1d970adaa0e9ce961d39436069c7f9188328cdde5c128e1049077",
       "base_sha256": null
     }
   ]

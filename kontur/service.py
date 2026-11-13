@@ -9,6 +9,7 @@ from pathlib import Path
 from . import SYNC_VERSION, __version__
 from .connections import GitHub, cli_probe, protect_secret, reveal_secret, request_json, token_hash
 from .store import Error, Store, uid
+from .cloud_workers import CloudWorkers
 
 
 class Service:
@@ -23,6 +24,8 @@ class Service:
         self.probes_at = 0
         self.sync_error = ""
         self.shutdown_callback = None
+        self.workers = CloudWorkers(self.store) if cloud else None
+        self.sync_path = "/api/sync"
         if not cloud:
             try:
                 self.root.chmod(0o700)
@@ -36,6 +39,8 @@ class Service:
                 "paired": bool(self.store.setting("cloud_token")), "last_sync": self.store.setting("last_sync"),
                 "sync_error": self.sync_error, "worker": self.store.setting("worker_enabled", False),
                 "github_owner": self.store.setting("github_owner", "InternetUzer"),
+                "execution_worker": self.workers.active() if self.cloud else self.store.setting("execution_worker", ""),
+                "workers": self.workers.list() if self.cloud else [],
                 "paths": {} if self.cloud else self.store.setting("paths", {})}
 
     def sync(self):
@@ -55,9 +60,10 @@ class Service:
                     row=dirty[offset];cost=len(json.dumps(row,ensure_ascii=False).encode())
                     if batch and size+cost>512*1024: break
                     batch.append(row);size+=cost;offset+=1
-                result = request_json(self.store.setting("cloud_url") + "/api/sync", token,
+                result = request_json(self.store.setting("cloud_url") + self.sync_path, token,
                     {"records": batch,"client_version":SYNC_VERSION,"cursor":cursor})
                 self.store.merge_sync(result)
+                self.store.set_setting("execution_worker", result.get("execution_worker", ""))
                 cursor=result.get('next_cursor')
                 if not cursor and offset>=len(dirty): break
             self.sync_error = ""
@@ -88,6 +94,10 @@ class Service:
         if method == "GET" and path == "/export":
             return s.export()
         if method == "GET" and path == "/connections":
+            if self.cloud:
+                worker = next((w for w in self.workers.list() if w["id"] == self.workers.active()), None)
+                return {"providers": worker["state"].get("providers", {}) if worker else {},
+                        "worker": worker, "mode": "cloud"}
             if not self.cloud and (not self.probes or time.time() - self.probes_at > 15):
                 self.probes = {name: cli_probe(name) for name in ("codex", "claude", "gh")}
                 self.probes_at = time.time()
@@ -96,6 +106,8 @@ class Service:
             raise Error("Маршрут не найден", 404)
         if not isinstance(body, dict):
             raise Error("Ожидался JSON-объект")
+        if self.cloud and path.startswith("/workers/"):
+            return self.workers.handle(path, body)
         if path == "/record":
             old = s.get(body.get("id", ""))
             # State transitions for execution are server-owned; ordinary clients create queued runs.
@@ -130,14 +142,23 @@ class Service:
             if self.cloud:
                 if body.get('client_version') not in {'0.2.0'}:
                     raise Error('Обновите Windows-приложение Контур до версии 0.2.0 для синхронизации диалогов.',426)
-                return s.accept_sync(body.get("records"),body.get('cursor'),True)
+                result = s.accept_sync(body.get("records"),body.get('cursor'),True, self.workers.allow_desktop_sync)
+                return {**result, "execution_worker": self.workers.active()}
             return self.sync()
         if path == "/claim" and self.cloud:
-            with s.lock:
-                row = s.get(body.get("id", ""))
+            with s.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                active = db.execute("SELECT value FROM settings WHERE key='execution_worker'").fetchone()
+                if active and json.loads(active[0]):
+                    raise Error("Очередь выполняет облачный сервер", 409)
+                row = s.unpack(db.execute("SELECT * FROM records WHERE id=?", (body.get("id", ""),)).fetchone())
                 if not row or row["kind"] != "run" or row["deleted"] or row["rev"] != body.get("rev") or row["data"]["status"] != "queued":
                     raise Error("Задание уже занято или изменилось", 409)
-                return {"record": s.change(row["id"], {"status": "running", "device": body.get("device"), "started": time.time()})}
+                row["data"] = {**row["data"], "status": "running", "device": body.get("device"), "started": time.time()}
+                row.update(rev=uid(), updated=time.time())
+                row["base_rev"] = row["rev"]
+                s.write(db, row)
+                return {"record": row}
         if path == "/cancel":
             row = s.get(body.get("id", ""))
             if not row or row["kind"] != "run":
@@ -209,6 +230,24 @@ class Service:
             with s.connect() as db:
                 return {"devices": [dict(r) for r in db.execute("SELECT id,name,created,seen FROM devices")]}
         raise Error("Функция недоступна в этой версии", 404)
+
+    def worker_request(self, worker, path, body):
+        """Worker identity is supplied by authentication, never by JSON input."""
+        if not self.cloud or not worker:
+            raise Error("Нужен ключ облачного исполнителя", 403)
+        if path == "/worker/heartbeat":
+            return self.workers.heartbeat(worker, body)
+        if path == "/worker/claim":
+            return self.workers.claim(worker, body)
+        if path == "/worker/result":
+            return self.workers.result(worker, body)
+        if path == "/worker/sync":
+            if body.get("client_version") != SYNC_VERSION:
+                raise Error("Обновите облачного исполнителя", 426)
+            result = self.store.accept_sync(body.get("records"), body.get("cursor"), True,
+                lambda db, old, row: self.workers.allow_sync(worker, db, old, row))
+            return {**result, "execution_worker": self.workers.active()}
+        raise Error("Маршрут не найден", 404)
 
     def device_auth(self, token):
         if not token or len(token) > 200:

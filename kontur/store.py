@@ -76,6 +76,13 @@ class Store:
               CREATE TABLE IF NOT EXISTS devices(
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
                 created REAL NOT NULL, seen REAL NOT NULL);
+              CREATE TABLE IF NOT EXISTS workers(
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
+                created REAL NOT NULL, seen REAL NOT NULL, state TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS worker_commands(
+                id TEXT PRIMARY KEY, worker TEXT NOT NULL, action TEXT NOT NULL,
+                args TEXT NOT NULL, status TEXT NOT NULL, result TEXT NOT NULL,
+                created REAL NOT NULL, expires REAL NOT NULL);
             """)
         if not self.setting("device_id"):
             self.set_setting("device_id", uid())
@@ -158,7 +165,7 @@ class Store:
         return self.save(uid(), "message", {"project": project, "author": author, "body": body[:120000],
              "run": run, "role": role, "at": time.time(), "conversation": conversation}, "")
 
-    def accept_sync(self, incoming, cursor=None, paged=False):
+    def accept_sync(self, incoming, cursor=None, paged=False, authorize=None):
         """Server CAS. Retries with the same revision are idempotent."""
         if not self.cloud or not isinstance(incoming, list) or len(incoming) > 5000:
             raise Error("Некорректный пакет синхронизации")
@@ -172,6 +179,11 @@ class Store:
                 old = self.unpack(db.execute("SELECT * FROM records WHERE id=?", (row["id"],)).fetchone())
                 if old and old["kind"] != row["kind"]:
                     raise Error("Тип записи отличается")
+                if authorize and not authorize(db, old, row):
+                    if old:
+                        conflicts.append({"local": row, "remote": old})
+                        continue
+                    raise Error("Исполнитель не может записать эти данные", 403)
                 if old and old["rev"] == row["rev"]:
                     accepted.append({"id": row["id"], "rev": row["rev"]})
                 elif (old["rev"] if old else "") == row["base_rev"]:
@@ -208,6 +220,16 @@ class Store:
                     conflict_id = local["id"] + ":" + remote["rev"]
                     db.execute("INSERT INTO conflicts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET local=excluded.local",
                                (conflict_id, local["id"], json.dumps(local), json.dumps(remote), time.time()))
+            # A server may reject an execution update even at the current base
+            # revision (for example, an old laptop trying to finish a cloud run).
+            for conflict in payload.get("conflicts", []):
+                remote = conflict.get("remote")
+                if not remote:
+                    continue
+                local = self.unpack(db.execute("SELECT * FROM records WHERE id=?", (remote["id"],)).fetchone())
+                if local and local["dirty"]:
+                    db.execute("INSERT INTO conflicts VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET local=excluded.local",
+                               (local["id"] + ":" + remote["rev"], local["id"], json.dumps(local), json.dumps(remote), time.time()))
         self.set_setting("last_sync", time.time())
 
     def conflicts(self):
