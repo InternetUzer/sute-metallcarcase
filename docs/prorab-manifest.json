@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "app.py",
-      "sha256": "c90da8b1fc18ed13c0d4ac4e93c71ef3c8aa3ee5a955eb1f336b9837d584338e",
+      "sha256": "92f7160136d20c16b552fadcc6d7640ec7bf7b5e2e283ddcb69f2e905b0e7138",
       "base_sha256": "c90da8b1fc18ed13c0d4ac4e93c71ef3c8aa3ee5a955eb1f336b9837d584338e"
     },
     {
@@ -263,7 +263,7 @@
     },
     {
       "path": "templates/admin.html",
-      "sha256": "6130c49247c122f8b09bb6ce92b1d2826ff50eeccd5843f52f5ec9255c3171a1",
+      "sha256": "c33dd1d3a535846f6482525c673b4929c32bc36363cf318ec365126e3bc60d02",
       "base_sha256": "6130c49247c122f8b09bb6ce92b1d2826ff50eeccd5843f52f5ec9255c3171a1"
     },
     {
@@ -305,6 +305,81 @@
       "path": "yandex_park_routes.py",
       "sha256": "d122471044022e78d7b978867865454b0fed3ef6467eb439e3909a55e20c5e87",
       "base_sha256": "d122471044022e78d7b978867865454b0fed3ef6467eb439e3909a55e20c5e87"
+    },
+    {
+      "path": "kontur/__init__.py",
+      "sha256": "fd45ee485f95c0bc062de132c0fb6e6a0a23839bdcd6ecab5fb40073c8dc4920",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/connections.py",
+      "sha256": "8b3a6ac17b33a3395c56a8e7e6f8b930181c151ab09eca3c0c512befa939287d",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/desktop.py",
+      "sha256": "285103766b3ad842d1224484c08888ae65c8278de8093086fc8e0d900646b0d3",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/flask_adapter.py",
+      "sha256": "578b74efae04024a7ca50bd469e8f40906e7241b7e37acd257e646dfd32f3a9f",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/runner.py",
+      "sha256": "c8d939225009f47f343439fdd441d876699a23238ff1221de36133c81deb9e2c",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/service.py",
+      "sha256": "7673a716e127f32d87f7a47612a08b5849d349bddee7a6d1beafd7c87eaba703",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/static/app.js",
+      "sha256": "0d9ef0a633de0a7ab301e68a598f3551a03c05337b1b4ae9211335391c449618",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/static/icon.svg",
+      "sha256": "59852e2920656da04a2d6219adfc5d145dd2bb4c434800cd5a003e3807ca9ffd",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/static/index.html",
+      "sha256": "6b665ad8a546a51de6c07f62e30a91e15f9a82772ade540519d556cb726feed4",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/static/style.css",
+      "sha256": "ec3e8454cf418c253fa1e338f349186bac8ecd46120c3322aae74c069a0921b2",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/store.py",
+      "sha256": "5557cc5409a7a4f49482fab1445fa94391442f84f5473860c9fd4e01b038bde7",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/chats.py",
+      "sha256": "421e5bd054876ccd1d341715980c2da1dc700e1aa7a6858e0851066e4a4d62cd",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/deploy.py",
+      "sha256": "8c1fd4e585339af76f47857c0b6d796e634fa4f39f57938eccca7e3fa08218b7",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/launch.py",
+      "sha256": "32b23468e5438dc533f4f26f227c3df3a97b3c61ebfec5cdc12894c722f3d3fb",
+      "base_sha256": null
+    },
+    {
+      "path": "kontur/static/chat-import.mjs",
+      "sha256": "46cb903284d3179b4c0dbdb7f76d2bf0f8860d066185cc752c4a673e330b2036",
+      "base_sha256": null
     }
   ]
 }

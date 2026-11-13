@@ -1,0 +1,45 @@
+name: Kontur Windows
+on:
+  push:
+    branches: [codex/kontur-workspace]
+    paths: ['kontur/**', '.github/workflows/kontur-windows.yml']
+  pull_request:
+    paths: ['kontur/**', '.github/workflows/kontur-windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test core, offline sync, runners and local auth
+        run: python -m unittest discover -s kontur/tests -v
+      - name: Test export parsers
+        run: node kontur/tests/test_chat_import.mjs
+      - name: Build Windows desktop
+        run: |
+          python -m pip install pyinstaller==6.16.0
+          python -m PyInstaller --noconfirm --windowed --name Kontur --paths . --add-data "kontur/static;kontur/static" kontur/launch.py
+          & dist/Kontur/Kontur.exe --smoke-test --data-dir "$env:RUNNER_TEMP/kontur-smoke"
+          if ($LASTEXITCODE -ne 0) { throw "Desktop smoke test failed" }
+      - name: Test packaged restart and second instance
+        env:
+          KONTUR_TEST_EXE: ${{ github.workspace }}/dist/Kontur/Kontur.exe
+        run: python -m unittest kontur.tests.test_desktop.DesktopProcessTest -v
+      - name: Build installer
+        run: |
+          & "C:/Program Files (x86)/Inno Setup 6/ISCC.exe" kontur/packaging/Kontur.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+          Compress-Archive -Path dist/Kontur/* -DestinationPath dist/Kontur-Portable-0.2.1.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kontur-Windows-0.2.1
+          path: |
+            dist/Kontur-Setup-0.2.1.exe
+            dist/Kontur-Portable-0.2.1.zip
+          if-no-files-found: error
+          retention-days: 30
