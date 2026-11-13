@@ -6,7 +6,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import __version__
+from . import SYNC_VERSION, __version__
 from .connections import GitHub, cli_probe, protect_secret, reveal_secret, request_json, token_hash
 from .store import Error, Store, uid
 
@@ -56,7 +56,7 @@ class Service:
                     if batch and size+cost>512*1024: break
                     batch.append(row);size+=cost;offset+=1
                 result = request_json(self.store.setting("cloud_url") + "/api/sync", token,
-                    {"records": batch,"client_version":__version__,"cursor":cursor})
+                    {"records": batch,"client_version":SYNC_VERSION,"cursor":cursor})
                 self.store.merge_sync(result)
                 cursor=result.get('next_cursor')
                 if not cursor and offset>=len(dirty): break

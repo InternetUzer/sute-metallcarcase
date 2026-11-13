@@ -8,5 +8,7 @@ if __name__ == "__main__":
         import os
         if os.name == "nt":
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, "Контур не смог запуститься. Проверьте доступ к папке приложения.\n" + type(exc).__name__, "Контур", 16)
+            from kontur.store import Error
+            message = str(exc) if isinstance(exc, Error) else "Контур не смог запуститься.\n" + type(exc).__name__ + ": " + str(exc)
+            ctypes.windll.user32.MessageBoxW(None, message, "Контур", 16)
         raise

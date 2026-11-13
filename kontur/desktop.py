@@ -1,5 +1,6 @@
 """Dependency-free Windows desktop host. Packaged using PyInstaller + Inno Setup."""
 import argparse
+import errno
 import http.cookies
 import json
 import mimetypes
@@ -8,6 +9,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -106,6 +108,53 @@ def make_server(service, port=0, preview=False):
     return server, "http://127.0.0.1:" + str(server.server_port) + "/?launch=" + launch
 
 
+def acquire_instance(root):
+    # Never read/write the locked byte: Windows denies that access to a second
+    # process before it can discover the running instance. Locks may cover EOF.
+    lock = (root / "instance.lock").open("a+b")
+    lock.seek(0)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        lock.close()
+        if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+            return None
+        raise
+    return lock
+
+
+def instance_url(root, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            url = json.loads((root / "instance.json").read_text(encoding="utf-8"))["url"]
+            parsed = urllib.parse.urlsplit(url)
+            if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                    and parsed.port and not parsed.username and not parsed.password
+                    and parsed.path == "/" and urllib.parse.parse_qs(parsed.query).get("launch")):
+                return url
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if time.monotonic() >= deadline:
+            raise Error("Контур уже запущен, но его окно пока недоступно. Подождите и откройте ярлык ещё раз. Если ошибка повторяется, завершите Контур через Диспетчер задач и запустите снова.")
+        time.sleep(0.1)
+
+
+def open_window(root, url):
+    if os.name == "nt":
+        for env in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
+            edge = Path(os.environ.get(env, "C:/Program Files")) / "Microsoft/Edge/Application/msedge.exe"
+            if edge.is_file():
+                subprocess.Popen([str(edge), "--app=" + url, "--user-data-dir=" + str(root / "browser"), "--no-first-run"])
+                return
+    webbrowser.open(url)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-browser", action="store_true")
@@ -118,64 +167,47 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     lock = None
     if not args.preview and not args.smoke_test:
-        lock = (root / "instance.lock").open("a+b")
-        lock.seek(0)
-        if not lock.read(1):
-            lock.write(b"1")
-            lock.flush()
-        lock.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            lock.close()
-            try:
-                info = json.loads((root / "instance.json").read_text())
-                if info.get("url", "").startswith("http://127.0.0.1:"):
-                    webbrowser.open(info["url"])
-            except (OSError, ValueError):
-                pass
+        lock = acquire_instance(root)
+        if lock is None:
+            url = instance_url(root)
+            if not args.no_browser:
+                open_window(root, url)
             return
-    service = Service(root)
-    server, url = make_server(service, args.port, args.preview)
-    if args.smoke_test:
-        server.server_close()
-        print("Kontur desktop smoke test: OK")
-        return
-    service.shutdown_callback = server.shutdown
-    if not args.preview:
-        info_file = root / "instance.json"
-        info_file.write_text(json.dumps({"url":url}), encoding="utf-8")
-        try:
-            info_file.chmod(0o600)
-        except OSError:
-            pass
-    runner = Runner(service)
-    service.runner = runner
-    runner.start()
-    if not args.no_browser:
-        launched = False
-        if os.name == "nt":
-            for env in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
-                edge = Path(os.environ.get(env, "C:/Program Files")) / "Microsoft/Edge/Application/msedge.exe"
-                if edge.is_file():
-                    subprocess.Popen([str(edge), "--app=" + url, "--user-data-dir=" + str(root / "browser"), "--no-first-run"])
-                    launched = True
-                    break
-        if not launched:
-            webbrowser.open(url)
+    server = runner = None
     try:
-        server.serve_forever()
-    finally:
-        runner.stop()
-        server.server_close()
         if lock:
             (root / "instance.json").unlink(missing_ok=True)
-            lock.close()
+        service = Service(root)
+        server, url = make_server(service, args.port, args.preview)
+        if args.smoke_test:
+            if sys.stdout is not None:
+                print("Kontur desktop smoke test: OK")
+            return
+        service.shutdown_callback = server.shutdown
+        runner = Runner(service)
+        service.runner = runner
+        runner.start()
+        if lock:
+            info_file = root / "instance.json"
+            pending = root / "instance.json.tmp"
+            pending.write_text(json.dumps({"url": url}), encoding="utf-8")
+            pending.chmod(0o600)
+            pending.replace(info_file)
+        if not args.no_browser:
+            open_window(root, url)
+        server.serve_forever()
+    finally:
+        try:
+            if runner:
+                runner.stop()
+            if server:
+                server.server_close()
+        finally:
+            if lock:
+                try:
+                    (root / "instance.json").unlink(missing_ok=True)
+                finally:
+                    lock.close()
 
 
 if __name__ == "__main__":
