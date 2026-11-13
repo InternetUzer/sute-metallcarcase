@@ -64,3 +64,24 @@ def test_unrelated_public_pages_remain_accessible(app):
     assert client.get('/').status_code==200
     assert client.get('/prorab').status_code==200
     assert client.get('/login').status_code==200
+
+
+def test_cloud_worker_key_scope_and_owner_only_configuration(app):
+    owner = app.test_client()
+    login(owner)
+    csrf = owner.get('/kontur/bootstrap').json['csrf']
+    key = owner.post('/kontur/api/workers/create', json={'name': 'Cloud'}, headers={'X-Kontur-CSRF': csrf}).json
+    worker = app.test_client()
+    headers = {'Authorization': 'Bearer ' + key['token']}
+    assert worker.get('/kontur/api/health', headers=headers).status_code == 200
+    heartbeat = worker.post('/kontur/api/worker/heartbeat', json={'providers': {}, 'projects': []}, headers=headers)
+    assert heartbeat.status_code == 200
+    assert heartbeat.json['id'] == key['id']
+    assert worker.post('/kontur/api/worker/sync', json={'records': [], 'client_version': '0.2.0'}, headers=headers).status_code == 200
+    for route in ('state', 'workers/create', 'workers/select', 'devices', 'sync', 'claim'):
+        assert worker.post('/kontur/api/' + route, json={}, headers=headers).status_code == 403
+    assert owner.post('/kontur/api/worker/heartbeat', json={}, headers={'X-Kontur-CSRF': csrf}).status_code == 403
+    assert owner.post('/kontur/api/workers/select', json={'id': key['id']}).status_code == 403
+    assert owner.post('/kontur/api/workers/select', json={'id': key['id']}, headers={'X-Kontur-CSRF': csrf}).status_code == 200
+    owner.post('/kontur/api/workers/revoke', json={'id': key['id']}, headers={'X-Kontur-CSRF': csrf})
+    assert worker.post('/kontur/api/worker/heartbeat', json={}, headers=headers).status_code == 401

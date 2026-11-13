@@ -78,7 +78,7 @@ class Runner:
                     for row in self.store.all():
                         if row["kind"] == "run" and row["data"].get("status") == "running" and row["data"].get("device") == self.store.setting("device_id"):
                             self.store.change(row["id"], {"status": "interrupted", "error": "Исполнитель был перезапущен. Проверьте результат перед повторным запуском."})
-                if self.store.setting("worker_enabled", False):
+                if self.store.setting("worker_enabled", False) and self.can_execute():
                     for row in self.store.all():
                         if row["kind"] == "run" and row["data"].get("status") == "queued":
                             self.execute(row)
@@ -88,6 +88,9 @@ class Runner:
             except Exception:
                 self.service.sync_error = "Исполнитель встретил ошибку. Очередь сохранена; проверьте журнал."
             self.stop_event.wait(2)
+
+    def can_execute(self):
+        return not self.store.setting("cloud_token") or not self.store.setting("execution_worker")
 
     def prompt(self, run, step):
         rows = self.store.all()
@@ -124,35 +127,32 @@ class Runner:
             +"Текущая просьба пользователя:\n"+run['data']['prompt']+"\nКонтекст диалога (JSON):\n"+json.dumps(context,ensure_ascii=False))
 
     def execute(self, original):
-        chat_only=all(step['role']=='chat' for step in original['data']['steps'])
-        if chat_only:
-            folder=self.service.root/'chat-workspace'
-            folder.mkdir(exist_ok=True)
-        else:
-            folder = self.store.setting("paths", {}).get(original["data"]["project"])
-        if not folder or not Path(folder).is_dir():
-            self.store.change(original["id"], {"status": "failed", "error": "Выберите локальную папку проекта в его настройках."})
-            return
-        # Validate executables before claiming remote work; no credential copies involved.
-        try:
-            for step in original["data"]["steps"]:
-                command(step["provider"], step["role"])
-        except Error as exc:
-            self.store.change(original["id"], {"status": "failed", "error": str(exc)})
-            return
         if self.store.setting("cloud_token"):
             self.service.sync()
             original = self.store.get(original["id"])
-            if original["dirty"] or any(c["record_id"] == original["id"] for c in self.store.conflicts()):
+            if not self.can_execute() or original["dirty"] or original["data"].get("status") != "queued" or any(c["record_id"] == original["id"] for c in self.store.conflicts()):
                 return
         run = self.service.claim(original)
         self.current = run["id"]
         try:
+            # Only the actual owner may fail a queued task for missing local tools.
+            chat_only = all(step['role'] == 'chat' for step in run['data']['steps'])
+            if chat_only:
+                folder = self.service.root / 'chat-workspace'
+                folder.mkdir(exist_ok=True)
+            else:
+                folder = self.store.setting("paths", {}).get(run["data"]["project"])
+            if not folder or not Path(folder).is_dir():
+                raise Error("Подготовьте папку проекта на выбранном исполнителе в настройках проекта.")
+            for step in run["data"]["steps"]:
+                command(step["provider"], step["role"])
             for index, step in enumerate(run["data"]["steps"]):
                 if self.is_cancelled(run["id"]):
                     raise Error("Работа остановлена")
                 self.store.change(run["id"], {"step": index, "status": "running"})
                 answer = self.invoke(command(step["provider"], step["role"]), self.prompt(run, step), folder, run["id"], step["provider"])
+                if self.is_cancelled(run["id"]):
+                    raise Error("Работа остановлена")
                 if not answer.strip():
                     raise Error("Помощник не вернул итоговый ответ. Проверьте вход и версию CLI.")
                 self.store.add_message(run["data"]["project"], step["provider"], answer, run["id"], step["role"], run["data"].get("conversation"))
